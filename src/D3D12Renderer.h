@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 
 #include <d3d12.h>
 
@@ -17,9 +18,22 @@ namespace SFSEMenuFramework::D3D12Renderer
 		UINT                                 Count{ 0 };
 	};
 
+	enum class RenderResult : std::uint8_t
+	{
+		Rendered,
+		InvalidArguments,
+		Busy,
+		DeviceQueryFailed,
+		DeviceMismatch,
+		CommandList2Unavailable,
+		FrameSlotBusy,
+		InvalidTarget,
+		Count
+	};
+
 	[[nodiscard]] bool Initialize(ID3D12Device* a_device);
 
-	[[nodiscard]] bool Render(
+	[[nodiscard]] RenderResult Render(
 		ID3D12GraphicsCommandList*    a_commandList,
 		ID3D12Resource*               a_renderTarget,
 		const DescriptorHeapSnapshot& a_engineHeaps,

@@ -310,7 +310,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		return InitializeLocked(GetRendererState(), a_device);
 	}
 
-	bool Render(
+	RenderResult Render(
 		ID3D12GraphicsCommandList*    a_commandList,
 		ID3D12Resource*               a_renderTarget,
 		const DescriptorHeapSnapshot& a_engineHeaps,
@@ -319,33 +319,33 @@ namespace SFSEMenuFramework::D3D12Renderer
 		if (!a_commandList || !a_renderTarget || !a_setDescriptorHeaps ||
 			a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
 			!HasValidHeapSnapshot(a_engineHeaps)) {
-			return false;
+			return RenderResult::InvalidArguments;
 		}
 
 		std::unique_lock lock{ GetRendererMutex(), std::try_to_lock };
 		if (!lock.owns_lock()) {
-			return false;
+			return RenderResult::Busy;
 		}
 
 		Microsoft::WRL::ComPtr<ID3D12Device> commandListDevice;
 		if (FAILED(a_commandList->GetDevice(IID_PPV_ARGS(commandListDevice.GetAddressOf())))) {
-			return false;
+			return RenderResult::DeviceQueryFailed;
 		}
 
 		auto& rendererState = GetRendererState();
 		if (!rendererState.Context ||
 			!HasSameComIdentity(rendererState.Device.Get(), commandListDevice.Get())) {
-			return false;
+			return RenderResult::DeviceMismatch;
 		}
 
 		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> commandList2;
 		if (FAILED(a_commandList->QueryInterface(IID_PPV_ARGS(commandList2.GetAddressOf())))) {
-			return false;
+			return RenderResult::CommandList2Unavailable;
 		}
 
 		std::size_t frameSlot{};
 		if (!AcquireFrameSlot(rendererState, frameSlot)) {
-			return false;
+			return RenderResult::FrameSlotBusy;
 		}
 
 		const auto description = a_renderTarget->GetDesc();
@@ -353,7 +353,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			description.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS ||
 			description.SampleDesc.Count != 1 || description.Width < 256 ||
 			description.Height < 256) {
-			return false;
+			return RenderResult::InvalidTarget;
 		}
 
 		ImGui::SetCurrentContext(rendererState.Context);
@@ -403,6 +403,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 			a_engineHeaps.Count,
 			a_engineHeaps.Heaps.data());
 
-		return true;
+		return RenderResult::Rendered;
 	}
 }
