@@ -27,6 +27,12 @@ namespace SFSEMenuFramework::RenderHooks
 
 		constexpr std::size_t resourceBarrierIndex = 26;
 		constexpr std::size_t setDescriptorHeapsIndex = 28;
+		constexpr GUID        streamlineNativeInterface{
+			0xADEC44E2,
+			0x61F0,
+			0x45C3,
+			{ 0xAD, 0x9F, 0x1B, 0x37, 0x37, 0x92, 0x84, 0xFF }
+		};
 
 		enum class HookState : std::uint8_t
 		{
@@ -168,31 +174,95 @@ namespace SFSEMenuFramework::RenderHooks
 			return *reinterpret_cast<const std::uintptr_t*>(address);
 		}
 
-		[[nodiscard]] bool IsNativeD3D12Target(std::uintptr_t a_address)
+		struct AddressModule final
+		{
+			HMODULE Module{};
+			wchar_t Path[MAX_PATH]{};
+		};
+
+		[[nodiscard]] bool GetAddressModule(std::uintptr_t a_address, AddressModule& a_result)
 		{
 			if (!IsExecutableAddress(a_address)) {
 				return false;
 			}
 
-			HMODULE module{};
 			if (!::GetModuleHandleExW(
 					GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
 						GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 					reinterpret_cast<LPCWSTR>(a_address),
-					&module)) {
+					&a_result.Module)) {
 				return false;
 			}
 
-			wchar_t    modulePath[MAX_PATH]{};
-			const auto length = ::GetModuleFileNameW(module, modulePath, MAX_PATH);
+			const auto length = ::GetModuleFileNameW(a_result.Module, a_result.Path, MAX_PATH);
 			if (length == 0 || length >= MAX_PATH) {
 				return false;
 			}
+			return true;
+		}
 
-			const auto* fileName = std::wcsrchr(modulePath, L'\\');
-			fileName = fileName ? fileName + 1 : modulePath;
+		[[nodiscard]] bool IsNativeD3D12Target(std::uintptr_t a_address)
+		{
+			AddressModule owner{};
+			if (!GetAddressModule(a_address, owner)) {
+				return false;
+			}
+
+			const auto* fileName = std::wcsrchr(owner.Path, L'\\');
+			fileName = fileName ? fileName + 1 : owner.Path;
 			return ::_wcsicmp(fileName, L"d3d12.dll") == 0 ||
 			       ::_wcsicmp(fileName, L"d3d12core.dll") == 0;
+		}
+
+		[[nodiscard]] bool IsAdjacentStreamlineTarget(std::uintptr_t a_address)
+		{
+			AddressModule owner{};
+			if (!GetAddressModule(a_address, owner)) {
+				return false;
+			}
+
+			auto* ownerFileName = std::wcsrchr(owner.Path, L'\\');
+			if (!ownerFileName || ::_wcsicmp(ownerFileName + 1, L"sl.interposer.dll") != 0) {
+				return false;
+			}
+			*ownerFileName = L'\0';
+
+			wchar_t executablePath[MAX_PATH]{};
+			const auto executableLength = ::GetModuleFileNameW(nullptr, executablePath, MAX_PATH);
+			if (executableLength == 0 || executableLength >= MAX_PATH) {
+				return false;
+			}
+
+			auto* executableFileName = std::wcsrchr(executablePath, L'\\');
+			if (!executableFileName) {
+				return false;
+			}
+			*executableFileName = L'\0';
+			return ::_wcsicmp(owner.Path, executablePath) == 0;
+		}
+
+		template <class T>
+		[[nodiscard]] bool GetStreamlineNativeInterface(T* a_interface, ComPtr<T>& a_native) noexcept
+		{
+			a_native.Reset();
+			if (!a_interface) {
+				return false;
+			}
+
+			T* native{};
+			if (FAILED(a_interface->QueryInterface(
+					streamlineNativeInterface,
+					reinterpret_cast<void**>(&native))) ||
+				!native) {
+				return false;
+			}
+
+			a_native.Attach(native);
+			if (native == a_interface) {
+				a_native.Reset();
+				return false;
+			}
+			return true;
 		}
 
 		[[nodiscard]] bool HasSameComIdentity(IUnknown* a_left, IUnknown* a_right)
@@ -522,7 +592,55 @@ namespace SFSEMenuFramework::RenderHooks
 				return fail();
 			}
 
-			auto* rawVtable = *reinterpret_cast<std::uintptr_t**>(commandList.Get());
+			ComPtr<ID3D12GraphicsCommandList> nativeCommandList;
+			const bool streamlineProxy = GetStreamlineNativeInterface(
+				commandList.Get(),
+				nativeCommandList);
+			if (streamlineProxy) {
+				auto* proxyRawVtable = *reinterpret_cast<std::uintptr_t**>(commandList.Get());
+				if (!proxyRawVtable) {
+					logger::critical("The NVIDIA Streamline command-list vtable is unavailable");
+					return fail();
+				}
+
+				REL::Relocation<std::uintptr_t> proxyVtable{
+					reinterpret_cast<std::uintptr_t>(proxyRawVtable)
+				};
+				const auto proxyBarrierTarget = ReadVtableSlot(proxyVtable, resourceBarrierIndex);
+				const auto proxyHeapTarget = ReadVtableSlot(proxyVtable, setDescriptorHeapsIndex);
+				if (!IsAdjacentStreamlineTarget(proxyBarrierTarget) ||
+					!IsAdjacentStreamlineTarget(proxyHeapTarget)) {
+					logger::critical(
+						"The Streamline native-interface query came from unsupported command-list targets: "
+						"ResourceBarrier=0x{:X}, SetDescriptorHeaps=0x{:X}",
+						proxyBarrierTarget,
+						proxyHeapTarget);
+					return fail();
+				}
+			}
+			auto* hookCommandList = streamlineProxy ? nativeCommandList.Get() : commandList.Get();
+
+			ComPtr<ID3D12Device> hookDevice;
+			if (FAILED(hookCommandList->GetDevice(IID_PPV_ARGS(hookDevice.GetAddressOf())))) {
+				logger::critical("Could not acquire the native D3D12 command-list device");
+				return fail();
+			}
+
+			ComPtr<ID3D12Device> nativeRendererDevice;
+			const bool rendererDeviceProxy = GetStreamlineNativeInterface(
+				device.Get(),
+				nativeRendererDevice);
+			auto* expectedHookDevice = rendererDeviceProxy ? nativeRendererDevice.Get() : device.Get();
+			if (!HasSameComIdentity(hookDevice.Get(), expectedHookDevice)) {
+				logger::critical("The native D3D12 command list and renderer device do not match");
+				return fail();
+			}
+
+			if (streamlineProxy) {
+				logger::info("NVIDIA Streamline command-list proxy detected; using its native interface");
+			}
+
+			auto* rawVtable = *reinterpret_cast<std::uintptr_t**>(hookCommandList);
 			if (!rawVtable) {
 				logger::critical("The D3D12 command-list vtable is unavailable");
 				return fail();
@@ -535,7 +653,10 @@ namespace SFSEMenuFramework::RenderHooks
 				barrierTarget == FunctionAddress(&ResourceBarrierThunk) ||
 				heapTarget == FunctionAddress(&SetDescriptorHeapsThunk)) {
 				logger::critical(
-					"The D3D12 command-list seam is already owned by another component");
+					"Unsupported native D3D12 command-list targets: "
+					"ResourceBarrier=0x{:X}, SetDescriptorHeaps=0x{:X}",
+					barrierTarget,
+					heapTarget);
 				return fail();
 			}
 
@@ -611,7 +732,7 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 
 			internalD3D = true;
-			const bool rendererReady = D3D12Renderer::Initialize(device.Get());
+			const bool rendererReady = D3D12Renderer::Initialize(hookDevice.Get());
 			internalD3D = false;
 			if (!rendererReady) {
 				const bool restored = RollBackCommandListHooks(
