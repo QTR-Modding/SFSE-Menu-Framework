@@ -1,0 +1,6 @@
+[submodule "lib/commonlibsf"]
+	path = lib/commonlibsf
+	url = https://github.com/QTR-Modding/commonlibsf.git
+[submodule "extern/imgui"]
+	path = extern/imgui
+	url = https://github.com/ocornut/imgui.git

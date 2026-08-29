@@ -1,0 +1,27 @@
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.VC.db
+*.opendb
+*.vsidx
+*.sqlite
+
+# Xmake and generated projects
+.xmake/
+build/
+vsxmake*/
+compile_commands.json
+
+# Compiled artifacts
+*.dll
+*.exe
+*.exp
+*.lib
+*.obj
+*.pdb
+*.pch
+*.ilk
+*.zip
