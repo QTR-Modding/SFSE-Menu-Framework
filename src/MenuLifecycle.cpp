@@ -14,8 +14,11 @@ namespace SFSEMenuFramework::MenuLifecycle
 {
 	namespace
 	{
-		std::atomic_flag installed{};
-		std::atomic<bool> installReady{ false };
+		std::atomic_flag earlyInstallStarted{};
+		std::atomic<bool> earlyInstallReady{ false };
+		std::atomic_flag postDataLoadActivationStarted{};
+		std::atomic<bool> postDataLoadReady{ false };
+		std::atomic_flag hostBootstrapFailureLogged{};
 
 		struct HostClassification final
 		{
@@ -56,9 +59,42 @@ namespace SFSEMenuFramework::MenuLifecycle
 			};
 		}
 
+		void BootstrapHostWindow()
+		{
+			switch (Win32Platform::Initialize()) {
+			case Win32Platform::InitializeResult::Ready:
+				static_cast<void>(Win32Platform::PostHostWindowCallback());
+				break;
+			case Win32Platform::InitializeResult::Deferred:
+				break;
+			case Win32Platform::InitializeResult::Failed:
+				if (!hostBootstrapFailureLogged.test_and_set(
+						std::memory_order_relaxed)) {
+					logger::critical(
+						"Menu lifecycle could not initialize the Win32 platform");
+				}
+				break;
+			}
+		}
+
+		void ReconcileFrameworkOnlyHostWindow() noexcept
+		{
+			const bool renderEnabled =
+				Win32Platform::IsInitialized() &&
+				Win32Platform::IsHostWindowUsable();
+			WindowManager::SetMainWindowRenderEnabled(renderEnabled);
+
+			InputCapture::SetModal(false);
+			D3D12Renderer::SetPlatformInputEnabled(false);
+		}
+
 		void ReconcileHostWindow() noexcept
 		{
 			InputCapture::FlushDiagnostics();
+			if (!postDataLoadReady.load(std::memory_order_acquire)) {
+				ReconcileFrameworkOnlyHostWindow();
+				return;
+			}
 
 			using InputDisposition = MenuOwnership::InputDisposition;
 			const auto host = ClassifyHost();
@@ -69,6 +105,9 @@ namespace SFSEMenuFramework::MenuLifecycle
 				.PauseAllowed =
 					availability == MenuOwnership::HostAvailability::Interactive,
 			});
+			// Publish full input capture only after the HWND thread has reconciled
+			// any already-open startup panel with engine ownership.
+			InputCapture::ArmFunctionalCapture();
 
 			const auto disposition = MenuOwnership::GetInputDisposition();
 			const bool suppressNativeInput =
@@ -103,10 +142,10 @@ namespace SFSEMenuFramework::MenuLifecycle
 		}
 	}
 
-	bool Install(const SFSE::TaskInterface& a_taskInterface)
+	bool InstallEarly(const SFSE::TaskInterface& a_taskInterface)
 	{
-		if (installed.test_and_set(std::memory_order_acq_rel)) {
-			return installReady.load(std::memory_order_acquire);
+		if (earlyInstallStarted.test_and_set(std::memory_order_acq_rel)) {
+			return earlyInstallReady.load(std::memory_order_acquire);
 		}
 
 		if (!FrameworkSettings::Load()) {
@@ -125,10 +164,28 @@ namespace SFSEMenuFramework::MenuLifecycle
 			return false;
 		}
 		Win32Platform::SetHostWindowCallback(&ReconcileHostWindow);
-		MenuOwnership::Install(a_taskInterface);
-		InputCapture::ArmFunctionalCapture();
-		installReady.store(true, std::memory_order_release);
-		logger::info("Mod Control Panel ready; use the configured hotkey to open it");
+		a_taskInterface.AddPermanentTask(&BootstrapHostWindow);
+		InputCapture::ArmKeyboardEdgeCapture();
+		earlyInstallReady.store(true, std::memory_order_release);
+		logger::info(
+			"Mod Control Panel registered during plugin load; it can be opened and rendered once the Starfield window and renderer are ready; full interaction waits for post-data-load");
+		return true;
+	}
+
+	bool ActivatePostDataLoad() noexcept
+	{
+		if (postDataLoadActivationStarted.test_and_set(std::memory_order_acq_rel)) {
+			return postDataLoadReady.load(std::memory_order_acquire);
+		}
+		if (!earlyInstallReady.load(std::memory_order_acquire)) {
+			return false;
+		}
+
+		MenuOwnership::Install();
+		postDataLoadReady.store(true, std::memory_order_release);
+		logger::info(
+			"SFSE post-data-load reached; engine menu ownership can now activate");
+		static_cast<void>(Win32Platform::PostHostWindowCallback());
 		return true;
 	}
 }

@@ -416,9 +416,11 @@ namespace SFSEMenuFramework::Win32Platform
 			if (!WindowManager::SetMainWindowOpen(a_open)) {
 				return false;
 			}
-			if (a_open) {
+			if (a_open && InputCapture::IsOperational()) {
 				// The native menu state changes at the lossless DIK boundary. Arm
-				// modal capture immediately, before Starfield consumes the raw packet.
+				// full modal capture immediately, before Starfield consumes the raw
+				// packet. The pre-data keyboard-only phase suppresses just the
+				// correlated edge and must not acquire modal ownership.
 				InputCapture::SetModal(true);
 			}
 
@@ -507,7 +509,7 @@ namespace SFSEMenuFramework::Win32Platform
 			const bool valid =
 				dik != 0 && dik < state.Down.size() && state.Down[dik] &&
 				::GetForegroundWindow() == a_window &&
-				InputCapture::IsOperational() && mainWindow &&
+				InputCapture::IsKeyboardEdgeOperational() && mainWindow &&
 				!mainWindow->IsOpen.load(std::memory_order_acquire) &&
 				FrameworkSettings::GetToggleMode() ==
 					FrameworkSettings::ToggleMode::Hold &&
@@ -544,7 +546,7 @@ namespace SFSEMenuFramework::Win32Platform
 				}
 				return false;
 			}
-			if (wasDown || !InputCapture::IsOperational()) {
+			if (wasDown || !InputCapture::IsKeyboardEdgeOperational()) {
 				return false;
 			}
 

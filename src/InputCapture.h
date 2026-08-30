@@ -11,6 +11,7 @@ namespace SFSEMenuFramework::InputCapture
 	};
 
 	[[nodiscard]] bool Install();
+	void ArmKeyboardEdgeCapture() noexcept;
 	void ArmFunctionalCapture() noexcept;
 
 	void FlushDiagnostics() noexcept;
@@ -21,5 +22,6 @@ namespace SFSEMenuFramework::InputCapture
 	void CancelPendingKeyboardSuppression() noexcept;
 	void SetModal(bool a_modal) noexcept;
 	[[nodiscard]] bool IsModal() noexcept;
+	[[nodiscard]] bool IsKeyboardEdgeOperational() noexcept;
 	[[nodiscard]] bool IsOperational() noexcept;
 }

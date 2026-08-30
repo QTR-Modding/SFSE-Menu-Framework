@@ -1,7 +1,6 @@
 #include "InputCapture.h"
 
 #include "FrameworkSettings.h"
-#include "LifecycleProbe.h"
 #include "WindowManager.h"
 
 #include <RE/B/BSInputDeviceManagerInput.h>
@@ -60,6 +59,7 @@ namespace SFSEMenuFramework::InputCapture
 
 		std::atomic<HookState>      hookState{ HookState::Uninitialized };
 		std::atomic<InputProcessor> originalInputProcessor{ nullptr };
+		std::atomic<bool>           keyboardEdgeCaptureArmed{ false };
 		std::atomic<bool>           functionalCaptureArmed{ false };
 		std::atomic<bool>           modal{ false };
 		std::atomic<std::uint64_t>  pendingKeyboardSuppression{ 0 };
@@ -127,6 +127,31 @@ namespace SFSEMenuFramework::InputCapture
 			const auto& button = static_cast<const RE::ButtonEvent&>(a_event);
 			return button.deviceType == RE::InputEvent::DeviceType::kKeyboard &&
 			       button.idCode == VK_SNAPSHOT;
+		}
+
+		[[nodiscard]] bool IsInputQueueBounded(
+			const RE::InputEvent* a_queueHead) noexcept
+		{
+			auto event = a_queueHead;
+			std::size_t eventCount{};
+			while (event && eventCount < maximumInputEvents) {
+				event = event->next;
+				++eventCount;
+			}
+			return event == nullptr;
+		}
+
+		void FaultCaptureOnEventLimit() noexcept
+		{
+			captureFaulted.store(true, std::memory_order_release);
+			modal.store(false, std::memory_order_release);
+			pendingKeyboardSuppression.store(0, std::memory_order_release);
+			static_cast<void>(WindowManager::SetMainWindowOpen(false));
+			if (!eventLimitLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::critical(
+					"BSInputDeviceManager input queue exceeded {} events; modal native capture was disabled",
+					maximumInputEvents);
+			}
 		}
 
 		[[nodiscard]] bool CaptureDeadlinePassed(
@@ -323,8 +348,11 @@ namespace SFSEMenuFramework::InputCapture
 			RE::BSInputEventReceiver* a_receiver,
 			const RE::InputEvent*      a_queueHead)
 		{
-			LifecycleProbe::RecordInputCallback(a_queueHead != nullptr);
-			if (!functionalCaptureArmed.load(std::memory_order_acquire)) {
+			const bool functionalCapture =
+				functionalCaptureArmed.load(std::memory_order_acquire);
+			const bool keyboardEdgeCapture =
+				keyboardEdgeCaptureArmed.load(std::memory_order_acquire);
+			if (!functionalCapture && !keyboardEdgeCapture) {
 				const auto original =
 					originalInputProcessor.load(std::memory_order_acquire);
 				if (original) {
@@ -339,8 +367,42 @@ namespace SFSEMenuFramework::InputCapture
 				inputBatchReportPending.store(true, std::memory_order_release);
 			}
 
-			const bool keyboardEdgeMatched =
+			const bool keyboardEdgeMatched = keyboardEdgeCapture &&
 				a_queueHead && TryClaimKeyboardSuppression(a_queueHead);
+			if (!functionalCapture) {
+				if (keyboardEdgeMatched) {
+					// The suppression token can be published concurrently with this
+					// callback. Prove the exact queue that will be mutated is bounded
+					// after claiming the token, not from an earlier atomic snapshot.
+					if (!IsInputQueueBounded(a_queueHead)) {
+						FaultCaptureOnEventLimit();
+						const auto original =
+							originalInputProcessor.load(std::memory_order_acquire);
+						if (original) {
+							original(a_receiver, a_queueHead);
+						}
+						return;
+					}
+					for (auto event = a_queueHead; event; event = event->next) {
+						auto* mutableEvent = const_cast<RE::InputEvent*>(event);
+						mutableEvent->status = RE::InputEvent::Status::kStop;
+					}
+					const auto* mainWindow = WindowManager::GetMainWindow();
+					const bool isOpen = mainWindow &&
+						mainWindow->IsOpen.load(std::memory_order_acquire);
+					edgeReportPending.store(
+						isOpen ? DiagnosticEdge::Opened : DiagnosticEdge::Closed,
+						std::memory_order_release);
+				}
+
+				const auto original =
+					originalInputProcessor.load(std::memory_order_acquire);
+				if (original) {
+					original(a_receiver, a_queueHead);
+				}
+				return;
+			}
+
 			bool stateChanged{};
 			const bool captureBatch = modal.load(std::memory_order_acquire);
 			if (captureBatch || IsOperational()) {
@@ -368,15 +430,7 @@ namespace SFSEMenuFramework::InputCapture
 				if (event) {
 					// Partial capture is not a safe modal state. Fail open for future
 					// batches and let the lifecycle owner close or suspend the menu.
-					captureFaulted.store(true, std::memory_order_release);
-					modal.store(false, std::memory_order_release);
-					pendingKeyboardSuppression.store(0, std::memory_order_release);
-					static_cast<void>(WindowManager::SetMainWindowOpen(false));
-					if (!eventLimitLogged.test_and_set(std::memory_order_relaxed)) {
-						logger::critical(
-							"BSInputDeviceManager input queue exceeded {} events; modal native capture was disabled",
-							maximumInputEvents);
-					}
+					FaultCaptureOnEventLimit();
 				} else if (captureBatch || keyboardEdgeMatched || stateChanged) {
 					// SKSE Menu Framework sends an empty queue on an actual open/close
 					// edge. During ordinary modal capture it retains only PrintScreen.
@@ -491,14 +545,19 @@ namespace SFSEMenuFramework::InputCapture
 		return true;
 	}
 
+	void ArmKeyboardEdgeCapture() noexcept
+	{
+		keyboardEdgeCaptureArmed.store(true, std::memory_order_release);
+	}
+
 	void ArmFunctionalCapture() noexcept
 	{
+		ArmKeyboardEdgeCapture();
 		functionalCaptureArmed.store(true, std::memory_order_release);
 	}
 
 	void FlushDiagnostics() noexcept
 	{
-		LifecycleProbe::Flush();
 		ExpirePendingKeyboardEdge();
 		if (keyboardEdgeCorrelationMissed.exchange(
 				false,
@@ -579,6 +638,13 @@ namespace SFSEMenuFramework::InputCapture
 	bool IsModal() noexcept
 	{
 		return modal.load(std::memory_order_acquire);
+	}
+
+	bool IsKeyboardEdgeOperational() noexcept
+	{
+		return keyboardEdgeCaptureArmed.load(std::memory_order_acquire) &&
+		       hookState.load(std::memory_order_acquire) == HookState::Ready &&
+		       !captureFaulted.load(std::memory_order_acquire);
 	}
 
 	bool IsOperational() noexcept

@@ -7,5 +7,6 @@ namespace SFSE
 
 namespace SFSEMenuFramework::MenuLifecycle
 {
-	[[nodiscard]] bool Install(const SFSE::TaskInterface& a_taskInterface);
+	[[nodiscard]] bool InstallEarly(const SFSE::TaskInterface& a_taskInterface);
+	[[nodiscard]] bool ActivatePostDataLoad() noexcept;
 }

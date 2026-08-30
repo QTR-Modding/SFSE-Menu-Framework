@@ -65,7 +65,6 @@ namespace SFSEMenuFramework::MenuOwnership
 		std::atomic<LifecycleState>   lifecycleState{ LifecycleState::Uninstalled };
 		std::atomic<InputDisposition> inputDisposition{ InputDisposition::PassThrough };
 		std::atomic_flag              wrongThreadLogged{};
-		std::atomic_flag              bootstrapFailureLogged{};
 		std::atomic_flag              lifecycleInstalled{};
 
 		[[nodiscard]] OwnershipState& GetState()
@@ -526,24 +525,9 @@ namespace SFSEMenuFramework::MenuOwnership
 			}
 		}
 
-		void BootstrapHostWindow()
-		{
-			switch (Win32Platform::Initialize()) {
-			case Win32Platform::InitializeResult::Ready:
-				static_cast<void>(Win32Platform::PostHostWindowCallback());
-				break;
-			case Win32Platform::InitializeResult::Deferred:
-				break;
-			case Win32Platform::InitializeResult::Failed:
-				if (!bootstrapFailureLogged.test_and_set(std::memory_order_relaxed)) {
-					logger::critical("Menu input lifecycle could not initialize the Win32 platform");
-				}
-				break;
-			}
-		}
 	}
 
-	void Install(const SFSE::TaskInterface& a_taskInterface)
+	void Install()
 	{
 		if (lifecycleInstalled.test_and_set(std::memory_order_acq_rel)) {
 			logger::warn("Menu input lifecycle is already installed");
@@ -551,9 +535,7 @@ namespace SFSEMenuFramework::MenuOwnership
 		}
 
 		PublishState(LifecycleState::AwaitingLayer, InputDisposition::PassThrough);
-		a_taskInterface.AddPermanentTask(&BootstrapHostWindow);
-		logger::info(
-			"Menu input lifecycle installed; permanent task will bootstrap the host-window callback");
+		logger::info("Engine menu-ownership lifecycle installed");
 	}
 
 	void ReconcileOnHostWindowThread(const ReconcileContext& a_context)

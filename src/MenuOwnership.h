@@ -2,11 +2,6 @@
 
 #include <cstdint>
 
-namespace SFSE
-{
-	class TaskInterface;
-}
-
 namespace SFSEMenuFramework::MenuOwnership
 {
 	enum class HostAvailability : std::uint8_t
@@ -41,7 +36,7 @@ namespace SFSEMenuFramework::MenuOwnership
 		bool             PauseAllowed{ true };
 	};
 
-	void Install(const SFSE::TaskInterface& a_taskInterface);
+	void Install();
 
 	// Engine ownership mutations must run on the Starfield HWND thread. Other
 	// threads request this reconciliation through the Win32 platform bridge.

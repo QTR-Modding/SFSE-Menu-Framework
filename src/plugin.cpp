@@ -1,5 +1,3 @@
-#include "InputCapture.h"
-#include "LifecycleProbe.h"
 #include "MenuLifecycle.h"
 #include "RenderHooks.h"
 
@@ -9,27 +7,19 @@
 
 namespace
 {
-	const SFSE::TaskInterface* taskInterface{};
-	std::atomic<bool>          initializationComplete{ false };
+	std::atomic<bool> earlyLifecycleReady{ false };
 
 	void OnSFSEMessage(SFSE::MessagingInterface::Message* a_message)
 	{
 		if (!a_message || a_message->type != SFSE::MessagingInterface::kPostDataLoad) {
 			return;
 		}
-		SFSEMenuFramework::LifecycleProbe::RecordPostDataLoad();
-
-		if (!initializationComplete.load(std::memory_order_acquire)) {
+		if (!earlyLifecycleReady.load(std::memory_order_acquire)) {
 			return;
 		}
 
-		if (!taskInterface) {
-			logger::critical("The SFSE task interface is unavailable at post-data-load");
-			return;
-		}
-
-		if (!SFSEMenuFramework::MenuLifecycle::Install(*taskInterface)) {
-			logger::critical("Menu input lifecycle initialization failed");
+		if (!SFSEMenuFramework::MenuLifecycle::ActivatePostDataLoad()) {
+			logger::critical("Post-data-load menu ownership activation failed");
 		}
 	}
 }
@@ -51,7 +41,7 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
-	taskInterface = SFSE::GetTaskInterface();
+	const auto* taskInterface = SFSE::GetTaskInterface();
 	if (!taskInterface) {
 		logger::critical("The SFSE task interface is unavailable");
 		return false;
@@ -74,19 +64,19 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return true;
 	}
 
-	if (!SFSEMenuFramework::InputCapture::Install()) {
+	if (!SFSEMenuFramework::MenuLifecycle::InstallEarly(*taskInterface)) {
 		logger::critical(
-			"Failed to install the early native input lifecycle probe; the plugin will remain loaded but inactive");
+			"Failed to install the early menu lifecycle; the plugin will remain loaded but inactive");
 		return true;
 	}
 
-	initializationComplete.store(true, std::memory_order_release);
+	earlyLifecycleReady.store(true, std::memory_order_release);
 
-	logger::info("Native input lifecycle probe installed before SFSE post-data-load");
 	logger::info("Menu input ownership waiting for SFSE post-data-load");
 	logger::info(
 		"External panel interface v{} available",
 		SFSEMenuFramework::Model::INTERFACE_VERSION);
-	logger::info("Mod Control Panel starts closed; controls load at post-data-load");
+	logger::info(
+		"Mod Control Panel starts closed and can open before SFSE post-data-load once rendering is ready");
 	return true;
 }
