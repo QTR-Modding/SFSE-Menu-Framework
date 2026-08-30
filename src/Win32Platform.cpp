@@ -1,10 +1,13 @@
 #include "Win32Platform.h"
 
 #include "D3D12Renderer.h"
+#include "FrameworkSettings.h"
+#include "InputCapture.h"
 #include "WindowManager.h"
 
 #include <backends/imgui_impl_win32.h>
 #include <imgui.h>
+#include <REX/W32/DINPUT.h>
 
 #include <CommCtrl.h>
 #include <Windows.h>
@@ -12,10 +15,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <optional>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
 	HWND   a_window,
@@ -28,6 +33,12 @@ namespace SFSEMenuFramework::Win32Platform
 	namespace
 	{
 		constexpr std::size_t inputQueueCapacity = 256;
+		constexpr auto doublePressThreshold = std::chrono::milliseconds{ 300 };
+		constexpr UINT keyboardHoldThresholdMilliseconds = 401;
+		constexpr UINT_PTR keyboardHoldTimerTag =
+			static_cast<UINT_PTR>(0x53464D4600000000ULL);
+		constexpr UINT_PTR keyboardHoldTimerTagMask =
+			static_cast<UINT_PTR>(0xFFFFFFFF00000000ULL);
 
 		struct WindowSearch final
 		{
@@ -80,6 +91,25 @@ namespace SFSEMenuFramework::Win32Platform
 			int           TrackedArea{ 0 };
 		};
 
+		struct KeyboardTransition final
+		{
+			std::uint32_t DIK{ 0 };
+			std::int32_t  EngineEventID{ -1 };
+			bool          Down{ false };
+		};
+
+		struct KeyboardToggleState final
+		{
+			std::array<bool, 0x100>              Down{};
+			std::chrono::steady_clock::time_point LastPress{};
+			std::uint32_t                         LastPressDIK{ 0 };
+			std::uint32_t                         HoldDIK{ 0 };
+			std::int32_t                          HoldEngineEventID{ -1 };
+			HWND                                  HoldWindow{ nullptr };
+			UINT_PTR                              HoldTimerID{ 0 };
+			bool                                  HasLastPress{ false };
+		};
+
 		std::atomic<bool>               subclassActive{ false };
 		std::atomic<bool>               acceptInput{ false };
 		std::atomic<bool>               backendAlive{ false };
@@ -101,7 +131,9 @@ namespace SFSEMenuFramework::Win32Platform
 		std::atomic_flag                ambiguousWindowLogged{};
 		std::atomic_flag                subclassInstallFailureLogged{};
 		std::atomic_flag                subclassVerificationFailureLogged{};
-		bool                            escapeKeyConsumed{ false };
+		std::atomic_flag                rawKeyboardReadFailureLogged{};
+		std::atomic_flag                keyboardHoldTimerFailureLogged{};
+		std::atomic<std::uint32_t>      keyboardHoldTimerGeneration{ 0 };
 
 		[[nodiscard]] InputQueueState& GetInputQueue()
 		{
@@ -121,6 +153,12 @@ namespace SFSEMenuFramework::Win32Platform
 			return *state;
 		}
 
+		[[nodiscard]] KeyboardToggleState& GetKeyboardToggleState()
+		{
+			static auto* state = new KeyboardToggleState();
+			return *state;
+		}
+
 		LRESULT CALLBACK WindowSubclass(
 			HWND      a_window,
 			UINT      a_message,
@@ -132,6 +170,445 @@ namespace SFSEMenuFramework::Win32Platform
 		[[nodiscard]] UINT_PTR SubclassID() noexcept
 		{
 			return reinterpret_cast<UINT_PTR>(&WindowSubclass);
+		}
+
+		[[nodiscard]] bool IsKeyMessage(UINT a_message) noexcept;
+
+		void CancelKeyboardHold() noexcept
+		{
+			auto& state = GetKeyboardToggleState();
+			if (state.HoldTimerID != 0 && state.HoldWindow) {
+				static_cast<void>(::KillTimer(state.HoldWindow, state.HoldTimerID));
+			}
+			state.HoldDIK = 0;
+			state.HoldEngineEventID = -1;
+			state.HoldWindow = nullptr;
+			state.HoldTimerID = 0;
+			InputCapture::CancelPendingHeldKeyboardSuppression();
+		}
+
+		void ResetKeyboardToggleState() noexcept
+		{
+			auto& state = GetKeyboardToggleState();
+			CancelKeyboardHold();
+			InputCapture::CancelPendingKeyboardSuppression();
+			state.Down.fill(false);
+			state.LastPress = {};
+			state.LastPressDIK = 0;
+			state.HasLastPress = false;
+		}
+
+		[[nodiscard]] std::optional<std::int32_t>
+		NormalizeStarfieldKeyboardEventID(
+			USHORT a_makeCode,
+			USHORT a_flags,
+			USHORT a_virtualKey) noexcept
+		{
+			// Mirrors Starfield 1.16.244's RAWKEYBOARD normalization at
+			// 0x1422D7AFF-0x1422D7CF2. This is used only to correlate the
+			// lossless DIK decision with the exact later engine batch.
+			std::uint32_t id = a_virtualKey;
+			if (id == 0xFF) {
+				return std::nullopt;
+			}
+
+			if (id == VK_SHIFT) {
+				id = ::MapVirtualKeyA(a_makeCode, MAPVK_VSC_TO_VK_EX);
+			} else if (id == VK_NUMLOCK) {
+				id = ::MapVirtualKeyA(VK_NUMLOCK, MAPVK_VK_TO_VSC);
+			}
+
+			const bool e0 = (a_flags & RI_KEY_E0) != 0;
+			const bool e1 = (a_flags & RI_KEY_E1) != 0;
+			if (e1 && id != VK_PAUSE) {
+				id = ::MapVirtualKeyA(id, MAPVK_VK_TO_VSC);
+			}
+
+			if (id == VK_CONTROL) {
+				id = VK_LCONTROL + static_cast<std::uint32_t>(e0);
+			} else if (id == VK_MENU) {
+				id = VK_LMENU + static_cast<std::uint32_t>(e0);
+			} else if (!e0) {
+				switch (id) {
+				case VK_CLEAR:
+					id = VK_NUMPAD5;
+					break;
+				case VK_PRIOR:
+					id = VK_NUMPAD9;
+					break;
+				case VK_NEXT:
+					id = VK_NUMPAD3;
+					break;
+				case VK_END:
+					id = VK_NUMPAD1;
+					break;
+				case VK_HOME:
+					id = VK_NUMPAD7;
+					break;
+				case VK_LEFT:
+					id = VK_NUMPAD4;
+					break;
+				case VK_UP:
+					id = VK_NUMPAD8;
+					break;
+				case VK_RIGHT:
+					id = VK_NUMPAD6;
+					break;
+				case VK_DOWN:
+					id = VK_NUMPAD2;
+					break;
+				case VK_INSERT:
+					id = VK_NUMPAD0;
+					break;
+				case VK_DELETE:
+					id = VK_DECIMAL;
+					break;
+				default:
+					break;
+				}
+			}
+
+			if (id == 0 || id >= 0x100) {
+				return std::nullopt;
+			}
+			return static_cast<std::int32_t>(id);
+		}
+
+		[[nodiscard]] std::optional<KeyboardTransition> ReadRawKeyboard(
+			LPARAM a_lParam) noexcept
+		{
+			RAWINPUTHEADER header{};
+			UINT headerSize = sizeof(header);
+			const auto headerBytes = ::GetRawInputData(
+				reinterpret_cast<HRAWINPUT>(a_lParam),
+				RID_HEADER,
+				&header,
+				&headerSize,
+				sizeof(RAWINPUTHEADER));
+			if (headerBytes == static_cast<UINT>(-1) ||
+				headerBytes != sizeof(header)) {
+				if (!rawKeyboardReadFailureLogged.test_and_set(
+						std::memory_order_relaxed)) {
+					logger::warn("Starfield RAWINPUT header could not be read");
+				}
+				return std::nullopt;
+			}
+			if (header.dwType != RIM_TYPEKEYBOARD) {
+				return std::nullopt;
+			}
+
+			RAWINPUT input{};
+			UINT size = sizeof(input);
+			const auto copied = ::GetRawInputData(
+				reinterpret_cast<HRAWINPUT>(a_lParam),
+				RID_INPUT,
+				&input,
+				&size,
+				sizeof(RAWINPUTHEADER));
+			if (copied == static_cast<UINT>(-1) ||
+				copied < sizeof(RAWINPUTHEADER) + sizeof(RAWKEYBOARD) ||
+				input.header.dwType != RIM_TYPEKEYBOARD) {
+				if (!rawKeyboardReadFailureLogged.test_and_set(
+						std::memory_order_relaxed)) {
+					logger::warn("Starfield raw keyboard packet could not be read");
+				}
+				return std::nullopt;
+			}
+
+			const auto& keyboard = input.data.keyboard;
+			if (keyboard.MakeCode == 0 ||
+				keyboard.MakeCode == KEYBOARD_OVERRUN_MAKE_CODE ||
+				keyboard.VKey >= 0xFF) {
+				return std::nullopt;
+			}
+
+			const bool e0 = (keyboard.Flags & RI_KEY_E0) != 0;
+			const bool e1 = (keyboard.Flags & RI_KEY_E1) != 0;
+			if (e0 && e1) {
+				return std::nullopt;
+			}
+
+			std::uint32_t dik{};
+			if (e1) {
+				if (keyboard.MakeCode != 0x45 || keyboard.VKey != VK_PAUSE) {
+					return std::nullopt;
+				}
+				dik = REX::W32::DIK_PAUSE;
+			} else {
+				dik = keyboard.MakeCode & 0x7FU;
+				if (e0) {
+					dik |= 0x80U;
+				}
+			}
+
+			if (dik == 0 || dik >= 0x100) {
+				return std::nullopt;
+			}
+			const auto engineEventID = NormalizeStarfieldKeyboardEventID(
+				keyboard.MakeCode,
+				keyboard.Flags,
+				keyboard.VKey);
+			return KeyboardTransition{
+				.DIK = dik,
+				.EngineEventID = engineEventID.value_or(-1),
+				.Down = (keyboard.Flags & RI_KEY_BREAK) == 0
+			};
+		}
+
+		[[nodiscard]] std::optional<KeyboardTransition> ReadLegacyKeyboard(
+			UINT a_message,
+			WPARAM a_wParam,
+			LPARAM a_lParam) noexcept
+		{
+			if (!IsKeyMessage(a_message)) {
+				return std::nullopt;
+			}
+
+			const auto bits = static_cast<std::uintptr_t>(a_lParam);
+			const auto makeCode =
+				static_cast<USHORT>((bits >> 16) & 0x7F);
+			USHORT flags{};
+			if ((bits & (std::uintptr_t{ 1 } << 24)) != 0) {
+				flags |= RI_KEY_E0;
+			}
+			if (a_wParam == VK_PAUSE) {
+				flags |= RI_KEY_E1;
+			}
+			const bool down =
+				a_message == WM_KEYDOWN || a_message == WM_SYSKEYDOWN;
+			if (!down) {
+				flags |= RI_KEY_BREAK;
+			}
+
+			std::uint32_t dik{};
+			if (a_wParam == VK_PAUSE) {
+				dik = REX::W32::DIK_PAUSE;
+			} else if (a_wParam == VK_SNAPSHOT) {
+				dik = REX::W32::DIK_SYSRQ;
+			} else {
+				dik = makeCode;
+				if ((flags & RI_KEY_E0) != 0) {
+					dik |= 0x80U;
+				}
+			}
+
+			if (dik == 0 || dik >= 0x100) {
+				return std::nullopt;
+			}
+			const auto engineEventID = NormalizeStarfieldKeyboardEventID(
+				makeCode,
+				flags,
+				static_cast<USHORT>(a_wParam));
+			return KeyboardTransition{
+				.DIK = dik,
+				.EngineEventID = engineEventID.value_or(-1),
+				.Down = down
+			};
+		}
+
+		[[nodiscard]] bool ApplyMainWindowKeyboardEdge(
+			bool          a_open,
+			std::uint32_t a_dik,
+			std::int32_t  a_expectedEngineEventID,
+			InputCapture::KeyboardEdgeMatch a_match =
+				InputCapture::KeyboardEdgeMatch::InitialPress) noexcept
+		{
+			if (!WindowManager::SetMainWindowOpen(a_open)) {
+				return false;
+			}
+			if (a_open) {
+				// The native menu state changes at the lossless DIK boundary. Arm
+				// modal capture immediately, before Starfield consumes the raw packet.
+				InputCapture::SetModal(true);
+			}
+
+			const bool suppressionQueued =
+				InputCapture::RequestKeyboardSuppression(
+					a_expectedEngineEventID,
+					a_match);
+
+			logger::info(
+				"Raw DIK {} {} the Mod Control Panel; native batch suppression {}",
+				a_dik,
+				a_open ? "opened" : "closed",
+				suppressionQueued ? "queued" : "unavailable");
+			return true;
+		}
+
+		[[nodiscard]] UINT_PTR NextKeyboardHoldTimerID() noexcept
+		{
+			auto generation =
+				keyboardHoldTimerGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+			if (generation == 0) {
+				generation =
+					keyboardHoldTimerGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+			}
+			return keyboardHoldTimerTag | static_cast<UINT_PTR>(generation);
+		}
+
+		[[nodiscard]] bool IsKeyboardHoldTimerID(UINT_PTR a_timerID) noexcept
+		{
+			return (a_timerID & keyboardHoldTimerTagMask) == keyboardHoldTimerTag;
+		}
+
+		[[nodiscard]] bool ArmKeyboardHold(
+			HWND          a_window,
+			std::uint32_t a_dik,
+			std::int32_t  a_expectedEngineEventID) noexcept
+		{
+			CancelKeyboardHold();
+			auto& state = GetKeyboardToggleState();
+			const auto timerID = NextKeyboardHoldTimerID();
+			state.HoldDIK = a_dik;
+			state.HoldEngineEventID = a_expectedEngineEventID;
+			state.HoldWindow = a_window;
+			const auto installedTimerID = ::SetTimer(
+				a_window,
+				timerID,
+				keyboardHoldThresholdMilliseconds,
+				nullptr);
+			if (installedTimerID != timerID) {
+				if (installedTimerID != 0) {
+					static_cast<void>(::KillTimer(a_window, installedTimerID));
+				}
+				state.HoldDIK = 0;
+				state.HoldEngineEventID = -1;
+				state.HoldWindow = nullptr;
+				if (!keyboardHoldTimerFailureLogged.test_and_set(
+						std::memory_order_relaxed)) {
+					logger::warn("Failed to arm the configured keyboard hold timer");
+				}
+				return false;
+			}
+			state.HoldTimerID = installedTimerID;
+			return true;
+		}
+
+		[[nodiscard]] bool ProcessKeyboardHoldTimer(
+			HWND a_window,
+			UINT_PTR a_timerID) noexcept
+		{
+			if (!IsKeyboardHoldTimerID(a_timerID)) {
+				return false;
+			}
+
+			auto& state = GetKeyboardToggleState();
+			if (state.HoldTimerID != a_timerID || state.HoldWindow != a_window) {
+				// A killed timer message may already be queued. Its generation-tagged
+				// ID cannot act on a newer hold.
+				return true;
+			}
+			static_cast<void>(::KillTimer(a_window, a_timerID));
+			state.HoldTimerID = 0;
+
+			const auto dik = state.HoldDIK;
+			const auto expectedEngineEventID = state.HoldEngineEventID;
+			const auto* mainWindow = WindowManager::GetMainWindow();
+			const bool valid =
+				dik != 0 && dik < state.Down.size() && state.Down[dik] &&
+				::GetForegroundWindow() == a_window &&
+				InputCapture::IsOperational() && mainWindow &&
+				!mainWindow->IsOpen.load(std::memory_order_acquire) &&
+				FrameworkSettings::GetToggleMode() ==
+					FrameworkSettings::ToggleMode::Hold &&
+				FrameworkSettings::GetToggleKey() == dik;
+			if (!valid) {
+				CancelKeyboardHold();
+				return true;
+			}
+
+			if (!ApplyMainWindowKeyboardEdge(
+					true,
+					dik,
+					expectedEngineEventID,
+					InputCapture::KeyboardEdgeMatch::HeldPress)) {
+				CancelKeyboardHold();
+			}
+			return true;
+		}
+
+		[[nodiscard]] bool ProcessKeyboardTransition(
+			HWND                      a_window,
+			const KeyboardTransition& a_transition) noexcept
+		{
+			auto& state = GetKeyboardToggleState();
+			const auto dik = a_transition.DIK;
+			if (dik >= state.Down.size() || ::GetForegroundWindow() != a_window) {
+				return false;
+			}
+			const bool wasDown = state.Down[dik];
+			state.Down[dik] = a_transition.Down;
+			if (!a_transition.Down) {
+				if (state.HoldDIK == dik) {
+					CancelKeyboardHold();
+				}
+				return false;
+			}
+			if (wasDown || !InputCapture::IsOperational()) {
+				return false;
+			}
+
+			const auto* mainWindow = WindowManager::GetMainWindow();
+			if (!mainWindow) {
+				return false;
+			}
+			const bool mainWindowOpen =
+				mainWindow->IsOpen.load(std::memory_order_acquire);
+			if (dik == REX::W32::DIK_ESCAPE && mainWindowOpen) {
+				CancelKeyboardHold();
+				return ApplyMainWindowKeyboardEdge(
+					false,
+					dik,
+					a_transition.EngineEventID);
+			}
+
+			const auto configured = FrameworkSettings::GetToggleKey();
+			if (dik != configured) {
+				return false;
+			}
+
+			if (dik == REX::W32::DIK_F4 &&
+				(state.Down[REX::W32::DIK_LMENU] ||
+				 state.Down[REX::W32::DIK_RMENU])) {
+				return false;
+			}
+
+			if (mainWindowOpen) {
+				CancelKeyboardHold();
+				return ApplyMainWindowKeyboardEdge(
+					false,
+					dik,
+					a_transition.EngineEventID);
+			}
+
+			switch (FrameworkSettings::GetToggleMode()) {
+			case FrameworkSettings::ToggleMode::SinglePress:
+				return ApplyMainWindowKeyboardEdge(
+					true,
+					dik,
+					a_transition.EngineEventID);
+			case FrameworkSettings::ToggleMode::Hold:
+				return ArmKeyboardHold(
+					a_window,
+					dik,
+					a_transition.EngineEventID);
+			case FrameworkSettings::ToggleMode::DoublePress: {
+				const auto now = std::chrono::steady_clock::now();
+				const bool doublePress =
+					state.HasLastPress && state.LastPressDIK == dik &&
+					now - state.LastPress < doublePressThreshold;
+				state.LastPress = now;
+				state.LastPressDIK = dik;
+				state.HasLastPress = !doublePress;
+				return doublePress && ApplyMainWindowKeyboardEdge(
+					true,
+					dik,
+					a_transition.EngineEventID);
+			}
+			case FrameworkSettings::ToggleMode::Off:
+			default:
+				return false;
+			}
 		}
 
 		[[nodiscard]] UINT HostWindowCallbackMessage() noexcept
@@ -196,18 +673,6 @@ namespace SFSEMenuFramework::Win32Platform
 		{
 			return a_message == WM_KEYDOWN || a_message == WM_KEYUP ||
 			       a_message == WM_SYSKEYDOWN || a_message == WM_SYSKEYUP;
-		}
-
-		[[nodiscard]] bool IsInitialKeyDown(UINT a_message, LPARAM a_lParam) noexcept
-		{
-			const bool isDown = a_message == WM_KEYDOWN || a_message == WM_SYSKEYDOWN;
-			const auto bits = static_cast<std::uintptr_t>(a_lParam);
-			return isDown && (bits & (std::uintptr_t{ 1 } << 30)) == 0;
-		}
-
-		[[nodiscard]] bool IsKeyUp(UINT a_message) noexcept
-		{
-			return a_message == WM_KEYUP || a_message == WM_SYSKEYUP;
 		}
 
 		[[nodiscard]] bool IsAltF4(
@@ -661,14 +1126,23 @@ namespace SFSEMenuFramework::Win32Platform
 				return 0;
 			}
 
+			if (a_message == WM_TIMER &&
+				ProcessKeyboardHoldTimer(a_window, a_wParam)) {
+				return 0;
+			}
+
 			if (a_message == WM_INPUT) {
+				if (const auto transition = ReadRawKeyboard(a_lParam)) {
+					static_cast<void>(
+						ProcessKeyboardTransition(a_window, *transition));
+				}
 				LogInputMessageOnce(a_message);
 				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
 			}
 
 			if (a_message == WM_NCDESTROY) {
 				UpdateInputState(false);
-				escapeKeyConsumed = false;
+				ResetKeyboardToggleState();
 				hostWindowTearingDown.store(true, std::memory_order_release);
 				hostCallbackPending.store(false, std::memory_order_release);
 				if (const auto callback =
@@ -696,6 +1170,7 @@ namespace SFSEMenuFramework::Win32Platform
 					(a_message == WM_ACTIVATE && LOWORD(a_wParam) == WA_INACTIVE);
 				if (losingFocus) {
 					UpdateInputState(false);
+					ResetKeyboardToggleState();
 				}
 				if (a_message == WM_SETFOCUS || a_message == WM_KILLFOCUS) {
 					static_cast<void>(EnqueueWindowMessage(
@@ -710,6 +1185,7 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 
 			if (a_message == WM_INPUTLANGCHANGE) {
+				ResetKeyboardToggleState();
 				static_cast<void>(EnqueueWindowMessage(
 					a_window,
 					a_message,
@@ -719,29 +1195,20 @@ namespace SFSEMenuFramework::Win32Platform
 				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
 			}
 
-			bool modalInput =
+			if (IsKeyMessage(a_message) &&
+				!IsAltF4(a_message, a_wParam, a_lParam)) {
+				if (const auto transition =
+						ReadLegacyKeyboard(a_message, a_wParam, a_lParam)) {
+					static_cast<void>(
+						ProcessKeyboardTransition(a_window, *transition));
+				}
+			}
+
+			const bool modalInput =
 				acceptInput.load(std::memory_order_acquire) && HasCurrentInputLease();
 			if (acceptInput.load(std::memory_order_relaxed) && !modalInput) {
 				UpdateInputState(false);
 				static_cast<void>(PostHostWindowCallback());
-			}
-
-			const bool isEscapeMessage =
-				(a_message == WM_KEYDOWN || a_message == WM_KEYUP) &&
-				a_wParam == VK_ESCAPE;
-			if (isEscapeMessage && (modalInput || escapeKeyConsumed)) {
-				if (IsInitialKeyDown(a_message, a_lParam)) {
-					escapeKeyConsumed = true;
-					if (WindowManager::SetMainWindowOpen(false)) {
-						logger::info("Mod Control Panel closed");
-					}
-					UpdateInputState(false);
-					static_cast<void>(PostHostWindowCallback());
-					modalInput = false;
-				} else if (IsKeyUp(a_message)) {
-					escapeKeyConsumed = false;
-				}
-				return 0;
 			}
 
 			if (!modalInput || !IsBackendInputMessage(a_message) ||
@@ -787,7 +1254,7 @@ namespace SFSEMenuFramework::Win32Platform
 					"Win32 window subclass state no longer matches its verified HWND/thread");
 			}
 			UpdateInputState(false);
-			escapeKeyConsumed = false;
+			ResetKeyboardToggleState();
 			hostWindowTearingDown.store(true, std::memory_order_release);
 			hostCallbackPending.store(false, std::memory_order_release);
 			if (const auto callback =
@@ -847,6 +1314,7 @@ namespace SFSEMenuFramework::Win32Platform
 		initializedHostWindowThreadID.store(search.ThreadID, std::memory_order_release);
 		hostWindowTearingDown.store(false, std::memory_order_release);
 		hostCallbackPending.store(false, std::memory_order_release);
+		ResetKeyboardToggleState();
 		subclassActive.store(true, std::memory_order_release);
 		RequestInputReset();
 		logger::info(

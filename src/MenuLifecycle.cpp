@@ -124,8 +124,6 @@ namespace SFSEMenuFramework::MenuLifecycle
 				"Failed to register the built-in Mod Control Panel window");
 			return false;
 		}
-		InputCapture::ArmKeyboardDiagnosticTrace();
-
 		Win32Platform::SetHostWindowCallback(&ReconcileHostWindow);
 		MenuOwnership::Install(a_taskInterface);
 		installReady.store(true, std::memory_order_release);

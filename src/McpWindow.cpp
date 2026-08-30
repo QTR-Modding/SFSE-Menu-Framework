@@ -5,10 +5,7 @@
 #include "Win32Platform.h"
 #include "WindowManager.h"
 
-#include <SFSE/InputMap.h>
 #include <imgui.h>
-#include <REX/W32/DINPUT.h>
-#include <REX/W32/XINPUT.h>
 
 #include <algorithm>
 #include <array>
@@ -24,25 +21,6 @@ namespace
 	constexpr auto frameworkSettingsHandle =
 		(std::numeric_limits<SFSEMenuFramework::Model::PanelHandle>::max)();
 	SFSEMenuFramework::Model::PanelHandle selectedPanelHandle{ frameworkSettingsHandle };
-
-	constexpr std::array<std::uint32_t, 16> gamePadBindings{
-		REX::W32::XINPUT_GAMEPAD_DPAD_UP,
-		REX::W32::XINPUT_GAMEPAD_DPAD_DOWN,
-		REX::W32::XINPUT_GAMEPAD_DPAD_LEFT,
-		REX::W32::XINPUT_GAMEPAD_DPAD_RIGHT,
-		REX::W32::XINPUT_GAMEPAD_START,
-		REX::W32::XINPUT_GAMEPAD_BACK,
-		REX::W32::XINPUT_GAMEPAD_LEFT_THUMB,
-		REX::W32::XINPUT_GAMEPAD_RIGHT_THUMB,
-		REX::W32::XINPUT_GAMEPAD_LEFT_SHOULDER,
-		REX::W32::XINPUT_GAMEPAD_RIGHT_SHOULDER,
-		REX::W32::XINPUT_GAMEPAD_A,
-		REX::W32::XINPUT_GAMEPAD_B,
-		REX::W32::XINPUT_GAMEPAD_X,
-		REX::W32::XINPUT_GAMEPAD_Y,
-		0x9,
-		0xA
-	};
 
 	void ApplyRuntimeSettings()
 	{
@@ -69,10 +47,10 @@ namespace
 		using ToggleMode = SFSEMenuFramework::FrameworkSettings::ToggleMode;
 		int selected = std::to_underlying(a_current);
 		constexpr std::array names{
-			"Single press",
-			"Hold",
-			"Double press",
-			"Off"
+			"SINGLEPRESS",
+			"HOLD",
+			"DOUBLEPRESS",
+			"OFF"
 		};
 		ImGui::TextUnformatted(a_label);
 		if (!ImGui::Combo(
@@ -92,23 +70,23 @@ namespace
 	[[nodiscard]] bool RenderKeyboardBinding()
 	{
 		const auto current = SFSEMenuFramework::FrameworkSettings::GetToggleKey();
-		const auto currentName = SFSE::InputMap::GetKeyboardKeyName(current);
+		const auto currentName =
+			SFSEMenuFramework::FrameworkSettings::GetKeyboardBindingName(current);
 		bool changed{};
 		ImGui::TextUnformatted("Toggle key (keyboard)");
 		if (ImGui::BeginCombo(
 				"##KeyboardToggleKey",
-				currentName.empty() ? "Unknown" : currentName.c_str())) {
-			for (std::uint32_t key = 1; key <= 0xFF; ++key) {
-				if (key == REX::W32::DIK_ESCAPE || key == REX::W32::DIK_SYSRQ) {
-					continue;
+				currentName.empty() ? "UNKNOWN" : currentName.data())) {
+			for (const auto& binding :
+				 SFSEMenuFramework::FrameworkSettings::GetKeyboardBindings()) {
+				const bool selected = binding.Code == current;
+				ImGui::PushID(static_cast<int>(binding.Code));
+				if (ImGui::Selectable(binding.Name.data(), selected)) {
+					changed = SFSEMenuFramework::FrameworkSettings::SetToggleKey(
+						binding.Code);
 				}
-				const auto name = SFSE::InputMap::GetKeyboardKeyName(key);
-				if (name.empty()) {
-					continue;
-				}
-				ImGui::PushID(static_cast<int>(key));
-				if (ImGui::Selectable(name.c_str(), key == current)) {
-					changed = SFSEMenuFramework::FrameworkSettings::SetToggleKey(key);
+				if (selected) {
+					ImGui::SetItemDefaultFocus();
 				}
 				ImGui::PopID();
 			}
@@ -117,31 +95,28 @@ namespace
 		return changed;
 	}
 
-	[[nodiscard]] std::string GamePadBindingName(std::uint32_t a_binding)
-	{
-		const auto keyCode = SFSE::InputMap::GamepadMaskToKeycode(a_binding);
-		return SFSE::InputMap::GetGamepadButtonName(keyCode);
-	}
-
 	[[nodiscard]] bool RenderGamePadBinding()
 	{
 		const auto current =
 			SFSEMenuFramework::FrameworkSettings::GetToggleKeyGamePad();
-		const auto currentName = GamePadBindingName(current);
+		const auto currentName =
+			SFSEMenuFramework::FrameworkSettings::GetGamePadBindingName(current);
 		bool changed{};
 		ImGui::TextUnformatted("Toggle key (gamepad)");
 		if (ImGui::BeginCombo(
 				"##GamePadToggleKey",
-				currentName.empty() ? "Unknown" : currentName.c_str())) {
-			for (const auto binding : gamePadBindings) {
-				const auto name = GamePadBindingName(binding);
-				if (name.empty()) {
-					continue;
-				}
-				ImGui::PushID(static_cast<int>(binding));
-				if (ImGui::Selectable(name.c_str(), binding == current)) {
+				currentName.empty() ? "UNKNOWN" : currentName.data())) {
+			for (const auto& binding :
+				 SFSEMenuFramework::FrameworkSettings::GetGamePadBindings()) {
+				const bool selected = binding.Code == current;
+				ImGui::PushID(static_cast<int>(binding.Code));
+				if (ImGui::Selectable(binding.Name.data(), selected)) {
 					changed =
-						SFSEMenuFramework::FrameworkSettings::SetToggleKeyGamePad(binding);
+						SFSEMenuFramework::FrameworkSettings::SetToggleKeyGamePad(
+							binding.Code);
+				}
+				if (selected) {
+					ImGui::SetItemDefaultFocus();
 				}
 				ImGui::PopID();
 			}

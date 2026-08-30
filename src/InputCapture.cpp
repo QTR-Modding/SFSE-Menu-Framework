@@ -4,16 +4,13 @@
 #include "WindowManager.h"
 
 #include <RE/B/BSInputDeviceManagerInput.h>
-#include <REX/W32/DINPUT.h>
 
 #include <Windows.h>
 
 #include <array>
 #include <atomic>
-#include <bit>
 #include <chrono>
 #include <cstring>
-#include <utility>
 
 namespace SFSEMenuFramework::InputCapture
 {
@@ -33,6 +30,11 @@ namespace SFSEMenuFramework::InputCapture
 		constexpr std::size_t maximumInputEvents = 512;
 		constexpr float       holdThresholdSeconds = 0.4F;
 		constexpr auto        doublePressThreshold = std::chrono::milliseconds{ 300 };
+		constexpr std::uint32_t initialKeyboardEdgeWindowMilliseconds = 250;
+		constexpr std::uint32_t heldKeyboardEdgeWindowMilliseconds = 2000;
+		constexpr std::uint32_t keyboardEdgeIDMask = 0xFF;
+		constexpr std::uint32_t keyboardEdgeHeldBit = 1U << 8;
+		constexpr std::uint32_t keyboardEdgeGenerationMask = 0x007FFFFF;
 		constexpr std::array<std::uint8_t, 16> expectedInputProcessorPrologue{
 			0x48, 0x85, 0xD2, 0x0F, 0x84, 0xAC, 0x01, 0x00,
 			0x00, 0x53, 0x55, 0x48, 0x83, 0xEC, 0x38, 0x4C
@@ -53,45 +55,19 @@ namespace SFSEMenuFramework::InputCapture
 			Closed
 		};
 
-		enum class DiagnosticTraceState : std::uint8_t
-		{
-			Idle,
-			Preparing,
-			Armed,
-			Writing,
-			Ready,
-			Reporting,
-			Completed
-		};
-
-		struct DiagnosticSample final
-		{
-			std::uint32_t EventIndex{ 0 };
-			std::uint32_t EventType{ 0 };
-			std::uint32_t DeviceType{ 0 };
-			std::uint32_t DeviceID{ 0 };
-			std::int32_t  IDCode{ -1 };
-			std::uint32_t TimeCode{ 0 };
-			std::uint32_t Status{ 0 };
-			std::uint32_t ValueBits{ 0 };
-			std::uint32_t HeldDownBits{ 0 };
-		};
-
 		using InputProcessor = RE::BSInputDeviceManagerInput::PerformInputProcessing_t*;
 
 		std::atomic<HookState>      hookState{ HookState::Uninitialized };
 		std::atomic<InputProcessor> originalInputProcessor{ nullptr };
 		std::atomic<bool>           modal{ false };
+		std::atomic<std::uint64_t>  pendingKeyboardSuppression{ 0 };
+		std::atomic<std::uint32_t>  keyboardEdgeGeneration{ 0 };
 		std::atomic<bool>           captureFaulted{ false };
+		std::atomic<bool>           keyboardEdgeCorrelationMissed{ false };
 		std::atomic_flag            inputBatchObserved{};
 		std::atomic<bool>           inputBatchReportPending{ false };
 		std::atomic<DiagnosticEdge> edgeReportPending{ DiagnosticEdge::None };
 		std::atomic_flag            eventLimitLogged{};
-		std::atomic<DiagnosticTraceState> diagnosticTraceState{
-			DiagnosticTraceState::Idle
-		};
-		DiagnosticSample diagnosticSample{};
-
 		struct ToggleTracker final
 		{
 			std::chrono::steady_clock::time_point LastPress{};
@@ -99,7 +75,6 @@ namespace SFSEMenuFramework::InputCapture
 			bool                                  HoldTriggered{ false };
 		};
 
-		ToggleTracker keyboardToggle;
 		ToggleTracker gamePadToggle;
 
 		[[nodiscard]] bool IsReadablePointer(std::uintptr_t a_address) noexcept
@@ -149,7 +124,109 @@ namespace SFSEMenuFramework::InputCapture
 
 			const auto& button = static_cast<const RE::ButtonEvent&>(a_event);
 			return button.deviceType == RE::InputEvent::DeviceType::kKeyboard &&
-			       button.idCode == static_cast<std::int32_t>(REX::W32::DIK_SYSRQ);
+			       button.idCode == VK_SNAPSHOT;
+		}
+
+		[[nodiscard]] bool CaptureDeadlinePassed(
+			std::uint32_t a_deadline,
+			std::uint32_t a_now) noexcept
+		{
+			return static_cast<std::int32_t>(a_now - a_deadline) > 0;
+		}
+
+		void ExpirePendingKeyboardEdge() noexcept
+		{
+			auto pending = pendingKeyboardSuppression.load(std::memory_order_acquire);
+			if (pending == 0) {
+				return;
+			}
+
+			const auto deadline = static_cast<std::uint32_t>(pending >> 32);
+			if (CaptureDeadlinePassed(deadline, ::GetTickCount()) &&
+				pendingKeyboardSuppression.compare_exchange_strong(
+					pending,
+					0,
+					std::memory_order_acq_rel,
+					std::memory_order_acquire)) {
+				keyboardEdgeCorrelationMissed.store(true, std::memory_order_release);
+			}
+		}
+
+		[[nodiscard]] bool TryClaimKeyboardSuppression(
+			const RE::InputEvent* a_queueHead) noexcept
+		{
+			auto pending = pendingKeyboardSuppression.load(std::memory_order_acquire);
+			if (pending == 0) {
+				return false;
+			}
+
+			const auto deadline = static_cast<std::uint32_t>(pending >> 32);
+			if (CaptureDeadlinePassed(deadline, ::GetTickCount())) {
+				if (pendingKeyboardSuppression.compare_exchange_strong(
+						pending,
+						0,
+						std::memory_order_acq_rel,
+						std::memory_order_acquire)) {
+					keyboardEdgeCorrelationMissed.store(true, std::memory_order_release);
+				}
+				return false;
+			}
+
+			const auto token = static_cast<std::uint32_t>(pending);
+			const auto expectedID =
+				static_cast<std::int32_t>(token & keyboardEdgeIDMask);
+			const bool requireHeld = (token & keyboardEdgeHeldBit) != 0;
+
+			bool matches{};
+			bool released{};
+			bool keyboardObserved{};
+			auto event = a_queueHead;
+			std::size_t eventCount{};
+			while (event && eventCount < maximumInputEvents) {
+				if (event->eventType == RE::InputEvent::EventType::kButton) {
+					const auto& button =
+						static_cast<const RE::ButtonEvent&>(*event);
+					if (button.deviceType ==
+							RE::InputEvent::DeviceType::kKeyboard) {
+						keyboardObserved = true;
+						if (button.idCode == expectedID) {
+							const bool isRelease = button.value == 0.0F;
+							released = released || isRelease;
+							matches = !isRelease &&
+								(requireHeld ?
+									 button.heldDownSecs > holdThresholdSeconds :
+									 button.heldDownSecs == 0.0F);
+							if (matches) {
+								break;
+							}
+						}
+					}
+				}
+				event = event->next;
+				++eventCount;
+			}
+
+			if (!matches && (requireHeld ? !released : !keyboardObserved)) {
+				// Held suppression may span unrelated and pre-threshold batches.
+				// Initial suppression is eligible only in the first keyboard-bearing
+				// manager batch after publication, preventing a later normalized-ID
+				// collision from claiming it.
+				return false;
+			}
+
+			if (!pendingKeyboardSuppression.compare_exchange_strong(
+					pending,
+					0,
+					std::memory_order_acq_rel,
+					std::memory_order_acquire)) {
+				// A newer lossless edge owns the token and must be matched only by a
+				// later engine batch.
+				return false;
+			}
+			if (!matches && !requireHeld) {
+				keyboardEdgeCorrelationMissed.store(true, std::memory_order_release);
+			}
+			return matches;
 		}
 
 		[[nodiscard]] bool IsInitialPress(const RE::ButtonEvent& a_button) noexcept
@@ -197,43 +274,24 @@ namespace SFSEMenuFramework::InputCapture
 			}
 		}
 
-		[[nodiscard]] bool ProcessOpenClose(const RE::ButtonEvent& a_button) noexcept
+		[[nodiscard]] bool ProcessGamePadOpenClose(
+			const RE::ButtonEvent& a_button) noexcept
 		{
 			if (a_button.status == RE::InputEvent::Status::kStop) {
 				return false;
 			}
 
-			if (a_button.deviceType == RE::InputEvent::DeviceType::kKeyboard &&
-				a_button.idCode == static_cast<std::int32_t>(REX::W32::DIK_ESCAPE) &&
-				IsInitialPress(a_button)) {
-				return WindowManager::SetMainWindowOpen(false);
-			}
-
-			FrameworkSettings::ToggleMode mode{};
-			ToggleTracker* tracker{};
-			bool bindingMatches{};
-			switch (a_button.deviceType) {
-			case RE::InputEvent::DeviceType::kKeyboard:
-				mode = FrameworkSettings::GetToggleMode();
-				tracker = &keyboardToggle;
-				bindingMatches =
-					a_button.idCode >= 0 &&
-					static_cast<std::uint32_t>(a_button.idCode) ==
-						FrameworkSettings::GetToggleKey();
-				break;
-			case RE::InputEvent::DeviceType::kGamepad:
-				mode = FrameworkSettings::GetToggleModeGamePad();
-				tracker = &gamePadToggle;
-				bindingMatches =
-					a_button.idCode >= 0 &&
-					static_cast<std::uint32_t>(a_button.idCode) ==
-						FrameworkSettings::GetToggleKeyGamePad();
-				break;
-			default:
+			if (a_button.deviceType != RE::InputEvent::DeviceType::kGamepad) {
 				return false;
 			}
 
-			if (!bindingMatches || !tracker) {
+			const auto mode = FrameworkSettings::GetToggleModeGamePad();
+			const auto configured = FrameworkSettings::GetToggleKeyGamePad();
+			const bool bindingMatches =
+				configured != 0 && a_button.idCode >= 0 &&
+				static_cast<std::uint32_t>(a_button.idCode) ==
+					configured;
+			if (!bindingMatches) {
 				return false;
 			}
 
@@ -244,7 +302,7 @@ namespace SFSEMenuFramework::InputCapture
 
 			const bool initialPress = IsInitialPress(a_button);
 			if (a_button.value == 0.0F) {
-				tracker->HoldTriggered = false;
+				gamePadToggle.HoldTriggered = false;
 			}
 			if (mainWindow->IsOpen.load(std::memory_order_acquire)) {
 				return initialPress && WindowManager::SetMainWindowOpen(false);
@@ -254,69 +312,45 @@ namespace SFSEMenuFramework::InputCapture
 				return false;
 			}
 
-			const bool toggle = EvaluateToggle(a_button, mode, *tracker);
+			const bool toggle = EvaluateToggle(a_button, mode, gamePadToggle);
 			return toggle && IsOperational() &&
 			       WindowManager::SetMainWindowOpen(true);
-		}
-
-		void RecordKeyboardDiagnostic(
-			const RE::ButtonEvent& a_button,
-			std::size_t            a_eventIndex) noexcept
-		{
-			if (a_button.deviceType != RE::InputEvent::DeviceType::kKeyboard) {
-				return;
-			}
-
-			auto expected = DiagnosticTraceState::Armed;
-			if (!diagnosticTraceState.compare_exchange_strong(
-					expected,
-					DiagnosticTraceState::Writing,
-					std::memory_order_acq_rel,
-					std::memory_order_acquire)) {
-				return;
-			}
-
-			diagnosticSample = {
-				.EventIndex = static_cast<std::uint32_t>(a_eventIndex),
-				.EventType = std::to_underlying(a_button.eventType),
-				.DeviceType = std::to_underlying(a_button.deviceType),
-				.DeviceID = a_button.deviceID,
-				.IDCode = a_button.idCode,
-				.TimeCode = a_button.timeCode,
-				.Status = std::to_underlying(a_button.status),
-				.ValueBits = std::bit_cast<std::uint32_t>(a_button.value),
-				.HeldDownBits = std::bit_cast<std::uint32_t>(a_button.heldDownSecs),
-			};
-			diagnosticTraceState.store(
-				DiagnosticTraceState::Ready,
-				std::memory_order_release);
 		}
 
 		void ProcessInput(
 			RE::BSInputEventReceiver* a_receiver,
 			const RE::InputEvent*      a_queueHead)
 		{
+			ExpirePendingKeyboardEdge();
 			if (a_queueHead &&
 				!inputBatchObserved.test_and_set(std::memory_order_relaxed)) {
 				inputBatchReportPending.store(true, std::memory_order_release);
 			}
 
+			const bool keyboardEdgeMatched =
+				a_queueHead && TryClaimKeyboardSuppression(a_queueHead);
+			bool stateChanged{};
 			const bool captureBatch = modal.load(std::memory_order_acquire);
 			if (captureBatch || IsOperational()) {
 				auto event = a_queueHead;
 				std::size_t eventCount{};
-				bool stateChanged{};
 				while (event && eventCount < maximumInputEvents) {
 					if (event->eventType == RE::InputEvent::EventType::kButton) {
 						const auto& button =
 							static_cast<const RE::ButtonEvent&>(*event);
-						RecordKeyboardDiagnostic(button, eventCount);
-						if (!stateChanged) {
-							stateChanged = ProcessOpenClose(button);
+						if (!keyboardEdgeMatched && !stateChanged) {
+							stateChanged = ProcessGamePadOpenClose(button);
 						}
 					}
 					event = event->next;
 					++eventCount;
+				}
+				if (!event && stateChanged) {
+					const auto* mainWindow = WindowManager::GetMainWindow();
+					if (mainWindow &&
+						mainWindow->IsOpen.load(std::memory_order_acquire)) {
+						modal.store(true, std::memory_order_release);
+					}
 				}
 
 				if (event) {
@@ -324,26 +358,28 @@ namespace SFSEMenuFramework::InputCapture
 					// batches and let the lifecycle owner close or suspend the menu.
 					captureFaulted.store(true, std::memory_order_release);
 					modal.store(false, std::memory_order_release);
+					pendingKeyboardSuppression.store(0, std::memory_order_release);
 					static_cast<void>(WindowManager::SetMainWindowOpen(false));
 					if (!eventLimitLogged.test_and_set(std::memory_order_relaxed)) {
 						logger::critical(
 							"BSInputDeviceManager input queue exceeded {} events; modal native capture was disabled",
 							maximumInputEvents);
 					}
-				} else if (captureBatch || stateChanged) {
-					// SKSE Menu Framework discards the whole native batch on an actual
-					// open/close edge. Marking the shared Starfield events stopped gives
-					// later receivers the same behavior without rewriting the queue.
+				} else if (captureBatch || keyboardEdgeMatched || stateChanged) {
+					// SKSE Menu Framework sends an empty queue on an actual open/close
+					// edge. During ordinary modal capture it retains only PrintScreen.
+					// Marking the shared Starfield events stopped gives later receivers
+					// the corresponding behavior without rewriting the linked queue.
+					const bool preservePrintScreen =
+						captureBatch && !keyboardEdgeMatched && !stateChanged;
 					for (event = a_queueHead; event; event = event->next) {
-						// PrintScreen remains visible to Starfield's receiver chain. The
-						// Win32 subclass must likewise keep OS/system messages chained.
-						if (!IsPrintScreen(*event)) {
+						if (!preservePrintScreen || !IsPrintScreen(*event)) {
 							auto* mutableEvent = const_cast<RE::InputEvent*>(event);
 							mutableEvent->status = RE::InputEvent::Status::kStop;
 						}
 					}
 
-					if (stateChanged) {
+					if (keyboardEdgeMatched || stateChanged) {
 						const auto* mainWindow = WindowManager::GetMainWindow();
 						const bool isOpen =
 							mainWindow &&
@@ -360,25 +396,6 @@ namespace SFSEMenuFramework::InputCapture
 				original(a_receiver, a_queueHead);
 			}
 		}
-	}
-
-	void ArmKeyboardDiagnosticTrace() noexcept
-	{
-		auto expected = DiagnosticTraceState::Idle;
-		if (!diagnosticTraceState.compare_exchange_strong(
-				expected,
-				DiagnosticTraceState::Preparing,
-				std::memory_order_acq_rel,
-				std::memory_order_acquire)) {
-			return;
-		}
-
-		diagnosticSample = {};
-		diagnosticTraceState.store(
-			DiagnosticTraceState::Armed,
-			std::memory_order_release);
-		logger::info(
-			"Input primitive trace armed for the first keyboard ButtonEvent");
 	}
 
 	bool Install()
@@ -453,6 +470,8 @@ namespace SFSEMenuFramework::InputCapture
 		}
 
 		hookState.store(HookState::Ready, std::memory_order_release);
+		pendingKeyboardSuppression.store(0, std::memory_order_release);
+		keyboardEdgeCorrelationMissed.store(false, std::memory_order_release);
 		captureFaulted.store(false, std::memory_order_release);
 		logger::info(
 			"Installed BSInputDeviceManager global input capture at {:X}",
@@ -462,6 +481,14 @@ namespace SFSEMenuFramework::InputCapture
 
 	void FlushDiagnostics() noexcept
 	{
+		ExpirePendingKeyboardEdge();
+		if (keyboardEdgeCorrelationMissed.exchange(
+				false,
+				std::memory_order_acq_rel)) {
+			logger::warn(
+				"A raw keyboard menu edge expired without a matching Starfield keyboard transition");
+		}
+
 		if (inputBatchReportPending.exchange(false, std::memory_order_acq_rel)) {
 			logger::info(
 				"BSInputDeviceManager input receiver observed its first non-empty batch");
@@ -475,44 +502,53 @@ namespace SFSEMenuFramework::InputCapture
 				"BSInputDeviceManager input receiver {} the Mod Control Panel",
 				edge == DiagnosticEdge::Opened ? "opened" : "closed");
 		}
+	}
 
-		auto expected = DiagnosticTraceState::Ready;
-		if (!diagnosticTraceState.compare_exchange_strong(
-				expected,
-				DiagnosticTraceState::Reporting,
-				std::memory_order_acq_rel,
-				std::memory_order_acquire)) {
-			return;
+	bool RequestKeyboardSuppression(
+		std::int32_t      a_expectedEventID,
+		KeyboardEdgeMatch a_match) noexcept
+	{
+		if (a_expectedEventID < 0 || a_expectedEventID > 0xFF) {
+			keyboardEdgeCorrelationMissed.store(true, std::memory_order_release);
+			return false;
 		}
+		const bool held = a_match == KeyboardEdgeMatch::HeldPress;
+		const auto window = held ?
+			heldKeyboardEdgeWindowMilliseconds :
+			initialKeyboardEdgeWindowMilliseconds;
+		const auto deadline =
+			::GetTickCount() + window;
+		const auto generation =
+			(keyboardEdgeGeneration.fetch_add(1, std::memory_order_relaxed) + 1) &
+			keyboardEdgeGenerationMask;
+		const auto token =
+			(generation << 9) |
+			(held ? keyboardEdgeHeldBit : 0U) |
+			static_cast<std::uint32_t>(a_expectedEventID);
+		const auto pending =
+			(static_cast<std::uint64_t>(deadline) << 32) | token;
+		pendingKeyboardSuppression.store(pending, std::memory_order_release);
+		return true;
+	}
 
-		const auto sample = diagnosticSample;
-		const auto value = std::bit_cast<float>(sample.ValueBits);
-		const auto heldDown = std::bit_cast<float>(sample.HeldDownBits);
-		const bool bindingMatches = sample.IDCode >= 0 &&
-			static_cast<std::uint32_t>(sample.IDCode) ==
-				FrameworkSettings::GetToggleKey();
-		const bool initialPress = value != 0.0F && heldDown == 0.0F;
-		logger::info(
-			"Input primitive trace: event={}, type={}, device={}, device-id={}, id={} (0x{:X}), time={}, status={}, value={} (0x{:08X}), held={} (0x{:08X}), configured DIK={}, mode={}, binding-match={}, initial-press={}",
-			sample.EventIndex,
-			sample.EventType,
-			sample.DeviceType,
-			sample.DeviceID,
-			sample.IDCode,
-			static_cast<std::uint32_t>(sample.IDCode),
-			sample.TimeCode,
-			sample.Status,
-			value,
-			sample.ValueBits,
-			heldDown,
-			sample.HeldDownBits,
-			FrameworkSettings::GetToggleKey(),
-			std::to_underlying(FrameworkSettings::GetToggleMode()),
-			bindingMatches,
-			initialPress);
-		diagnosticTraceState.store(
-			DiagnosticTraceState::Completed,
-			std::memory_order_release);
+	void CancelPendingHeldKeyboardSuppression() noexcept
+	{
+		auto pending = pendingKeyboardSuppression.load(std::memory_order_acquire);
+		while (pending != 0 &&
+			(static_cast<std::uint32_t>(pending) & keyboardEdgeHeldBit) != 0) {
+			if (pendingKeyboardSuppression.compare_exchange_weak(
+					pending,
+					0,
+					std::memory_order_acq_rel,
+					std::memory_order_acquire)) {
+				return;
+			}
+		}
+	}
+
+	void CancelPendingKeyboardSuppression() noexcept
+	{
+		pendingKeyboardSuppression.store(0, std::memory_order_release);
 	}
 
 	void SetModal(bool a_modal) noexcept

@@ -1,8 +1,5 @@
 #include "FrameworkSettings.h"
 
-#include <REX/W32/DINPUT.h>
-#include <REX/W32/XINPUT.h>
-
 #include <Windows.h>
 
 #include <array>
@@ -17,15 +14,141 @@ namespace SFSEMenuFramework::FrameworkSettings
 {
 	namespace
 	{
-		// The option names, toggle-mode values, defaults, and persistent INI
-		// behavior are adapted from SKSE Menu Framework 3 at commit
-		// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0). This is an
-		// independent Win32-profile implementation for Starfield; no Skyrim
-		// engine code, theme settings, or font settings are copied.
-		constexpr std::uint32_t defaultToggleKey = REX::W32::DIK_F1;
+		// The ordered key tables, option names, toggle-mode values, defaults,
+		// and symbolic INI behavior are adapted from SKSE Menu Framework 3 at
+		// commit 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0).
+		// The Win32 profile storage and Starfield input implementation are
+		// original to this port.
+		constexpr std::array keyboardBindings{
+			Binding{ "NONE", 0x00 },
+			Binding{ "ESCAPE", 0x01 },
+			Binding{ "1", 0x02 },
+			Binding{ "2", 0x03 },
+			Binding{ "3", 0x04 },
+			Binding{ "4", 0x05 },
+			Binding{ "5", 0x06 },
+			Binding{ "6", 0x07 },
+			Binding{ "7", 0x08 },
+			Binding{ "8", 0x09 },
+			Binding{ "9", 0x0A },
+			Binding{ "0", 0x0B },
+			Binding{ "MINUS", 0x0C },
+			Binding{ "EQUALS", 0x0D },
+			Binding{ "BACKSPACE", 0x0E },
+			Binding{ "TAB", 0x0F },
+			Binding{ "Q", 0x10 },
+			Binding{ "W", 0x11 },
+			Binding{ "E", 0x12 },
+			Binding{ "R", 0x13 },
+			Binding{ "T", 0x14 },
+			Binding{ "Y", 0x15 },
+			Binding{ "U", 0x16 },
+			Binding{ "I", 0x17 },
+			Binding{ "O", 0x18 },
+			Binding{ "P", 0x19 },
+			Binding{ "BRACKETLEFT", 0x1A },
+			Binding{ "BRACKETRIGHT", 0x1B },
+			Binding{ "ENTER", 0x1C },
+			Binding{ "LEFTCONTROL", 0x1D },
+			Binding{ "A", 0x1E },
+			Binding{ "S", 0x1F },
+			Binding{ "D", 0x20 },
+			Binding{ "F", 0x21 },
+			Binding{ "G", 0x22 },
+			Binding{ "H", 0x23 },
+			Binding{ "J", 0x24 },
+			Binding{ "K", 0x25 },
+			Binding{ "L", 0x26 },
+			Binding{ "SEMICOLON", 0x27 },
+			Binding{ "APOSTROPHE", 0x28 },
+			Binding{ "TILDE", 0x29 },
+			Binding{ "LEFTSHIFT", 0x2A },
+			Binding{ "BACKSLASH", 0x2B },
+			Binding{ "Z", 0x2C },
+			Binding{ "X", 0x2D },
+			Binding{ "C", 0x2E },
+			Binding{ "V", 0x2F },
+			Binding{ "B", 0x30 },
+			Binding{ "N", 0x31 },
+			Binding{ "M", 0x32 },
+			Binding{ "COMMA", 0x33 },
+			Binding{ "PERIOD", 0x34 },
+			Binding{ "SLASH", 0x35 },
+			Binding{ "RIGHTSHIFT", 0x36 },
+			Binding{ "KP_MULTIPLY", 0x37 },
+			Binding{ "LEFTALT", 0x38 },
+			Binding{ "SPACEBAR", 0x39 },
+			Binding{ "CAPSLOCK", 0x3A },
+			Binding{ "F1", 0x3B },
+			Binding{ "F2", 0x3C },
+			Binding{ "F3", 0x3D },
+			Binding{ "F4", 0x3E },
+			Binding{ "F5", 0x3F },
+			Binding{ "F6", 0x40 },
+			Binding{ "F7", 0x41 },
+			Binding{ "F8", 0x42 },
+			Binding{ "F9", 0x43 },
+			Binding{ "F10", 0x44 },
+			Binding{ "NUMLOCK", 0x45 },
+			Binding{ "SCROLLLOCK", 0x46 },
+			Binding{ "KP_7", 0x47 },
+			Binding{ "KP_8", 0x48 },
+			Binding{ "KP_9", 0x49 },
+			Binding{ "KP_SUBTRACT", 0x4A },
+			Binding{ "KP_4", 0x4B },
+			Binding{ "KP_5", 0x4C },
+			Binding{ "KP_6", 0x4D },
+			Binding{ "KP_PLUS", 0x4E },
+			Binding{ "KP_1", 0x4F },
+			Binding{ "KP_2", 0x50 },
+			Binding{ "KP_3", 0x51 },
+			Binding{ "KP_0", 0x52 },
+			Binding{ "KP_DECIMAL", 0x53 },
+			Binding{ "F11", 0x57 },
+			Binding{ "F12", 0x58 },
+			Binding{ "KP_ENTER", 0x9C },
+			Binding{ "RIGHTCONTROL", 0x9D },
+			Binding{ "KP_DIVIDE", 0xB5 },
+			Binding{ "PRINTSCREEN", 0xB7 },
+			Binding{ "RIGHTALT", 0xB8 },
+			Binding{ "PAUSE", 0xC5 },
+			Binding{ "HOME", 0xC7 },
+			Binding{ "UP", 0xC8 },
+			Binding{ "PAGEUP", 0xC9 },
+			Binding{ "LEFT", 0xCB },
+			Binding{ "RIGHT", 0xCD },
+			Binding{ "END", 0xCF },
+			Binding{ "DOWN", 0xD0 },
+			Binding{ "PAGEDOWN", 0xD1 },
+			Binding{ "INSERT", 0xD2 },
+			Binding{ "DELETE", 0xD3 },
+			Binding{ "LEFTWIN", 0xDB },
+			Binding{ "RIGHTWIN", 0xDC }
+		};
+
+		constexpr std::array gamePadBindings{
+			Binding{ "NONE", 0 },
+			Binding{ "DPAD_UP", 1 },
+			Binding{ "DPAD_DOWN", 2 },
+			Binding{ "DPAD_LEFT", 4 },
+			Binding{ "DPAD_RIGHT", 8 },
+			Binding{ "START", 16 },
+			Binding{ "BACK", 32 },
+			Binding{ "LS", 64 },
+			Binding{ "RS", 128 },
+			Binding{ "LB", 256 },
+			Binding{ "RB", 512 },
+			Binding{ "LT", 9 },
+			Binding{ "RT", 10 },
+			Binding{ "A", 4096 },
+			Binding{ "B", 8192 },
+			Binding{ "X", 16384 },
+			Binding{ "Y", 32768 }
+		};
+
+		constexpr std::uint32_t defaultToggleKey = 0x3B;
 		constexpr ToggleMode    defaultToggleMode = ToggleMode::SinglePress;
-		constexpr std::uint32_t defaultToggleKeyGamePad =
-			REX::W32::XINPUT_GAMEPAD_LEFT_SHOULDER;
+		constexpr std::uint32_t defaultToggleKeyGamePad = 0;
 		constexpr ToggleMode defaultToggleModeGamePad = ToggleMode::DoublePress;
 		constexpr bool       defaultFreezeTimeOnMenu = true;
 		constexpr bool       defaultBlurBackgroundOnMenu = true;
@@ -122,6 +245,24 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return true;
 		}
 
+		[[nodiscard]] bool EqualsIgnoreCase(
+			std::wstring_view a_left,
+			std::string_view  a_right) noexcept
+		{
+			if (a_left.size() != a_right.size()) {
+				return false;
+			}
+			for (std::size_t index = 0; index < a_left.size(); ++index) {
+				const auto right = static_cast<unsigned char>(a_right[index]);
+				if (right > 0x7F ||
+					ToUpperAscii(a_left[index]) !=
+						ToUpperAscii(static_cast<wchar_t>(right))) {
+					return false;
+				}
+			}
+			return true;
+		}
+
 		[[nodiscard]] bool BuildSettingsPath(
 			std::array<wchar_t, pathCapacity>& a_path) noexcept
 		{
@@ -199,6 +340,51 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return true;
 		}
 
+		template <std::size_t N>
+		[[nodiscard]] const Binding* FindBinding(
+			const std::array<Binding, N>& a_bindings,
+			std::uint32_t                 a_code) noexcept
+		{
+			for (const auto& binding : a_bindings) {
+				if (binding.Code == a_code) {
+					return &binding;
+				}
+			}
+			return nullptr;
+		}
+
+		template <std::size_t N>
+		[[nodiscard]] bool ParseBinding(
+			std::wstring_view             a_text,
+			const std::array<Binding, N>& a_bindings,
+			std::uint32_t&                a_result) noexcept
+		{
+			a_text = Trim(a_text);
+			for (const auto& binding : a_bindings) {
+				if (EqualsIgnoreCase(a_text, binding.Name)) {
+					a_result = binding.Code;
+					return true;
+				}
+			}
+
+			std::uint32_t numeric{};
+			if (ParseUnsigned(a_text, numeric) &&
+				FindBinding(a_bindings, numeric)) {
+				a_result = numeric;
+				return true;
+			}
+			return false;
+		}
+
+		template <std::size_t N>
+		[[nodiscard]] std::string_view BindingName(
+			const std::array<Binding, N>& a_bindings,
+			std::uint32_t                 a_code) noexcept
+		{
+			const auto* binding = FindBinding(a_bindings, a_code);
+			return binding ? binding->Name : std::string_view{};
+		}
+
 		[[nodiscard]] bool ParseToggleMode(
 			std::wstring_view a_text,
 			ToggleMode&       a_result) noexcept
@@ -250,34 +436,12 @@ namespace SFSEMenuFramework::FrameworkSettings
 
 		[[nodiscard]] bool IsValidToggleKey(std::uint32_t a_key) noexcept
 		{
-			return a_key > 0 && a_key <= 0xFF &&
-			       a_key != REX::W32::DIK_ESCAPE &&
-			       a_key != REX::W32::DIK_SYSRQ;
+			return FindBinding(keyboardBindings, a_key) != nullptr;
 		}
 
 		[[nodiscard]] bool IsValidGamePadToggleKey(std::uint32_t a_key) noexcept
 		{
-			switch (a_key) {
-			case REX::W32::XINPUT_GAMEPAD_DPAD_UP:
-			case REX::W32::XINPUT_GAMEPAD_DPAD_DOWN:
-			case REX::W32::XINPUT_GAMEPAD_DPAD_LEFT:
-			case REX::W32::XINPUT_GAMEPAD_DPAD_RIGHT:
-			case REX::W32::XINPUT_GAMEPAD_START:
-			case REX::W32::XINPUT_GAMEPAD_BACK:
-			case REX::W32::XINPUT_GAMEPAD_LEFT_THUMB:
-			case REX::W32::XINPUT_GAMEPAD_RIGHT_THUMB:
-			case REX::W32::XINPUT_GAMEPAD_LEFT_SHOULDER:
-			case REX::W32::XINPUT_GAMEPAD_RIGHT_SHOULDER:
-			case REX::W32::XINPUT_GAMEPAD_A:
-			case REX::W32::XINPUT_GAMEPAD_B:
-			case REX::W32::XINPUT_GAMEPAD_X:
-			case REX::W32::XINPUT_GAMEPAD_Y:
-			case 0x9:  // Starfield's left-trigger ButtonEvent ID.
-			case 0xA:  // Starfield's right-trigger ButtonEvent ID.
-				return true;
-			default:
-				return false;
-			}
+			return FindBinding(gamePadBindings, a_key) != nullptr;
 		}
 
 		[[nodiscard]] bool IsValidToggleMode(ToggleMode a_mode) noexcept
@@ -329,27 +493,6 @@ namespace SFSEMenuFramework::FrameworkSettings
 			}
 		}
 
-		[[nodiscard]] bool WriteUnsigned(
-			const wchar_t* a_path,
-			const wchar_t* a_key,
-			std::uint32_t  a_value) noexcept
-		{
-			std::array<wchar_t, 16> text{};
-			if (_snwprintf_s(
-					text.data(),
-					text.size(),
-					_TRUNCATE,
-					L"%u",
-					a_value) < 0) {
-				return false;
-			}
-			return ::WritePrivateProfileStringW(
-				sectionName,
-				a_key,
-				text.data(),
-				a_path) != FALSE;
-		}
-
 		[[nodiscard]] bool WriteText(
 			const wchar_t* a_path,
 			const wchar_t* a_key,
@@ -361,6 +504,45 @@ namespace SFSEMenuFramework::FrameworkSettings
 				a_value,
 				a_path) != FALSE;
 		}
+
+		[[nodiscard]] bool WriteAsciiText(
+			const wchar_t*   a_path,
+			const wchar_t*   a_key,
+			std::string_view a_value) noexcept
+		{
+			std::array<wchar_t, valueCapacity> text{};
+			if (a_value.empty() || a_value.size() >= text.size()) {
+				return false;
+			}
+			for (std::size_t index = 0; index < a_value.size(); ++index) {
+				const auto character = static_cast<unsigned char>(a_value[index]);
+				if (character > 0x7F) {
+					return false;
+				}
+				text[index] = static_cast<wchar_t>(character);
+			}
+			return WriteText(a_path, a_key, text.data());
+		}
+	}
+
+	std::span<const Binding> GetKeyboardBindings() noexcept
+	{
+		return keyboardBindings;
+	}
+
+	std::span<const Binding> GetGamePadBindings() noexcept
+	{
+		return gamePadBindings;
+	}
+
+	std::string_view GetKeyboardBindingName(std::uint32_t a_key) noexcept
+	{
+		return BindingName(keyboardBindings, a_key);
+	}
+
+	std::string_view GetGamePadBindingName(std::uint32_t a_key) noexcept
+	{
+		return BindingName(gamePadBindings, a_key);
 	}
 
 	bool Load() noexcept
@@ -388,7 +570,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 		auto result = ReadSetting(path.data(), L"ToggleKey", text);
 		if (result == ReadResult::Present) {
 			std::uint32_t key{};
-			if (ParseUnsigned(text.data(), key) && IsValidToggleKey(key)) {
+			if (ParseBinding(text.data(), keyboardBindings, key)) {
 				loaded.ToggleKey = key;
 			} else {
 				valid = false;
@@ -410,7 +592,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 		result = ReadSetting(path.data(), L"ToggleKeyGamePad", text);
 		if (result == ReadResult::Present) {
 			std::uint32_t key{};
-			if (ParseUnsigned(text.data(), key) && IsValidGamePadToggleKey(key)) {
+			if (ParseBinding(text.data(), gamePadBindings, key)) {
 				loaded.ToggleKeyGamePad = key;
 			} else {
 				valid = false;
@@ -466,12 +648,15 @@ namespace SFSEMenuFramework::FrameworkSettings
 		}
 
 		bool success = true;
-		success = WriteUnsigned(path.data(), L"ToggleKey", saved.ToggleKey) && success;
+		success = WriteAsciiText(
+			path.data(),
+			L"ToggleKey",
+			GetKeyboardBindingName(saved.ToggleKey)) && success;
 		success = WriteText(path.data(), L"ToggleMode", ToggleModeName(saved.Mode)) && success;
-		success = WriteUnsigned(
+		success = WriteAsciiText(
 			path.data(),
 			L"ToggleKeyGamePad",
-			saved.ToggleKeyGamePad) && success;
+			GetGamePadBindingName(saved.ToggleKeyGamePad)) && success;
 		success = WriteText(
 			path.data(),
 			L"ToggleModeGamePad",

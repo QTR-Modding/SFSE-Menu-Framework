@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
+#include <string_view>
 
 namespace SFSEMenuFramework::FrameworkSettings
 {
@@ -12,9 +14,22 @@ namespace SFSEMenuFramework::FrameworkSettings
 		Off
 	};
 
+	struct Binding final
+	{
+		std::string_view Name;
+		std::uint32_t   Code;
+	};
+
 	[[nodiscard]] bool Load() noexcept;
 	[[nodiscard]] bool Save() noexcept;
 	void               ResetDefaults() noexcept;
+
+	[[nodiscard]] std::span<const Binding> GetKeyboardBindings() noexcept;
+	[[nodiscard]] std::span<const Binding> GetGamePadBindings() noexcept;
+	[[nodiscard]] std::string_view GetKeyboardBindingName(
+		std::uint32_t a_key) noexcept;
+	[[nodiscard]] std::string_view GetGamePadBindingName(
+		std::uint32_t a_key) noexcept;
 
 	[[nodiscard]] std::uint32_t GetToggleKey() noexcept;
 	[[nodiscard]] ToggleMode    GetToggleMode() noexcept;
