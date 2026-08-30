@@ -1,5 +1,4 @@
-#include "McpWindow.h"
-#include "MenuOwnership.h"
+#include "MenuLifecycle.h"
 #include "RenderHooks.h"
 
 #include <SFSEMenuFramework/API.h>
@@ -26,7 +25,9 @@ namespace
 			return;
 		}
 
-		SFSEMenuFramework::MenuOwnership::Install(*taskInterface);
+		if (!SFSEMenuFramework::MenuLifecycle::Install(*taskInterface)) {
+			logger::critical("Menu input lifecycle initialization failed");
+		}
 	}
 }
 
@@ -64,12 +65,6 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
-	if (!SFSEMenuFramework::McpWindow::Install()) {
-		logger::critical(
-			"Failed to register the built-in Mod Control Panel window; the plugin will remain loaded but inactive");
-		return true;
-	}
-
 	if (!SFSEMenuFramework::RenderHooks::Install()) {
 		logger::critical(
 			"Failed to install the Scaleform render-pass hooks; the plugin will remain loaded but inactive");
@@ -82,6 +77,6 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 	logger::info(
 		"External panel interface v{} available",
 		SFSEMenuFramework::Model::INTERFACE_VERSION);
-	logger::info("Mod Control Panel registered; press F1 to toggle it");
+	logger::info("Mod Control Panel starts closed; controls load at post-data-load");
 	return true;
 }

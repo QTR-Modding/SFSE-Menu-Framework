@@ -12,7 +12,12 @@ SFSE Menu Framework is a native Starfield Script Extender plugin for building Im
 
 ## Controls
 
-- Press `F1` to open or close the Mod Control Panel.
+- Press `F1` once to open or close the Mod Control Panel.
+- On a gamepad, double-press the left bumper to open it; one press closes it.
+- Press `Escape` while the panel is open to return to the game.
+
+Bindings, toggle modes, pause, and background blur are configurable in the
+built-in Settings page and `Data/SFSE/Plugins/SFSEMenuFramework.ini`.
 
 ## C++ consumer API
 
@@ -70,5 +75,9 @@ xmake project -k vsxmake
 ## License
 
 SFSE Menu Framework is licensed under [GPL-3.0-only](COPYING) with the [Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS). Dear ImGui remains available under its [MIT license](extern/imgui/LICENSE.txt).
+
+This project is a Starfield port of [SKSE Menu Framework 3 at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its native modal-input routing, toggle and close behavior, and menu-ownership semantics are directly adapted under GPL-3.0.
+
+The verified vtable-hook installation and guarded rollback pattern is adapted from [Toggle Dialogue Camera SF at commit `8021fa9`](https://github.com/QTR-Modding/ToggleDialogueCameraSF/tree/8021fa934591aac1c71266cc4abc5cb1c24e28d7), under GPL-3.0-or-later with its Modding and GPL-3.0 Linking Exceptions.
 
 The Starfield cursor, control-layer, simulation-pause, and native-main-thread queue ownership-transfer protocols are adapted from [OSF UI at commit `14b7565`](https://github.com/ozooma10/osf-ui/tree/14b7565bbc7689b07fdccdb74525b9505f9f0dd6) by ozooma10, under GPL-3.0 with its Modding and GPL-3.0 Linking Exceptions.

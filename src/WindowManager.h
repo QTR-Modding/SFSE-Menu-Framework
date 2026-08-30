@@ -12,6 +12,9 @@ namespace SFSEMenuFramework
 	public:
 		std::atomic<bool>          IsOpen{ false };
 		std::atomic<bool>          BlockUserInput{ true };
+		std::atomic<bool>          PauseGame{ true };
+		std::atomic<bool>          BlurBackground{ true };
+		std::atomic<bool>          RenderEnabled{ false };
 		std::atomic<std::uint64_t> OpenGeneration{ 0 };
 	};
 
@@ -26,6 +29,7 @@ namespace SFSEMenuFramework
 
 		static bool                          SetMainWindow(WindowInterface* a_window) noexcept;
 		[[nodiscard]] static WindowInterface* GetMainWindow() noexcept;
+		static void SetMainWindowRenderEnabled(bool a_enabled) noexcept;
 		[[nodiscard]] static bool SetMainWindowOpen(bool a_open) noexcept;
 		[[nodiscard]] static bool ToggleMainWindow() noexcept;
 		[[nodiscard]] static std::uint64_t GetMainWindowOpenGeneration() noexcept;

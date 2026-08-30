@@ -10,9 +10,12 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <mutex>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
 	HWND   a_window,
@@ -24,6 +27,8 @@ namespace SFSEMenuFramework::Win32Platform
 {
 	namespace
 	{
+		constexpr std::size_t inputQueueCapacity = 256;
+
 		struct WindowSearch final
 		{
 			HWND        Window{ nullptr };
@@ -32,27 +37,87 @@ namespace SFSEMenuFramework::Win32Platform
 			std::size_t CandidateCount{ 0 };
 		};
 
-		struct PlatformState final
+		struct QueuedWindowMessage final
 		{
-			HWND Window{ nullptr };
-			bool Initialized{ false };
-			bool BackendAlive{ false };
-			bool HasInputState{ false };
-			bool WasAcceptingInput{ false };
+			HWND   Window{ nullptr };
+			UINT   Message{ 0 };
+			WPARAM WParam{ 0 };
+			LPARAM LParam{ 0 };
 		};
 
-		std::atomic<bool> subclassActive{ false };
-		std::atomic<bool> acceptInput{ false };
-		std::atomic<HWND> initializedHostWindow{ nullptr };
-		std::atomic<DWORD> initializedHostWindowThreadID{ 0 };
-		std::atomic_flag  mouseMessageLogged{};
-		std::atomic_flag  keyboardMessageLogged{};
-		std::atomic_flag  characterMessageLogged{};
-		std::atomic_flag  rawInputMessageLogged{};
-
-		[[nodiscard]] PlatformState& GetState()
+		struct InputQueueState final
 		{
-			static auto* state = new PlatformState();
+			std::mutex                                          Mutex;
+			std::array<QueuedWindowMessage, inputQueueCapacity> Messages{};
+			std::size_t                                         Count{ 0 };
+			std::uint64_t                                       CoalescedSinceDrain{ 0 };
+			std::uint64_t                                       DroppedSinceDrain{ 0 };
+			std::uint64_t                                       OverflowResetsSinceDrain{ 0 };
+			bool                                                ResetRequested{ true };
+		};
+
+		struct DrainedInput final
+		{
+			std::array<QueuedWindowMessage, inputQueueCapacity> Messages{};
+			std::size_t                                         Count{ 0 };
+			std::uint64_t                                       Coalesced{ 0 };
+			std::uint64_t                                       Dropped{ 0 };
+			std::uint64_t                                       OverflowResets{ 0 };
+			std::uint64_t                                       StateGeneration{ 0 };
+			bool                                                ResetRequested{ false };
+		};
+
+		struct RenderPlatformState final
+		{
+			HWND Window{ nullptr };
+			bool BackendAlive{ false };
+			bool BackendInitializationFailed{ false };
+		};
+
+		struct WindowThreadMouseState final
+		{
+			std::uint32_t ButtonsDown{ 0 };
+			int           TrackedArea{ 0 };
+		};
+
+		std::atomic<bool>               subclassActive{ false };
+		std::atomic<bool>               acceptInput{ false };
+		std::atomic<bool>               backendAlive{ false };
+		std::atomic<bool>               hostWindowTearingDown{ false };
+		std::atomic<bool>               hostCallbackPending{ false };
+		std::atomic<HWND>               initializedHostWindow{ nullptr };
+		std::atomic<DWORD>              initializedHostWindowThreadID{ 0 };
+		std::atomic<HostWindowCallback> hostWindowCallback{ nullptr };
+		std::atomic<std::uint64_t>      inputStateGeneration{ 1 };
+		std::atomic_flag                mouseMessageLogged{};
+		std::atomic_flag                keyboardMessageLogged{};
+		std::atomic_flag                characterMessageLogged{};
+		std::atomic_flag                rawInputMessageLogged{};
+		std::atomic_flag                coalescingLogged{};
+		std::atomic_flag                callbackPostFailureLogged{};
+		std::atomic_flag                mouseCaptureFailureLogged{};
+		std::atomic_flag                mouseTrackingFailureLogged{};
+		std::atomic_flag                subclassDriftLogged{};
+		std::atomic_flag                ambiguousWindowLogged{};
+		std::atomic_flag                subclassInstallFailureLogged{};
+		std::atomic_flag                subclassVerificationFailureLogged{};
+		bool                            escapeKeyConsumed{ false };
+
+		[[nodiscard]] InputQueueState& GetInputQueue()
+		{
+			static auto* state = new InputQueueState();
+			return *state;
+		}
+
+		[[nodiscard]] RenderPlatformState& GetRenderState()
+		{
+			static auto* state = new RenderPlatformState();
+			return *state;
+		}
+
+		[[nodiscard]] WindowThreadMouseState& GetWindowThreadMouseState()
+		{
+			static auto* state = new WindowThreadMouseState();
 			return *state;
 		}
 
@@ -67,6 +132,13 @@ namespace SFSEMenuFramework::Win32Platform
 		[[nodiscard]] UINT_PTR SubclassID() noexcept
 		{
 			return reinterpret_cast<UINT_PTR>(&WindowSubclass);
+		}
+
+		[[nodiscard]] UINT HostWindowCallbackMessage() noexcept
+		{
+			static const auto message =
+				::RegisterWindowMessageW(L"SFSEMenuFramework.HostWindowCallback");
+			return message;
 		}
 
 		[[nodiscard]] bool IsCandidate(HWND a_window, RECT& a_clientArea, DWORD& a_threadID)
@@ -120,22 +192,8 @@ namespace SFSEMenuFramework::Win32Platform
 			       WindowManager::IsMainWindowOpenGeneration(generation);
 		}
 
-		void ToggleMainWindow()
+		[[nodiscard]] bool IsKeyMessage(UINT a_message) noexcept
 		{
-			auto* mainWindow = WindowManager::GetMainWindow();
-			if (!mainWindow) {
-				return;
-			}
-
-			const bool isOpen = WindowManager::ToggleMainWindow();
-			logger::info("Mod Control Panel {}", isOpen ? "opened" : "closed");
-		}
-
-		[[nodiscard]] bool IsF1Message(UINT a_message, WPARAM a_wParam) noexcept
-		{
-			if (a_wParam != VK_F1) {
-				return false;
-			}
 			return a_message == WM_KEYDOWN || a_message == WM_KEYUP ||
 			       a_message == WM_SYSKEYDOWN || a_message == WM_SYSKEYUP;
 		}
@@ -147,44 +205,375 @@ namespace SFSEMenuFramework::Win32Platform
 			return isDown && (bits & (std::uintptr_t{ 1 } << 30)) == 0;
 		}
 
-		void LogInputMessageOnce(UINT a_message)
+		[[nodiscard]] bool IsKeyUp(UINT a_message) noexcept
+		{
+			return a_message == WM_KEYUP || a_message == WM_SYSKEYUP;
+		}
+
+		[[nodiscard]] bool IsAltF4(
+			UINT a_message,
+			WPARAM a_wParam,
+			LPARAM a_lParam) noexcept
+		{
+			if (!IsKeyMessage(a_message) || a_wParam != VK_F4) {
+				return false;
+			}
+			const auto bits = static_cast<std::uintptr_t>(a_lParam);
+			return a_message == WM_SYSKEYDOWN || a_message == WM_SYSKEYUP ||
+			       (bits & (std::uintptr_t{ 1 } << 29)) != 0;
+		}
+
+		[[nodiscard]] bool IsScreenshotMessage(UINT a_message, WPARAM a_wParam) noexcept
+		{
+			return IsKeyMessage(a_message) && a_wParam == VK_SNAPSHOT;
+		}
+
+		[[nodiscard]] bool IsFocusOrActivationMessage(UINT a_message) noexcept
+		{
+			return a_message == WM_SETFOCUS || a_message == WM_KILLFOCUS ||
+			       a_message == WM_ACTIVATE || a_message == WM_ACTIVATEAPP;
+		}
+
+		[[nodiscard]] bool IsLegacyMouseMessage(UINT a_message) noexcept
 		{
 			switch (a_message) {
 			case WM_MOUSEMOVE:
+			case WM_NCMOUSEMOVE:
+			case WM_MOUSELEAVE:
+			case WM_NCMOUSELEAVE:
 			case WM_LBUTTONDOWN:
 			case WM_LBUTTONUP:
+			case WM_LBUTTONDBLCLK:
 			case WM_RBUTTONDOWN:
 			case WM_RBUTTONUP:
+			case WM_RBUTTONDBLCLK:
 			case WM_MBUTTONDOWN:
 			case WM_MBUTTONUP:
+			case WM_MBUTTONDBLCLK:
 			case WM_XBUTTONDOWN:
 			case WM_XBUTTONUP:
+			case WM_XBUTTONDBLCLK:
 			case WM_MOUSEWHEEL:
 			case WM_MOUSEHWHEEL:
-				if (!mouseMessageLogged.test_and_set(std::memory_order_relaxed)) {
-					logger::info("Win32 input observed: legacy mouse messages");
-				}
-				break;
-			case WM_KEYDOWN:
-			case WM_KEYUP:
-			case WM_SYSKEYDOWN:
-			case WM_SYSKEYUP:
-				if (!keyboardMessageLogged.test_and_set(std::memory_order_relaxed)) {
-					logger::info("Win32 input observed: legacy keyboard messages");
-				}
-				break;
-			case WM_CHAR:
-				if (!characterMessageLogged.test_and_set(std::memory_order_relaxed)) {
-					logger::info("Win32 input observed: character messages");
-				}
-				break;
-			case WM_INPUT:
-				if (!rawInputMessageLogged.test_and_set(std::memory_order_relaxed)) {
-					logger::info("Win32 input observed: raw-input messages remain chained to Starfield");
-				}
-				break;
+				return true;
 			default:
-				break;
+				return false;
+			}
+		}
+
+		[[nodiscard]] bool IsBackendInputMessage(UINT a_message) noexcept
+		{
+			return IsLegacyMouseMessage(a_message) || IsKeyMessage(a_message) ||
+			       a_message == WM_CHAR || a_message == WM_SETFOCUS ||
+			       a_message == WM_KILLFOCUS || a_message == WM_INPUTLANGCHANGE;
+		}
+
+		[[nodiscard]] bool ShouldConsumeModalMessage(
+			UINT a_message,
+			WPARAM a_wParam,
+			LPARAM a_lParam) noexcept
+		{
+			if (IsAltF4(a_message, a_wParam, a_lParam) ||
+				IsScreenshotMessage(a_message, a_wParam) ||
+				IsFocusOrActivationMessage(a_message) ||
+				a_message == WM_SYSKEYDOWN || a_message == WM_SYSKEYUP) {
+				return false;
+			}
+
+			switch (a_message) {
+			case WM_MOUSELEAVE:
+			case WM_NCMOUSELEAVE:
+			case WM_INPUTLANGCHANGE:
+				return false;
+			default:
+				return IsLegacyMouseMessage(a_message) || IsKeyMessage(a_message) ||
+				       a_message == WM_CHAR;
+			}
+		}
+
+		void LogInputMessageOnce(UINT a_message)
+		{
+			if (IsLegacyMouseMessage(a_message)) {
+				if (!mouseMessageLogged.test_and_set(std::memory_order_relaxed)) {
+					logger::info("Win32 input observed: queued legacy mouse messages");
+				}
+				return;
+			}
+
+			if (IsKeyMessage(a_message)) {
+				if (!keyboardMessageLogged.test_and_set(std::memory_order_relaxed)) {
+					logger::info("Win32 input observed: queued legacy keyboard messages");
+				}
+				return;
+			}
+
+			if (a_message == WM_CHAR) {
+				if (!characterMessageLogged.test_and_set(std::memory_order_relaxed)) {
+					logger::info("Win32 input observed: queued character messages");
+				}
+				return;
+			}
+
+			if (a_message == WM_INPUT &&
+				!rawInputMessageLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::info("Win32 input observed: raw-input messages remain chained to Starfield");
+			}
+		}
+
+		[[nodiscard]] bool TryCoalesce(
+			QueuedWindowMessage&       a_previous,
+			const QueuedWindowMessage& a_next) noexcept
+		{
+			if (a_previous.Window != a_next.Window ||
+				a_previous.Message != a_next.Message) {
+				return false;
+			}
+
+			if (a_next.Message == WM_MOUSEMOVE || a_next.Message == WM_NCMOUSEMOVE) {
+				a_previous = a_next;
+				return true;
+			}
+
+			if ((a_next.Message == WM_MOUSEWHEEL ||
+				 a_next.Message == WM_MOUSEHWHEEL) &&
+				LOWORD(a_previous.WParam) == LOWORD(a_next.WParam)) {
+				const auto previousDelta =
+					static_cast<int>(static_cast<SHORT>(HIWORD(a_previous.WParam)));
+				const auto nextDelta =
+					static_cast<int>(static_cast<SHORT>(HIWORD(a_next.WParam)));
+				const auto combinedDelta = previousDelta + nextDelta;
+				if (combinedDelta >= (std::numeric_limits<SHORT>::min)() &&
+					combinedDelta <= (std::numeric_limits<SHORT>::max)()) {
+					a_previous.WParam = MAKEWPARAM(
+						LOWORD(a_next.WParam),
+						static_cast<WORD>(static_cast<SHORT>(combinedDelta)));
+					a_previous.LParam = a_next.LParam;
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		void InvalidateQueuedInput(InputQueueState& a_queue) noexcept
+		{
+			a_queue.Count = 0;
+			a_queue.ResetRequested = true;
+			inputStateGeneration.fetch_add(1, std::memory_order_release);
+		}
+
+		void RequestInputReset()
+		{
+			auto& queue = GetInputQueue();
+			std::scoped_lock lock{ queue.Mutex };
+			InvalidateQueuedInput(queue);
+		}
+
+		[[nodiscard]] bool EnqueueWindowMessage(
+			HWND a_window,
+			UINT a_message,
+			WPARAM a_wParam,
+			LPARAM a_lParam,
+			bool a_requiresAcceptedInput)
+		{
+			auto& queue = GetInputQueue();
+			std::scoped_lock lock{ queue.Mutex };
+			if (a_requiresAcceptedInput &&
+				!acceptInput.load(std::memory_order_acquire)) {
+				return false;
+			}
+
+			const QueuedWindowMessage message{
+				.Window = a_window,
+				.Message = a_message,
+				.WParam = a_wParam,
+				.LParam = a_lParam
+			};
+			if (queue.Count != 0 &&
+				TryCoalesce(queue.Messages[queue.Count - 1], message)) {
+				++queue.CoalescedSinceDrain;
+				return true;
+			}
+
+			if (queue.Count == queue.Messages.size()) {
+				queue.DroppedSinceDrain += queue.Count + 1;
+				++queue.OverflowResetsSinceDrain;
+				InvalidateQueuedInput(queue);
+				return false;
+			}
+
+			queue.Messages[queue.Count++] = message;
+			return true;
+		}
+
+		[[nodiscard]] DrainedInput DrainQueuedInput()
+		{
+			DrainedInput result;
+			auto& queue = GetInputQueue();
+			std::scoped_lock lock{ queue.Mutex };
+			result.Count = queue.Count;
+			for (std::size_t index = 0; index < queue.Count; ++index) {
+				result.Messages[index] = queue.Messages[index];
+			}
+			result.Coalesced = queue.CoalescedSinceDrain;
+			result.Dropped = queue.DroppedSinceDrain;
+			result.OverflowResets = queue.OverflowResetsSinceDrain;
+			result.ResetRequested = queue.ResetRequested;
+			result.StateGeneration =
+				inputStateGeneration.load(std::memory_order_acquire);
+
+			queue.Count = 0;
+			queue.CoalescedSinceDrain = 0;
+			queue.DroppedSinceDrain = 0;
+			queue.OverflowResetsSinceDrain = 0;
+			queue.ResetRequested = false;
+			return result;
+		}
+
+		void ReportQueueTelemetry(const DrainedInput& a_input)
+		{
+			if (a_input.Coalesced != 0 &&
+				!coalescingLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::info(
+					"Win32 input queue coalescing is active (capacity {})",
+					inputQueueCapacity);
+			}
+			if (a_input.OverflowResets != 0) {
+				logger::warn(
+					"Win32 input queue overflow: dropped {} messages and reset {} batch(es) "
+					"(capacity {}, coalesced before drain {})",
+					a_input.Dropped,
+					a_input.OverflowResets,
+					inputQueueCapacity,
+					a_input.Coalesced);
+			}
+		}
+
+		[[nodiscard]] std::uint32_t MouseButtonMask(
+			UINT a_message,
+			WPARAM a_wParam) noexcept
+		{
+			switch (a_message) {
+			case WM_LBUTTONDOWN:
+			case WM_LBUTTONUP:
+			case WM_LBUTTONDBLCLK:
+				return 1U << 0;
+			case WM_RBUTTONDOWN:
+			case WM_RBUTTONUP:
+			case WM_RBUTTONDBLCLK:
+				return 1U << 1;
+			case WM_MBUTTONDOWN:
+			case WM_MBUTTONUP:
+			case WM_MBUTTONDBLCLK:
+				return 1U << 2;
+			case WM_XBUTTONDOWN:
+			case WM_XBUTTONUP:
+			case WM_XBUTTONDBLCLK:
+				return HIWORD(a_wParam) == XBUTTON1 ? 1U << 3 : 1U << 4;
+			default:
+				return 0;
+			}
+		}
+
+		[[nodiscard]] bool IsMouseButtonDown(UINT a_message) noexcept
+		{
+			return a_message == WM_LBUTTONDOWN || a_message == WM_LBUTTONDBLCLK ||
+			       a_message == WM_RBUTTONDOWN || a_message == WM_RBUTTONDBLCLK ||
+			       a_message == WM_MBUTTONDOWN || a_message == WM_MBUTTONDBLCLK ||
+			       a_message == WM_XBUTTONDOWN || a_message == WM_XBUTTONDBLCLK;
+		}
+
+		[[nodiscard]] bool IsMouseButtonUp(UINT a_message) noexcept
+		{
+			return a_message == WM_LBUTTONUP || a_message == WM_RBUTTONUP ||
+			       a_message == WM_MBUTTONUP || a_message == WM_XBUTTONUP;
+		}
+
+		void CancelMouseTracking(HWND a_window, WindowThreadMouseState& a_state)
+		{
+			if (a_state.TrackedArea == 0) {
+				return;
+			}
+
+			TRACKMOUSEEVENT event{
+				.cbSize = sizeof(event),
+				.dwFlags = TME_CANCEL,
+				.hwndTrack = a_window,
+				.dwHoverTime = 0
+			};
+			static_cast<void>(::TrackMouseEvent(&event));
+			a_state.TrackedArea = 0;
+		}
+
+		void TrackMouseArea(HWND a_window, int a_area)
+		{
+			auto& state = GetWindowThreadMouseState();
+			if (state.TrackedArea == a_area) {
+				return;
+			}
+
+			CancelMouseTracking(a_window, state);
+			TRACKMOUSEEVENT event{
+				.cbSize = sizeof(event),
+				.dwFlags = static_cast<DWORD>(
+					TME_LEAVE | (a_area == 2 ? TME_NONCLIENT : 0)),
+				.hwndTrack = a_window,
+				.dwHoverTime = 0
+			};
+			if (::TrackMouseEvent(&event)) {
+				state.TrackedArea = a_area;
+			} else if (!mouseTrackingFailureLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::warn("Starfield HWND mouse tracking could not be armed");
+			}
+		}
+
+		void ResetWindowThreadMouseState(HWND a_window)
+		{
+			auto& state = GetWindowThreadMouseState();
+			CancelMouseTracking(a_window, state);
+			state.ButtonsDown = 0;
+			if (::GetCapture() == a_window) {
+				static_cast<void>(::ReleaseCapture());
+			}
+		}
+
+		void UpdateWindowThreadMouseState(
+			HWND a_window,
+			UINT a_message,
+			WPARAM a_wParam)
+		{
+			auto& state = GetWindowThreadMouseState();
+			if (a_message == WM_MOUSEMOVE) {
+				TrackMouseArea(a_window, 1);
+			} else if (a_message == WM_NCMOUSEMOVE) {
+				TrackMouseArea(a_window, 2);
+			} else if ((a_message == WM_MOUSELEAVE && state.TrackedArea == 1) ||
+					   (a_message == WM_NCMOUSELEAVE && state.TrackedArea == 2)) {
+				state.TrackedArea = 0;
+			}
+
+			const auto buttonMask = MouseButtonMask(a_message, a_wParam);
+			if (buttonMask == 0) {
+				return;
+			}
+
+			if (IsMouseButtonDown(a_message)) {
+				if (state.ButtonsDown == 0 && ::GetCapture() == nullptr) {
+					static_cast<void>(::SetCapture(a_window));
+					if (::GetCapture() != a_window &&
+						!mouseCaptureFailureLogged.test_and_set(std::memory_order_relaxed)) {
+						logger::warn("Starfield HWND mouse capture could not be acquired");
+					}
+				}
+				state.ButtonsDown |= buttonMask;
+				return;
+			}
+
+			if (IsMouseButtonUp(a_message)) {
+				state.ButtonsDown &= ~buttonMask;
+				if (state.ButtonsDown == 0 && ::GetCapture() == a_window) {
+					static_cast<void>(::ReleaseCapture());
+				}
 			}
 		}
 
@@ -203,6 +592,36 @@ namespace SFSEMenuFramework::Win32Platform
 				WM_XBUTTONUP,
 				MAKEWPARAM(0, XBUTTON2),
 				0);
+		}
+
+		void ResetBackendInput(HWND a_window, bool a_acceptingInput)
+		{
+			auto& io = ImGui::GetIO();
+			SendMouseReleaseMessages(a_window);
+			ImGui_ImplWin32_WndProcHandler(a_window, WM_MOUSELEAVE, 0, 0);
+			ImGui_ImplWin32_WndProcHandler(a_window, WM_NCMOUSELEAVE, 0, 0);
+			io.ClearEventsQueue();
+			io.ClearInputKeys();
+			ImGui_ImplWin32_WndProcHandler(
+				a_window,
+				a_acceptingInput ? WM_SETFOCUS : WM_KILLFOCUS,
+				0,
+				0);
+		}
+
+		void ShutdownBackend(RenderPlatformState& a_state)
+		{
+			if (!a_state.BackendAlive) {
+				return;
+			}
+
+			ResetBackendInput(a_state.Window, false);
+			ImGui_ImplWin32_Shutdown();
+			a_state.BackendAlive = false;
+			a_state.BackendInitializationFailed = false;
+			a_state.Window = nullptr;
+			backendAlive.store(false, std::memory_order_release);
+			logger::info("ImGui Win32 backend shut down on the render path");
 		}
 
 		[[nodiscard]] bool VerifySubclass(HWND a_window)
@@ -229,34 +648,157 @@ namespace SFSEMenuFramework::Win32Platform
 				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
 			}
 
-			if (IsF1Message(a_message, a_wParam)) {
-				if (IsInitialKeyDown(a_message, a_lParam)) {
-					ToggleMainWindow();
+			const auto callbackMessage = HostWindowCallbackMessage();
+			if (callbackMessage != 0 && a_message == callbackMessage) {
+				const bool wasPending =
+					hostCallbackPending.exchange(false, std::memory_order_acq_rel);
+				if (wasPending) {
+					if (const auto callback =
+							hostWindowCallback.load(std::memory_order_acquire)) {
+						callback();
+					}
 				}
 				return 0;
 			}
 
-			if (acceptInput.load(std::memory_order_acquire) &&
-				HasCurrentInputLease()) {
+			if (a_message == WM_INPUT) {
 				LogInputMessageOnce(a_message);
-				D3D12Renderer::ProcessWindowMessage(
+				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
+			}
+
+			if (a_message == WM_NCDESTROY) {
+				UpdateInputState(false);
+				escapeKeyConsumed = false;
+				hostWindowTearingDown.store(true, std::memory_order_release);
+				hostCallbackPending.store(false, std::memory_order_release);
+				if (const auto callback =
+						hostWindowCallback.load(std::memory_order_acquire)) {
+					callback();
+				}
+				hostCallbackPending.store(false, std::memory_order_release);
+				subclassActive.store(false, std::memory_order_release);
+				initializedHostWindow.store(nullptr, std::memory_order_relaxed);
+				initializedHostWindowThreadID.store(0, std::memory_order_release);
+				RequestInputReset();
+				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
+			}
+
+			if (a_message == WM_CAPTURECHANGED || a_message == WM_CANCELMODE) {
+				ResetWindowThreadMouseState(a_window);
+				RequestInputReset();
+				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
+			}
+
+			if (IsFocusOrActivationMessage(a_message)) {
+				const bool losingFocus =
+					a_message == WM_KILLFOCUS ||
+					(a_message == WM_ACTIVATEAPP && a_wParam == FALSE) ||
+					(a_message == WM_ACTIVATE && LOWORD(a_wParam) == WA_INACTIVE);
+				if (losingFocus) {
+					UpdateInputState(false);
+				}
+				if (a_message == WM_SETFOCUS || a_message == WM_KILLFOCUS) {
+					static_cast<void>(EnqueueWindowMessage(
+						a_window,
+						a_message,
+						a_wParam,
+						a_lParam,
+						false));
+				}
+				static_cast<void>(PostHostWindowCallback());
+				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
+			}
+
+			if (a_message == WM_INPUTLANGCHANGE) {
+				static_cast<void>(EnqueueWindowMessage(
 					a_window,
 					a_message,
 					a_wParam,
-					a_lParam);
+					a_lParam,
+					false));
+				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
 			}
 
+			bool modalInput =
+				acceptInput.load(std::memory_order_acquire) && HasCurrentInputLease();
+			if (acceptInput.load(std::memory_order_relaxed) && !modalInput) {
+				UpdateInputState(false);
+				static_cast<void>(PostHostWindowCallback());
+			}
+
+			const bool isEscapeMessage =
+				(a_message == WM_KEYDOWN || a_message == WM_KEYUP) &&
+				a_wParam == VK_ESCAPE;
+			if (isEscapeMessage && (modalInput || escapeKeyConsumed)) {
+				if (IsInitialKeyDown(a_message, a_lParam)) {
+					escapeKeyConsumed = true;
+					if (WindowManager::SetMainWindowOpen(false)) {
+						logger::info("Mod Control Panel closed");
+					}
+					UpdateInputState(false);
+					static_cast<void>(PostHostWindowCallback());
+					modalInput = false;
+				} else if (IsKeyUp(a_message)) {
+					escapeKeyConsumed = false;
+				}
+				return 0;
+			}
+
+			if (!modalInput || !IsBackendInputMessage(a_message) ||
+				IsAltF4(a_message, a_wParam, a_lParam)) {
+				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
+			}
+
+			LogInputMessageOnce(a_message);
+			if (IsLegacyMouseMessage(a_message)) {
+				UpdateWindowThreadMouseState(a_window, a_message, a_wParam);
+			}
+			static_cast<void>(EnqueueWindowMessage(
+				a_window,
+				a_message,
+				a_wParam,
+				a_lParam,
+				true));
+
+			if (ShouldConsumeModalMessage(a_message, a_wParam, a_lParam)) {
+				return 0;
+			}
 			return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
 		}
 	}
 
 	InitializeResult Initialize()
 	{
-		auto& state = GetState();
-		if (state.Initialized) {
-			return InitializeResult::Ready;
-		}
-		if (state.BackendAlive) {
+		const auto currentThreadID = ::GetCurrentThreadId();
+		if (subclassActive.load(std::memory_order_acquire)) {
+			const auto window = initializedHostWindow.load(std::memory_order_relaxed);
+			const auto threadID =
+				initializedHostWindowThreadID.load(std::memory_order_acquire);
+			if (threadID != currentThreadID) {
+				return InitializeResult::Deferred;
+			}
+			if (window && threadID == currentThreadID && ::IsWindow(window) &&
+				VerifySubclass(window)) {
+				return InitializeResult::Ready;
+			}
+
+			if (!subclassDriftLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::critical(
+					"Win32 window subclass state no longer matches its verified HWND/thread");
+			}
+			UpdateInputState(false);
+			escapeKeyConsumed = false;
+			hostWindowTearingDown.store(true, std::memory_order_release);
+			hostCallbackPending.store(false, std::memory_order_release);
+			if (const auto callback =
+					hostWindowCallback.load(std::memory_order_acquire)) {
+				callback();
+			}
+			hostCallbackPending.store(false, std::memory_order_release);
+			subclassActive.store(false, std::memory_order_release);
+			initializedHostWindow.store(nullptr, std::memory_order_relaxed);
+			initializedHostWindowThreadID.store(0, std::memory_order_release);
+			RequestInputReset();
 			return InitializeResult::Failed;
 		}
 
@@ -270,61 +812,52 @@ namespace SFSEMenuFramework::Win32Platform
 			return InitializeResult::Deferred;
 		}
 		if (search.CandidateCount != 1) {
-			logger::critical(
-				"Win32 input rejected: expected one Starfield process window, found {}",
-				search.CandidateCount);
+			if (!ambiguousWindowLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::critical(
+					"Win32 input rejected: expected one Starfield process window, found {}",
+					search.CandidateCount);
+			}
 			return InitializeResult::Failed;
 		}
-
-		const auto currentThreadID = ::GetCurrentThreadId();
 		if (search.ThreadID != currentThreadID) {
-			logger::critical(
-				"Win32 input rejected: window thread {} differs from SFSE task thread {}",
-				search.ThreadID,
-				currentThreadID);
-			return InitializeResult::Failed;
+			return InitializeResult::Deferred;
 		}
-
-		if (!ImGui_ImplWin32_Init(search.Window)) {
-			logger::critical("Failed to initialize the official Dear ImGui Win32 backend");
-			return InitializeResult::Failed;
-		}
-		state.BackendAlive = true;
 
 		if (!::SetWindowSubclass(search.Window, &WindowSubclass, SubclassID(), 0)) {
-			logger::critical("Failed to install the Starfield window subclass");
-			ImGui_ImplWin32_Shutdown();
-			state.BackendAlive = false;
-			return InitializeResult::Failed;
-		}
-
-		if (!VerifySubclass(search.Window)) {
-			subclassActive.store(false, std::memory_order_release);
-			const bool removed =
-				::RemoveWindowSubclass(search.Window, &WindowSubclass, SubclassID()) != FALSE &&
-				!VerifySubclass(search.Window);
-			logger::critical(
-				"Starfield window-subclass verification failed; rollback {}",
-				removed ? "succeeded" : "failed, so the ImGui context must remain alive");
-			if (removed) {
-				ImGui_ImplWin32_Shutdown();
-				state.BackendAlive = false;
+			if (!subclassInstallFailureLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::critical("Failed to install the Starfield window subclass");
 			}
 			return InitializeResult::Failed;
 		}
 
-		state.Window = search.Window;
-		state.Initialized = true;
+		if (!VerifySubclass(search.Window)) {
+			const bool removed =
+				::RemoveWindowSubclass(search.Window, &WindowSubclass, SubclassID()) != FALSE &&
+				!VerifySubclass(search.Window);
+			if (!subclassVerificationFailureLogged.test_and_set(
+					std::memory_order_relaxed)) {
+				logger::critical(
+					"Starfield window-subclass verification failed; rollback {}",
+					removed ? "succeeded" : "failed");
+			}
+			return InitializeResult::Failed;
+		}
+
 		initializedHostWindow.store(search.Window, std::memory_order_relaxed);
 		initializedHostWindowThreadID.store(search.ThreadID, std::memory_order_release);
+		hostWindowTearingDown.store(false, std::memory_order_release);
+		hostCallbackPending.store(false, std::memory_order_release);
 		subclassActive.store(true, std::memory_order_release);
+		RequestInputReset();
 		logger::info(
-			"ImGui Win32 input initialized (PID {}, thread {}, client {}x{}, candidates {})",
+			"Starfield window subclass initialized without ImGui access "
+			"(PID {}, thread {}, client {}x{}, candidates {})",
 			::GetCurrentProcessId(),
 			search.ThreadID,
 			search.ClientArea.right - search.ClientArea.left,
 			search.ClientArea.bottom - search.ClientArea.top,
 			search.CandidateCount);
+		static_cast<void>(PostHostWindowCallback());
 		return InitializeResult::Ready;
 	}
 
@@ -333,6 +866,12 @@ namespace SFSEMenuFramework::Win32Platform
 		const auto initializedThreadID =
 			initializedHostWindowThreadID.load(std::memory_order_acquire);
 		if (initializedThreadID != 0) {
+			if (initializedThreadID != ::GetCurrentThreadId()) {
+				return false;
+			}
+			if (hostWindowTearingDown.load(std::memory_order_acquire)) {
+				return true;
+			}
 			const auto initializedWindow =
 				initializedHostWindow.load(std::memory_order_relaxed);
 			DWORD processID{};
@@ -351,18 +890,23 @@ namespace SFSEMenuFramework::Win32Platform
 
 	bool IsInitialized() noexcept
 	{
-		return GetState().Initialized;
+		return !hostWindowTearingDown.load(std::memory_order_acquire) &&
+		       subclassActive.load(std::memory_order_acquire) &&
+		       initializedHostWindow.load(std::memory_order_relaxed) != nullptr;
 	}
 
 	bool HasLiveBackend() noexcept
 	{
-		return GetState().BackendAlive;
+		return backendAlive.load(std::memory_order_acquire);
 	}
 
 	bool IsHostWindowUsable() noexcept
 	{
-		const auto window = GetState().Window;
-		if (!window || !::IsWindow(window) || !::IsWindowVisible(window) || ::IsIconic(window)) {
+		const auto window = initializedHostWindow.load(std::memory_order_acquire);
+		if (hostWindowTearingDown.load(std::memory_order_acquire) ||
+			!subclassActive.load(std::memory_order_acquire) || !window ||
+			!::IsWindow(window) || !::IsWindowVisible(window) || ::IsIconic(window) ||
+			::GetForegroundWindow() != window) {
 			return false;
 		}
 
@@ -374,52 +918,119 @@ namespace SFSEMenuFramework::Win32Platform
 
 	void UpdateInputState(bool a_acceptInput)
 	{
-		auto& state = GetState();
-		if (!state.Initialized) {
-			return;
-		}
-
+		const auto window = initializedHostWindow.load(std::memory_order_acquire);
 		const bool shouldAcceptInput =
-			a_acceptInput && ::GetForegroundWindow() == state.Window;
-		auto& io = ImGui::GetIO();
-		io.MouseDrawCursor = shouldAcceptInput;
+			a_acceptInput && subclassActive.load(std::memory_order_acquire) &&
+			window && ::GetForegroundWindow() == window;
 
-		if (state.HasInputState &&
-			state.WasAcceptingInput == shouldAcceptInput) {
-			return;
+		bool changed{};
+		{
+			auto& queue = GetInputQueue();
+			std::scoped_lock lock{ queue.Mutex };
+			const bool previous =
+				acceptInput.load(std::memory_order_relaxed);
+			if (previous != shouldAcceptInput) {
+				acceptInput.store(shouldAcceptInput, std::memory_order_release);
+				InvalidateQueuedInput(queue);
+				changed = true;
+			}
 		}
 
-		if (shouldAcceptInput) {
-			io.ClearEventsQueue();
-			io.ClearInputKeys();
+		if ((changed || !shouldAcceptInput) && window &&
+			IsCurrentThreadHostWindowThread()) {
+			ResetWindowThreadMouseState(window);
 		}
-
-		if (shouldAcceptInput) {
-			ImGui_ImplWin32_WndProcHandler(state.Window, WM_SETFOCUS, 0, 0);
-		} else {
-			acceptInput.store(false, std::memory_order_release);
-			SendMouseReleaseMessages(state.Window);
-			ImGui_ImplWin32_WndProcHandler(state.Window, WM_MOUSELEAVE, 0, 0);
-			ImGui_ImplWin32_WndProcHandler(state.Window, WM_NCMOUSELEAVE, 0, 0);
-			ImGui_ImplWin32_WndProcHandler(state.Window, WM_KILLFOCUS, 0, 0);
-			io.ClearEventsQueue();
-			io.ClearInputKeys();
-		}
-
-		acceptInput.store(shouldAcceptInput, std::memory_order_release);
-		state.WasAcceptingInput = shouldAcceptInput;
-		state.HasInputState = true;
 	}
 
 	bool PrepareFrame()
 	{
+		auto& state = GetRenderState();
+		const auto window = initializedHostWindow.load(std::memory_order_acquire);
 		if (!IsInitialized() || !IsHostWindowUsable()) {
+			ShutdownBackend(state);
 			return false;
 		}
 
+		if (state.BackendAlive && state.Window != window) {
+			ShutdownBackend(state);
+		}
+		if (state.Window != window) {
+			state.Window = window;
+			state.BackendInitializationFailed = false;
+		}
+		if (!state.BackendAlive) {
+			if (state.BackendInitializationFailed) {
+				return false;
+			}
+			if (!ImGui_ImplWin32_Init(window)) {
+				state.BackendInitializationFailed = true;
+				logger::critical(
+					"Failed to initialize the official Dear ImGui Win32 backend on render thread {}",
+					::GetCurrentThreadId());
+				return false;
+			}
+
+			state.BackendAlive = true;
+			backendAlive.store(true, std::memory_order_release);
+			RequestInputReset();
+			logger::info(
+				"ImGui Win32 backend initialized on render thread {} for HWND 0x{:X}",
+				::GetCurrentThreadId(),
+				reinterpret_cast<std::uintptr_t>(window));
+		}
+
+		if (acceptInput.load(std::memory_order_acquire) &&
+			::GetForegroundWindow() != window) {
+			UpdateInputState(false);
+			static_cast<void>(PostHostWindowCallback());
+		}
+
+		const auto input = DrainQueuedInput();
+		ReportQueueTelemetry(input);
+		bool acceptingInput = acceptInput.load(std::memory_order_acquire);
+		if (input.ResetRequested) {
+			ResetBackendInput(window, acceptingInput);
+		}
+
+		for (std::size_t index = 0; index < input.Count; ++index) {
+			const auto& message = input.Messages[index];
+			if (message.Window == window) {
+				ImGui_ImplWin32_WndProcHandler(
+					message.Window,
+					message.Message,
+					message.WParam,
+					message.LParam);
+			}
+		}
+
+		auto observedGeneration = input.StateGeneration;
+		auto currentGeneration =
+			inputStateGeneration.load(std::memory_order_acquire);
+		if (currentGeneration != observedGeneration) {
+			acceptingInput = acceptInput.load(std::memory_order_acquire);
+			ResetBackendInput(window, acceptingInput);
+			observedGeneration = currentGeneration;
+		}
+
 		ImGui_ImplWin32_NewFrame();
+
+		currentGeneration = inputStateGeneration.load(std::memory_order_acquire);
+		if (currentGeneration != observedGeneration) {
+			acceptingInput = acceptInput.load(std::memory_order_acquire);
+			ResetBackendInput(window, acceptingInput);
+			observedGeneration = currentGeneration;
+		}
+
+		if (acceptingInput && ::GetForegroundWindow() != window) {
+			UpdateInputState(false);
+			static_cast<void>(PostHostWindowCallback());
+			acceptingInput = false;
+			ResetBackendInput(window, false);
+		}
+
 		auto& io = ImGui::GetIO();
-		if (!acceptInput.load(std::memory_order_acquire)) {
+		io.MouseDrawCursor = acceptingInput;
+		if (!acceptingInput) {
 			io.ClearEventsQueue();
 			io.ClearInputKeys();
 		}
@@ -434,21 +1045,43 @@ namespace SFSEMenuFramework::Win32Platform
 		       io.DisplaySize.y > 0.0F;
 	}
 
-	void ProcessWindowMessage(
-		HWND   a_window,
-		UINT   a_message,
-		WPARAM a_wParam,
-		LPARAM a_lParam)
+	void SetHostWindowCallback(HostWindowCallback a_callback) noexcept
 	{
-		if (!IsInitialized() ||
-			!subclassActive.load(std::memory_order_acquire) ||
-			!acceptInput.load(std::memory_order_acquire)) {
-			return;
+		hostWindowCallback.store(a_callback, std::memory_order_release);
+		if (!a_callback) {
+			hostCallbackPending.store(false, std::memory_order_release);
 		}
-		ImGui_ImplWin32_WndProcHandler(
-			a_window,
-			a_message,
-			a_wParam,
-			a_lParam);
+	}
+
+	bool PostHostWindowCallback() noexcept
+	{
+		if (hostWindowTearingDown.load(std::memory_order_acquire) ||
+			!hostWindowCallback.load(std::memory_order_acquire)) {
+			return false;
+		}
+
+		const auto window = initializedHostWindow.load(std::memory_order_acquire);
+		const auto message = HostWindowCallbackMessage();
+		if (!subclassActive.load(std::memory_order_acquire) || !window || message == 0) {
+			return false;
+		}
+
+		bool expected = false;
+		if (!hostCallbackPending.compare_exchange_strong(
+				expected,
+				true,
+				std::memory_order_acq_rel)) {
+			return true;
+		}
+
+		if (::PostMessageW(window, message, 0, 0)) {
+			return true;
+		}
+
+		hostCallbackPending.store(false, std::memory_order_release);
+		if (!callbackPostFailureLogged.test_and_set(std::memory_order_relaxed)) {
+			logger::error("Failed to post the coalesced Starfield HWND callback");
+		}
+		return false;
 	}
 }

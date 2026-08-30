@@ -6,6 +6,8 @@
 
 namespace SFSEMenuFramework::Win32Platform
 {
+	using HostWindowCallback = void (*)() noexcept;
+
 	enum class InitializeResult : std::uint8_t
 	{
 		Ready,
@@ -20,9 +22,6 @@ namespace SFSEMenuFramework::Win32Platform
 	[[nodiscard]] bool             IsHostWindowUsable() noexcept;
 	void                           UpdateInputState(bool a_acceptInput);
 	[[nodiscard]] bool             PrepareFrame();
-	void ProcessWindowMessage(
-		HWND   a_window,
-		UINT   a_message,
-		WPARAM a_wParam,
-		LPARAM a_lParam);
+	void                           SetHostWindowCallback(HostWindowCallback a_callback) noexcept;
+	[[nodiscard]] bool             PostHostWindowCallback() noexcept;
 }
