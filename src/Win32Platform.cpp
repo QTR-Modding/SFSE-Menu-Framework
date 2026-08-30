@@ -43,6 +43,8 @@ namespace SFSEMenuFramework::Win32Platform
 
 		std::atomic<bool> subclassActive{ false };
 		std::atomic<bool> acceptInput{ false };
+		std::atomic<HWND> initializedHostWindow{ nullptr };
+		std::atomic<DWORD> initializedHostWindowThreadID{ 0 };
 		std::atomic_flag  mouseMessageLogged{};
 		std::atomic_flag  keyboardMessageLogged{};
 		std::atomic_flag  characterMessageLogged{};
@@ -313,6 +315,8 @@ namespace SFSEMenuFramework::Win32Platform
 
 		state.Window = search.Window;
 		state.Initialized = true;
+		initializedHostWindow.store(search.Window, std::memory_order_relaxed);
+		initializedHostWindowThreadID.store(search.ThreadID, std::memory_order_release);
 		subclassActive.store(true, std::memory_order_release);
 		logger::info(
 			"ImGui Win32 input initialized (PID {}, thread {}, client {}x{}, candidates {})",
@@ -326,6 +330,20 @@ namespace SFSEMenuFramework::Win32Platform
 
 	bool IsCurrentThreadHostWindowThread()
 	{
+		const auto initializedThreadID =
+			initializedHostWindowThreadID.load(std::memory_order_acquire);
+		if (initializedThreadID != 0) {
+			const auto initializedWindow =
+				initializedHostWindow.load(std::memory_order_relaxed);
+			DWORD processID{};
+			const auto currentWindowThreadID = initializedWindow ?
+				::GetWindowThreadProcessId(initializedWindow, &processID) :
+				0;
+			return currentWindowThreadID == initializedThreadID &&
+			       processID == ::GetCurrentProcessId() &&
+			       initializedThreadID == ::GetCurrentThreadId();
+		}
+
 		const auto search = FindHostWindow();
 		return search.CandidateCount == 1 &&
 		       search.ThreadID == ::GetCurrentThreadId();
