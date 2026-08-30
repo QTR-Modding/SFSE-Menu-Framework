@@ -8,12 +8,12 @@ namespace
 {
 	struct Window final
 	{
-		SFSEMenuFramework::Model::WindowInterface Interface;
-		SFSEMenuFramework::Model::RenderFunction  Render{ nullptr };
+		SFSEMenuFramework::WindowInterface       Interface;
+		SFSEMenuFramework::WindowRenderFunction Render{ nullptr };
 	};
 
-	std::vector<std::unique_ptr<Window>>       windows;
-	SFSEMenuFramework::Model::WindowInterface* mainWindow{ nullptr };
+	std::vector<std::unique_ptr<Window>> windows;
+	SFSEMenuFramework::WindowInterface*  mainWindow{ nullptr };
 
 	[[nodiscard]] std::mutex& GetMainWindowStateMutex()
 	{
@@ -22,8 +22,8 @@ namespace
 	}
 }
 
-SFSEMenuFramework::Model::WindowInterface* SFSEMenuFramework::WindowManager::AddWindow(
-	Model::RenderFunction a_renderFunction)
+SFSEMenuFramework::WindowInterface* SFSEMenuFramework::WindowManager::AddWindow(
+	WindowRenderFunction a_renderFunction)
 {
 	if (!a_renderFunction) {
 		return nullptr;
@@ -37,23 +37,24 @@ SFSEMenuFramework::Model::WindowInterface* SFSEMenuFramework::WindowManager::Add
 	return interface;
 }
 
-std::uint64_t SFSEMenuFramework::WindowManager::RenderOpenWindows()
+std::uint64_t SFSEMenuFramework::WindowManager::RenderOpenWindows(
+	const Model::RenderContext& a_context)
 {
 	std::uint64_t renderedMainWindowGeneration{};
 	for (const auto& window : windows) {
 		if (&window->Interface == mainWindow) {
 			renderedMainWindowGeneration = GetMainWindowOpenGeneration();
 			if (renderedMainWindowGeneration != 0) {
-				window->Render();
+				window->Render(a_context);
 			}
 		} else if (window->Interface.IsOpen.load(std::memory_order_acquire)) {
-			window->Render();
+			window->Render(a_context);
 		}
 	}
 	return renderedMainWindowGeneration;
 }
 
-bool SFSEMenuFramework::WindowManager::SetMainWindow(Model::WindowInterface* a_window) noexcept
+bool SFSEMenuFramework::WindowManager::SetMainWindow(WindowInterface* a_window) noexcept
 {
 	if (!a_window || mainWindow) {
 		return false;
@@ -63,7 +64,7 @@ bool SFSEMenuFramework::WindowManager::SetMainWindow(Model::WindowInterface* a_w
 	return true;
 }
 
-SFSEMenuFramework::Model::WindowInterface* SFSEMenuFramework::WindowManager::GetMainWindow() noexcept
+SFSEMenuFramework::WindowInterface* SFSEMenuFramework::WindowManager::GetMainWindow() noexcept
 {
 	return mainWindow;
 }

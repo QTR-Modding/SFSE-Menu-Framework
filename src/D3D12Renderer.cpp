@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <mutex>
+#include <type_traits>
 
 #include <wrl/client.h>
 
@@ -24,6 +25,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 		std::atomic<std::uint64_t> renderedMainWindowGeneration{ 0 };
 		std::atomic<std::uint64_t> lastMainWindowRenderTick{ 0 };
+		std::atomic<std::uint64_t> nextContextGeneration{ 1 };
 
 		struct CompletionSlot final
 		{
@@ -41,6 +43,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			std::array<CompletionSlot, frameResourceCount> CompletionSlots{};
 			std::uint64_t                                  NextFrameIndex{ 0 };
 			ImGuiContext*                                  Context{ nullptr };
+			std::uint64_t                                  ContextGeneration{ 0 };
 			std::chrono::steady_clock::time_point          LastFrame{};
 			bool                                           HasFrameTime{ false };
 			bool                                           InitializationFailed{ false };
@@ -88,6 +91,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 				}
 				ImGui::DestroyContext(a_state.Context);
 				a_state.Context = nullptr;
+				a_state.ContextGeneration = 0;
 			}
 
 			a_state.RenderTargetHeap.Reset();
@@ -261,6 +265,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 				ResetInitialization(a_state);
 				return false;
 			}
+			a_state.ContextGeneration =
+				nextContextGeneration.fetch_add(1, std::memory_order_relaxed);
 
 			ImGui::SetCurrentContext(a_state.Context);
 			auto& io = ImGui::GetIO();
@@ -499,7 +505,23 @@ namespace SFSEMenuFramework::D3D12Renderer
 			io.ClearInputKeys();
 		}
 		ImGui::NewFrame();
-		const auto renderedGeneration = WindowManager::RenderOpenWindows();
+		ImGuiMemAllocFunc allocate{};
+		ImGuiMemFreeFunc free{};
+		void* allocatorUserData{};
+		ImGui::GetAllocatorFunctions(&allocate, &free, &allocatorUserData);
+		static_assert(std::is_same_v<Model::ImGuiAllocateFunction, ImGuiMemAllocFunc>);
+		static_assert(std::is_same_v<Model::ImGuiFreeFunction, ImGuiMemFreeFunc>);
+		const Model::RenderContext renderContext{
+			.StructureSize = sizeof(Model::RenderContext),
+			.InterfaceVersion = Model::INTERFACE_VERSION,
+			.ContextGeneration = rendererState.ContextGeneration,
+			.ImGuiContext = rendererState.Context,
+			.Allocate = allocate,
+			.Free = free,
+			.AllocatorUserData = allocatorUserData
+		};
+		const auto renderedGeneration =
+			WindowManager::RenderOpenWindows(renderContext);
 		ImGui::Render();
 
 		D3D12_RENDER_TARGET_VIEW_DESC renderTargetView{};

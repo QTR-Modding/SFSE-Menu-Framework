@@ -1,8 +1,12 @@
 #include "McpWindow.h"
 
+#include "PanelRegistry.h"
 #include "WindowManager.h"
 
 #include <imgui.h>
+
+#include <algorithm>
+#include <string>
 
 namespace
 {
@@ -17,6 +21,7 @@ namespace
 	};
 
 	WindowPlacement mainWindowPlacement;
+	SFSEMenuFramework::Model::PanelHandle selectedPanelHandle{};
 
 	void ApplyWindowPlacement(const ImGuiViewport* a_viewport)
 	{
@@ -38,6 +43,75 @@ namespace
 		mainWindowPlacement.Size = ImGui::GetWindowSize();
 		mainWindowPlacement.HasState = true;
 	}
+
+	void RenderRegisteredPanels(
+		const SFSEMenuFramework::Model::RenderContext& a_context)
+	{
+		const auto panels = SFSEMenuFramework::PanelRegistry::GetSnapshot();
+		if (panels.empty()) {
+			selectedPanelHandle = 0;
+			ImGui::TextDisabled("No SFSE plugins have registered a panel.");
+			return;
+		}
+
+		auto selected = std::ranges::find_if(
+			panels,
+			[](const auto& a_panel) {
+				return a_panel->Handle == selectedPanelHandle;
+			});
+		if (selected == panels.end()) {
+			selected = panels.begin();
+			selectedPanelHandle = (*selected)->Handle;
+		}
+
+		const auto available = ImGui::GetContentRegionAvail();
+		const float navigationWidth =
+			std::clamp(available.x * 0.25F, 180.0F, 320.0F);
+		const auto childFlags =
+			ImGuiChildFlags_Border | ImGuiChildFlags_ResizeX;
+
+		if (ImGui::BeginChild(
+				"##MCPNavigation",
+				ImVec2{ navigationWidth, 0.0F },
+				childFlags)) {
+			std::string previousSection;
+			for (const auto& panel : panels) {
+				if (panel->Section != previousSection) {
+					if (!previousSection.empty()) {
+						ImGui::Spacing();
+					}
+					ImGui::SeparatorText(panel->Section.c_str());
+					previousSection = panel->Section;
+				}
+
+				ImGui::PushID(panel.get());
+				if (ImGui::Selectable(
+						panel->Title.c_str(),
+						panel->Handle == selectedPanelHandle)) {
+					selectedPanelHandle = panel->Handle;
+					selected = std::ranges::find_if(
+						panels,
+						[&](const auto& a_candidate) {
+							return a_candidate->Handle == selectedPanelHandle;
+						});
+				}
+				ImGui::PopID();
+			}
+		}
+		ImGui::EndChild();
+
+		ImGui::SameLine();
+		if (ImGui::BeginChild(
+				"##MCPContent",
+				ImVec2{ 0.0F, 0.0F },
+				ImGuiChildFlags_Border)) {
+			if (selected != panels.end()) {
+				ImGui::SeparatorText((*selected)->Title.c_str());
+				SFSEMenuFramework::PanelRegistry::Render(*selected, a_context);
+			}
+		}
+		ImGui::EndChild();
+	}
 }
 
 bool SFSEMenuFramework::McpWindow::Install()
@@ -55,7 +129,8 @@ bool SFSEMenuFramework::McpWindow::Install()
 	return WindowManager::SetMainWindowOpen(true);
 }
 
-void __stdcall SFSEMenuFramework::McpWindow::Render()
+void __stdcall SFSEMenuFramework::McpWindow::Render(
+	const Model::RenderContext& a_context)
 {
 	const auto* viewport = ImGui::GetMainViewport();
 	ApplyWindowPlacement(viewport);
@@ -90,6 +165,10 @@ void __stdcall SFSEMenuFramework::McpWindow::Render()
 
 		ImGui::PopStyleVar();
 		ImGui::EndMenuBar();
+	}
+
+	if (drawContents) {
+		RenderRegisteredPanels(a_context);
 	}
 
 	ImGui::End();

@@ -2,6 +2,8 @@
 #include "MenuOwnership.h"
 #include "RenderHooks.h"
 
+#include <SFSEMenuFramework/API.h>
+
 #include <atomic>
 
 namespace
@@ -77,6 +79,9 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 	initializationComplete.store(true, std::memory_order_release);
 
 	logger::info("Menu input lifecycle waiting for SFSE post-data-load");
+	logger::info(
+		"External panel interface v{} available",
+		SFSEMenuFramework::Model::INTERFACE_VERSION);
 	logger::info("Mod Control Panel registered; press F1 to toggle it");
 	return true;
 }

@@ -14,6 +14,37 @@ SFSE Menu Framework is a native Starfield Script Extender plugin for building Im
 
 - Press `F1` to open or close the Mod Control Panel.
 
+## C++ consumer API
+
+An SFSE plugin can register a page without installing its own renderer, window
+hook, or input hook:
+
+```cpp
+#include <SFSEMenuFramework/SFSEMenuFramework.h>
+
+void __stdcall RenderSettings()
+{
+    ImGui::TextUnformatted("Hello from my SFSE plugin");
+}
+
+void RegisterMenu()
+{
+    if (!SFSEMenuFramework::IsInstalled() ||
+        !SFSEMenuFramework::SetSection("My Plugin")) {
+        return;
+    }
+
+    SFSEMenuFramework::AddSectionItem("Settings", &RenderSettings);
+}
+```
+
+Call the registration function from the SFSE `kPostLoad` message so it works
+regardless of DLL load order. Consumer projects must compile the four Dear ImGui
+core sources at version 1.90.8, commit
+`6f7b5d0ee2fe9948ab871a530888a6dc5c960700`, and must not compile or initialize
+an ImGui platform or renderer backend. The SDK header binds the consumer's ImGui
+copy to the framework context and allocator for each callback.
+
 ## Build
 
 Clone the repository with its submodules, then build the Release-with-debug-information configuration:
