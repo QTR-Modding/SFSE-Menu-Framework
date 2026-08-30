@@ -670,12 +670,12 @@ namespace SFSEMenuFramework::FrameworkSettings
 			L"BlurBackgroundOnMenu",
 			saved.BlurBackgroundOnMenu ? L"1" : L"0") && success;
 
-		const bool flushed = ::WritePrivateProfileStringW(
+		static_cast<void>(::WritePrivateProfileStringW(
 			nullptr,
 			nullptr,
 			nullptr,
-			path.data()) != FALSE;
-		return success && flushed;
+			path.data()));
+		return success;
 	}
 
 	void ResetDefaults() noexcept
