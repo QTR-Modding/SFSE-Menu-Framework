@@ -75,15 +75,15 @@ namespace SFSEMenuFramework
 
 			static_assert(sizeof(procedure) == sizeof(Model::QueryInterfaceFunction));
 			const auto query = std::bit_cast<Model::QueryInterfaceFunction>(procedure);
-			const auto* interface = query(Model::INTERFACE_VERSION);
-			if (!interface ||
-				interface->StructureSize < sizeof(Model::Interface) ||
-				interface->Version != Model::INTERFACE_VERSION ||
-				!interface->RegisterPanel) {
+			const auto* frameworkInterface = query(Model::INTERFACE_VERSION);
+			if (!frameworkInterface ||
+				frameworkInterface->StructureSize < sizeof(Model::Interface) ||
+				frameworkInterface->Version != Model::INTERFACE_VERSION ||
+				!frameworkInterface->RegisterPanel) {
 				return nullptr;
 			}
 
-			return interface;
+			return frameworkInterface;
 		}
 
 		[[nodiscard]] inline Model::ImGuiLayout GetImGuiLayout() noexcept
@@ -209,8 +209,8 @@ namespace SFSEMenuFramework
 			return Model::RegistrationResult::InvalidArgument;
 		}
 
-		const auto* interface = Detail::RequestInterface();
-		if (!interface) {
+		const auto* frameworkInterface = Detail::RequestInterface();
+		if (!frameworkInterface) {
 			return Model::RegistrationResult::InterfaceUnavailable;
 		}
 
@@ -241,7 +241,8 @@ namespace SFSEMenuFramework
 				.UserData = consumerPanel
 			};
 
-			const auto result = interface->RegisterPanel(&registration, a_handle);
+			const auto result =
+				frameworkInterface->RegisterPanel(&registration, a_handle);
 			if (result != Model::RegistrationResult::Success) {
 				delete consumerPanel;
 			}
