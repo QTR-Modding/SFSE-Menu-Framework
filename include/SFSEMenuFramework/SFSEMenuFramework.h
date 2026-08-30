@@ -50,12 +50,15 @@ namespace SFSEMenuFramework
 #if defined(IMGUI_USER_CONFIG) || defined(IMGUI_INCLUDE_IMGUI_USER_H)
 			flags |= 1U << 4U;
 #endif
-#if defined(IMGUI_ENABLE_FREETYPE) || defined(IMGUI_ENABLE_FREETYPE_LUNASVG) || \
-	defined(IMGUI_ENABLE_STB_TRUETYPE)
+#if defined(IMGUI_ENABLE_FREETYPE) || defined(IMGUI_ENABLE_FREETYPE_LUNASVG)
 			flags |= 1U << 5U;
 #endif
 			return flags;
 		}
+
+		static_assert(
+			GetImGuiConfigurationFlags() == 0,
+			"SFSE Menu Framework consumers require the pinned default ImGui configuration");
 
 		[[nodiscard]] inline const Model::Interface* RequestInterface() noexcept
 		{
