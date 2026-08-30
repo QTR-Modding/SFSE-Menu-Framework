@@ -3,7 +3,7 @@
 #include "FrameworkSettings.h"
 #include "WindowManager.h"
 
-#include <RE/P/PlayerControlsManager.h>
+#include <RE/B/BSInputDeviceManagerInput.h>
 #include <REX/W32/DINPUT.h>
 
 #include <Windows.h>
@@ -17,11 +17,13 @@ namespace SFSEMenuFramework::InputCapture
 {
 	namespace
 	{
-		// The hook-site contract, bounded event walk, and verified vtable
-		// installation/rollback pattern are adapted from QTR-Modding's
+		// The bounded event walk and verified vtable installation/rollback
+		// pattern are adapted from QTR-Modding's
 		// ToggleDialogueCameraSF at commit
 		// 8021fa934591aac1c71266cc4abc5cb1c24e28d7. That project is
 		// GPL-3.0-or-later with the Modding and GPL-3.0 Linking Exceptions.
+		// The BSInputDeviceManager receiver ABI and dispatch placement were
+		// independently verified against Starfield 1.16.244.
 		// Preserving PrintScreen while modal is adapted from SKSE Menu
 		// Framework 3's RemoveNonPrintScreenInputs at commit
 		// 928e01ab459822a8d233ab99f0419ea1de23c775. This Starfield port
@@ -30,8 +32,8 @@ namespace SFSEMenuFramework::InputCapture
 		constexpr float       holdThresholdSeconds = 0.4F;
 		constexpr auto        doublePressThreshold = std::chrono::milliseconds{ 300 };
 		constexpr std::array<std::uint8_t, 16> expectedInputProcessorPrologue{
-			0x48, 0x89, 0x5C, 0x24, 0x18, 0x55, 0x56, 0x57,
-			0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x20
+			0x48, 0x85, 0xD2, 0x0F, 0x84, 0xAC, 0x01, 0x00,
+			0x00, 0x53, 0x55, 0x48, 0x83, 0xEC, 0x38, 0x4C
 		};
 
 		enum class HookState : std::uint8_t
@@ -42,12 +44,22 @@ namespace SFSEMenuFramework::InputCapture
 			Failed
 		};
 
-		using InputProcessor = RE::PlayerControlsManager::PerformInputProcessing_t*;
+		enum class DiagnosticEdge : std::uint8_t
+		{
+			None,
+			Opened,
+			Closed
+		};
+
+		using InputProcessor = RE::BSInputDeviceManagerInput::PerformInputProcessing_t*;
 
 		std::atomic<HookState>      hookState{ HookState::Uninitialized };
 		std::atomic<InputProcessor> originalInputProcessor{ nullptr };
 		std::atomic<bool>           modal{ false };
 		std::atomic<bool>           captureFaulted{ false };
+		std::atomic_flag            inputBatchObserved{};
+		std::atomic<bool>           inputBatchReportPending{ false };
+		std::atomic<DiagnosticEdge> edgeReportPending{ DiagnosticEdge::None };
 		std::atomic_flag            eventLimitLogged{};
 
 		struct ToggleTracker final
@@ -221,6 +233,11 @@ namespace SFSEMenuFramework::InputCapture
 			RE::BSInputEventReceiver* a_receiver,
 			const RE::InputEvent*      a_queueHead)
 		{
+			if (a_queueHead &&
+				!inputBatchObserved.test_and_set(std::memory_order_relaxed)) {
+				inputBatchReportPending.store(true, std::memory_order_release);
+			}
+
 			const bool captureBatch = modal.load(std::memory_order_acquire);
 			if (captureBatch || IsOperational()) {
 				auto event = a_queueHead;
@@ -244,7 +261,7 @@ namespace SFSEMenuFramework::InputCapture
 					static_cast<void>(WindowManager::SetMainWindowOpen(false));
 					if (!eventLimitLogged.test_and_set(std::memory_order_relaxed)) {
 						logger::critical(
-							"PlayerControls input queue exceeded {} events; modal native capture was disabled",
+							"BSInputDeviceManager input queue exceeded {} events; modal native capture was disabled",
 							maximumInputEvents);
 					}
 				} else if (captureBatch || stateChanged) {
@@ -258,6 +275,16 @@ namespace SFSEMenuFramework::InputCapture
 							auto* mutableEvent = const_cast<RE::InputEvent*>(event);
 							mutableEvent->status = RE::InputEvent::Status::kStop;
 						}
+					}
+
+					if (stateChanged) {
+						const auto* mainWindow = WindowManager::GetMainWindow();
+						const bool isOpen =
+							mainWindow &&
+							mainWindow->IsOpen.load(std::memory_order_acquire);
+						edgeReportPending.store(
+							isOpen ? DiagnosticEdge::Opened : DiagnosticEdge::Closed,
+							std::memory_order_release);
 					}
 				}
 			}
@@ -281,12 +308,14 @@ namespace SFSEMenuFramework::InputCapture
 		}
 
 		REL::Relocation<std::uintptr_t> inputVtable{
-			RE::PlayerControlsManager::BSINPUTEVENTRECEIVER_VTABLE
+			RE::BSInputDeviceManagerInput::BSINPUTEVENTRECEIVER_VTABLE
 		};
-		constexpr auto slot = RE::PlayerControlsManager::kPerformInputProcessingVFunc;
+		constexpr auto slot =
+			RE::BSInputDeviceManagerInput::kPerformInputProcessingVFunc;
 		const auto slotAddress = inputVtable.address() + sizeof(std::uintptr_t) * slot;
 		if (!IsReadablePointer(slotAddress)) {
-			logger::critical("PlayerControls input hook preflight failed: unreadable vtable slot");
+			logger::critical(
+				"BSInputDeviceManager input hook preflight failed: unreadable vtable slot");
 			hookState.store(HookState::Failed, std::memory_order_release);
 			return false;
 		}
@@ -295,7 +324,7 @@ namespace SFSEMenuFramework::InputCapture
 			*reinterpret_cast<const std::uintptr_t*>(slotAddress);
 		if (!HasExpectedInputProcessorPrologue(originalAddress)) {
 			logger::critical(
-				"PlayerControls input hook preflight failed: unexpected Starfield 1.16.244 callback");
+				"BSInputDeviceManager input hook preflight failed: unexpected Starfield 1.16.244 callback");
 			hookState.store(HookState::Failed, std::memory_order_release);
 			return false;
 		}
@@ -329,7 +358,7 @@ namespace SFSEMenuFramework::InputCapture
 				originalInputProcessor.store(nullptr, std::memory_order_release);
 			}
 			logger::critical(
-				"PlayerControls input hook verification failed (original matched {}, readback matched {}, rollback attempted {}, rollback verified {})",
+				"BSInputDeviceManager input hook verification failed (original matched {}, readback matched {}, rollback attempted {}, rollback verified {})",
 				replacedAddress == originalAddress,
 				liveAddress == hookAddress,
 				rollbackAttempted,
@@ -341,9 +370,26 @@ namespace SFSEMenuFramework::InputCapture
 		hookState.store(HookState::Ready, std::memory_order_release);
 		captureFaulted.store(false, std::memory_order_release);
 		logger::info(
-			"Installed PlayerControls native input capture at {:X}",
+			"Installed BSInputDeviceManager global input capture at {:X}",
 			originalAddress);
 		return true;
+	}
+
+	void FlushDiagnostics() noexcept
+	{
+		if (inputBatchReportPending.exchange(false, std::memory_order_acq_rel)) {
+			logger::info(
+				"BSInputDeviceManager input receiver observed its first non-empty batch");
+		}
+
+		const auto edge = edgeReportPending.exchange(
+			DiagnosticEdge::None,
+			std::memory_order_acq_rel);
+		if (edge != DiagnosticEdge::None) {
+			logger::info(
+				"BSInputDeviceManager input receiver {} the Mod Control Panel",
+				edge == DiagnosticEdge::Opened ? "opened" : "closed");
+		}
 	}
 
 	void SetModal(bool a_modal) noexcept

@@ -58,6 +58,8 @@ namespace SFSEMenuFramework::MenuLifecycle
 
 		void ReconcileHostWindow() noexcept
 		{
+			InputCapture::FlushDiagnostics();
+
 			using InputDisposition = MenuOwnership::InputDisposition;
 			const auto host = ClassifyHost();
 			const auto availability = host.Availability;
