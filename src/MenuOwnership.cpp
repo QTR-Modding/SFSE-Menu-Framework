@@ -51,6 +51,7 @@ namespace SFSEMenuFramework::MenuOwnership
 
 		std::atomic<bool> updatePending{ false };
 		std::atomic_flag  wrongThreadLogged{};
+		std::atomic_flag  schedulerInstalled{};
 
 		void Update();
 
@@ -256,6 +257,11 @@ namespace SFSEMenuFramework::MenuOwnership
 
 	void Install(const SFSE::TaskInterface& a_taskInterface)
 	{
+		if (schedulerInstalled.test_and_set(std::memory_order_acq_rel)) {
+			logger::warn("Menu input lifecycle scheduler is already installed");
+			return;
+		}
+
 		a_taskInterface.AddPermanentTask([] {
 			ScheduleUpdate();
 		});

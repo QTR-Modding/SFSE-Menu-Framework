@@ -1281,7 +1281,6 @@ namespace SFSEMenuFramework::RenderHooks
 					restored ? "succeeded" : "was incomplete, so the DLL must remain loaded");
 				if (!restored) {
 					scaleformState.store(HookState::Failed, std::memory_order_release);
-					return true;
 				}
 				return false;
 			}
@@ -1303,9 +1302,6 @@ namespace SFSEMenuFramework::RenderHooks
 		if (!InstallScaleformHooks()) {
 			scaleformState.store(HookState::Failed, std::memory_order_release);
 			return false;
-		}
-		if (scaleformState.load(std::memory_order_acquire) == HookState::Failed) {
-			return true;
 		}
 
 		scaleformState.store(HookState::Ready, std::memory_order_release);

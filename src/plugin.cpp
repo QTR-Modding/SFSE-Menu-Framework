@@ -2,6 +2,32 @@
 #include "MenuOwnership.h"
 #include "RenderHooks.h"
 
+#include <atomic>
+
+namespace
+{
+	const SFSE::TaskInterface* taskInterface{};
+	std::atomic<bool>          initializationComplete{ false };
+
+	void OnSFSEMessage(SFSE::MessagingInterface::Message* a_message)
+	{
+		if (!a_message || a_message->type != SFSE::MessagingInterface::kPostDataLoad) {
+			return;
+		}
+
+		if (!initializationComplete.load(std::memory_order_acquire)) {
+			return;
+		}
+
+		if (!taskInterface) {
+			logger::critical("The SFSE task interface is unavailable at post-data-load");
+			return;
+		}
+
+		SFSEMenuFramework::MenuOwnership::Install(*taskInterface);
+	}
+}
+
 SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 {
 	if (!a_sfse) {
@@ -19,23 +45,38 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
-	const auto* taskInterface = SFSE::GetTaskInterface();
+	taskInterface = SFSE::GetTaskInterface();
 	if (!taskInterface) {
 		logger::critical("The SFSE task interface is unavailable");
 		return false;
 	}
 
-	if (!SFSEMenuFramework::McpWindow::Install()) {
-		logger::critical("Failed to register the built-in Mod Control Panel window");
+	const auto* messagingInterface = SFSE::GetMessagingInterface();
+	if (!messagingInterface) {
+		logger::critical("The SFSE messaging interface is unavailable");
 		return false;
+	}
+
+	if (!messagingInterface->RegisterListener(OnSFSEMessage)) {
+		logger::critical("Failed to register the SFSE post-data-load listener");
+		return false;
+	}
+
+	if (!SFSEMenuFramework::McpWindow::Install()) {
+		logger::critical(
+			"Failed to register the built-in Mod Control Panel window; the plugin will remain loaded but inactive");
+		return true;
 	}
 
 	if (!SFSEMenuFramework::RenderHooks::Install()) {
-		logger::critical("Failed to install the Scaleform render-pass hooks");
-		return false;
+		logger::critical(
+			"Failed to install the Scaleform render-pass hooks; the plugin will remain loaded but inactive");
+		return true;
 	}
 
-	SFSEMenuFramework::MenuOwnership::Install(*taskInterface);
+	initializationComplete.store(true, std::memory_order_release);
+
+	logger::info("Menu input lifecycle waiting for SFSE post-data-load");
 	logger::info("Mod Control Panel registered; press F1 to toggle it");
 	return true;
 }
