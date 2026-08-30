@@ -119,6 +119,8 @@ namespace SFSEMenuFramework::Win32Platform
 		std::atomic<DWORD>              initializedHostWindowThreadID{ 0 };
 		std::atomic<HostWindowCallback> hostWindowCallback{ nullptr };
 		std::atomic<std::uint64_t>      inputStateGeneration{ 1 };
+		std::atomic<HWND>               centeredCursorWindow{ nullptr };
+		std::atomic<std::uint64_t>      centeredCursorGeneration{ 0 };
 		std::atomic_flag                mouseMessageLogged{};
 		std::atomic_flag                keyboardMessageLogged{};
 		std::atomic_flag                characterMessageLogged{};
@@ -151,6 +153,12 @@ namespace SFSEMenuFramework::Win32Platform
 		{
 			static auto* state = new WindowThreadMouseState();
 			return *state;
+		}
+
+		void ResetCenteredCursorState() noexcept
+		{
+			centeredCursorGeneration.store(0, std::memory_order_relaxed);
+			centeredCursorWindow.store(nullptr, std::memory_order_release);
 		}
 
 		[[nodiscard]] KeyboardToggleState& GetKeyboardToggleState()
@@ -415,13 +423,6 @@ namespace SFSEMenuFramework::Win32Platform
 		{
 			if (!WindowManager::SetMainWindowOpen(a_open)) {
 				return false;
-			}
-			if (a_open && InputCapture::IsOperational()) {
-				// The native menu state changes at the lossless DIK boundary. Arm
-				// full modal capture immediately, before Starfield consumes the raw
-				// packet. The pre-data keyboard-only phase suppresses just the
-				// correlated edge and must not acquire modal ownership.
-				InputCapture::SetModal(true);
 			}
 
 			const bool suppressionQueued =
@@ -1145,6 +1146,7 @@ namespace SFSEMenuFramework::Win32Platform
 			if (a_message == WM_NCDESTROY) {
 				UpdateInputState(false);
 				ResetKeyboardToggleState();
+				ResetCenteredCursorState();
 				hostWindowTearingDown.store(true, std::memory_order_release);
 				hostCallbackPending.store(false, std::memory_order_release);
 				if (const auto callback =
@@ -1257,6 +1259,7 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 			UpdateInputState(false);
 			ResetKeyboardToggleState();
+			ResetCenteredCursorState();
 			hostWindowTearingDown.store(true, std::memory_order_release);
 			hostCallbackPending.store(false, std::memory_order_release);
 			if (const auto callback =
@@ -1317,6 +1320,7 @@ namespace SFSEMenuFramework::Win32Platform
 		hostWindowTearingDown.store(false, std::memory_order_release);
 		hostCallbackPending.store(false, std::memory_order_release);
 		ResetKeyboardToggleState();
+		ResetCenteredCursorState();
 		subclassActive.store(true, std::memory_order_release);
 		RequestInputReset();
 		logger::info(
@@ -1386,12 +1390,66 @@ namespace SFSEMenuFramework::Win32Platform
 		       clientArea.bottom > clientArea.top;
 	}
 
+	bool CenterCursorForMainWindowOpen(std::uint64_t a_generation) noexcept
+	{
+		if (a_generation == 0 || !IsCurrentThreadHostWindowThread()) {
+			return false;
+		}
+
+		const auto window = initializedHostWindow.load(std::memory_order_acquire);
+		if (hostWindowTearingDown.load(std::memory_order_acquire) ||
+			!subclassActive.load(std::memory_order_acquire) || !window) {
+			return false;
+		}
+		if (centeredCursorGeneration.load(std::memory_order_acquire) == a_generation &&
+			centeredCursorWindow.load(std::memory_order_relaxed) == window) {
+			return true;
+		}
+
+		// Adapted from SKSE Menu Framework 3's
+		// Hooks.cpp::CenterMouseCursorInWindow at commit
+		// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0). The
+		// Starfield port additionally binds the one-shot center operation to the
+		// verified host HWND thread and the exact rendered open generation.
+		const auto foregroundWindow = ::GetForegroundWindow();
+		if (foregroundWindow != window &&
+			!::IsChild(window, foregroundWindow)) {
+			return false;
+		}
+
+		RECT clientArea{};
+		if (!::GetClientRect(window, &clientArea) ||
+			clientArea.right <= clientArea.left ||
+			clientArea.bottom <= clientArea.top) {
+			return false;
+		}
+
+		POINT center{
+			clientArea.left + (clientArea.right - clientArea.left) / 2,
+			clientArea.top + (clientArea.bottom - clientArea.top) / 2
+		};
+		if (!::ClientToScreen(window, &center) ||
+			!::SetCursorPos(center.x, center.y)) {
+			return false;
+		}
+
+		centeredCursorWindow.store(window, std::memory_order_relaxed);
+		centeredCursorGeneration.store(a_generation, std::memory_order_release);
+		return true;
+	}
+
 	void UpdateInputState(bool a_acceptInput)
 	{
 		const auto window = initializedHostWindow.load(std::memory_order_acquire);
 		const bool shouldAcceptInput =
 			a_acceptInput && subclassActive.load(std::memory_order_acquire) &&
 			window && ::GetForegroundWindow() == window;
+		if (!shouldAcceptInput) {
+			// A focus or lease transition may let Starfield move the OS pointer
+			// without changing the menu's open generation. Recenter when that
+			// generation becomes interactive again.
+			ResetCenteredCursorState();
+		}
 
 		bool changed{};
 		{

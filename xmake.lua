@@ -21,7 +21,7 @@ includes(path.join(os.projectdir(), "lib", "commonlibsf"))
 
 local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
-local plugin_version = "0.3.6"
+local plugin_version = "0.3.7"
 local plugin_author = "Quantumyilmaz"
 
 set_project(plugin_name)

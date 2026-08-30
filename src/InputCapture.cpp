@@ -419,14 +419,6 @@ namespace SFSEMenuFramework::InputCapture
 					event = event->next;
 					++eventCount;
 				}
-				if (!event && stateChanged) {
-					const auto* mainWindow = WindowManager::GetMainWindow();
-					if (mainWindow &&
-						mainWindow->IsOpen.load(std::memory_order_acquire)) {
-						modal.store(true, std::memory_order_release);
-					}
-				}
-
 				if (event) {
 					// Partial capture is not a safe modal state. Fail open for future
 					// batches and let the lifecycle owner close or suspend the menu.

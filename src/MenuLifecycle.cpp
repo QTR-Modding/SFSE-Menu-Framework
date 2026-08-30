@@ -19,6 +19,7 @@ namespace SFSEMenuFramework::MenuLifecycle
 		std::atomic_flag postDataLoadActivationStarted{};
 		std::atomic<bool> postDataLoadReady{ false };
 		std::atomic_flag hostBootstrapFailureLogged{};
+		std::atomic_flag earlyInteractionLogged{};
 
 		struct HostClassification final
 		{
@@ -84,8 +85,41 @@ namespace SFSEMenuFramework::MenuLifecycle
 				Win32Platform::IsHostWindowUsable();
 			WindowManager::SetMainWindowRenderEnabled(renderEnabled);
 
-			InputCapture::SetModal(false);
-			D3D12Renderer::SetPlatformInputEnabled(false);
+			const auto* mainWindow = WindowManager::GetMainWindow();
+			const auto generation =
+				WindowManager::GetMainWindowOpenGeneration();
+			const bool routeToMenu = renderEnabled && mainWindow &&
+				mainWindow->BlockUserInput.load(std::memory_order_acquire) &&
+				generation != 0 &&
+				D3D12Renderer::HasRecentMainWindowFrame(generation) &&
+				WindowManager::IsMainWindowOpenGeneration(generation);
+			if (!routeToMenu) {
+				D3D12Renderer::SetPlatformInputEnabled(false);
+				InputCapture::SetModal(false);
+				return;
+			}
+
+			// A startup open/close batch is suppressed at its exact input edge, but
+			// persistent modal capture begins only after this generation has produced
+			// a visible frame. That keeps a failed or delayed renderer from trapping
+			// native input behind an invisible menu.
+			InputCapture::SetModal(true);
+			if (!InputCapture::IsModal()) {
+				logger::critical(
+					"Early native input capture could not be armed; closing the Mod Control Panel");
+				static_cast<void>(WindowManager::SetMainWindowOpen(false));
+				D3D12Renderer::SetPlatformInputEnabled(false);
+				return;
+			}
+
+			static_cast<void>(
+				Win32Platform::CenterCursorForMainWindowOpen(generation));
+			D3D12Renderer::SetPlatformInputEnabled(true);
+			if (!earlyInteractionLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::info(
+					"Pre-post-data-load Mod Control Panel input activated for rendered generation {}",
+					generation);
+			}
 		}
 
 		void ReconcileHostWindow() noexcept
@@ -105,14 +139,14 @@ namespace SFSEMenuFramework::MenuLifecycle
 				.PauseAllowed =
 					availability == MenuOwnership::HostAvailability::Interactive,
 			});
-			// Publish full input capture only after the HWND thread has reconciled
-			// any already-open startup panel with engine ownership.
-			InputCapture::ArmFunctionalCapture();
-
 			const auto disposition = MenuOwnership::GetInputDisposition();
 			const bool suppressNativeInput =
 				disposition != InputDisposition::PassThrough;
 			InputCapture::SetModal(suppressNativeInput);
+			if (disposition == InputDisposition::RouteToMenu) {
+				static_cast<void>(Win32Platform::CenterCursorForMainWindowOpen(
+					WindowManager::GetMainWindowOpenGeneration()));
+			}
 			D3D12Renderer::SetPlatformInputEnabled(
 				disposition == InputDisposition::RouteToMenu);
 
@@ -165,10 +199,10 @@ namespace SFSEMenuFramework::MenuLifecycle
 		}
 		Win32Platform::SetHostWindowCallback(&ReconcileHostWindow);
 		a_taskInterface.AddPermanentTask(&BootstrapHostWindow);
-		InputCapture::ArmKeyboardEdgeCapture();
+		InputCapture::ArmFunctionalCapture();
 		earlyInstallReady.store(true, std::memory_order_release);
 		logger::info(
-			"Mod Control Panel registered during plugin load; it can be opened and rendered once the Starfield window and renderer are ready; full interaction waits for post-data-load");
+			"Mod Control Panel registered during plugin load; it becomes interactive once the Starfield window and renderer produce its first visible frame");
 		return true;
 	}
 
