@@ -26,11 +26,12 @@ namespace SFSEMenuFramework
 
 		using PanelPointer = std::shared_ptr<Panel>;
 		using Snapshot = std::vector<PanelPointer>;
+		using SnapshotPointer = std::shared_ptr<const Snapshot>;
 
 		[[nodiscard]] static Model::RegistrationResult Register(
 			const Model::PanelRegistration* a_registration,
 			Model::PanelHandle*              a_handle) noexcept;
-		[[nodiscard]] static Snapshot GetSnapshot();
+		[[nodiscard]] static SnapshotPointer GetSnapshot() noexcept;
 		static void Render(
 			const PanelPointer&         a_panel,
 			const Model::RenderContext& a_context);

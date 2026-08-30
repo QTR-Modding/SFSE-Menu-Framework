@@ -6,6 +6,7 @@
 namespace SFSEMenuFramework::Model
 {
 	inline constexpr std::uint32_t INTERFACE_VERSION = 1;
+	inline constexpr std::uint32_t IMGUI_SOURCE_REVISION = 0x6F7B5D0E;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_ID_LENGTH = 255;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_TEXT_LENGTH = 255;
 
@@ -42,12 +43,18 @@ namespace SFSEMenuFramework::Model
 	{
 		std::uint32_t StructureSize{ sizeof(ImGuiLayout) };
 		std::uint32_t VersionNumber{ 0 };
+		std::uint32_t SourceRevision{ 0 };
+		std::uint32_t ConfigurationFlags{ 0 };
 		std::uint32_t IoSize{ 0 };
 		std::uint32_t StyleSize{ 0 };
+		std::uint32_t ContextSize{ 0 };
 		std::uint32_t Vec2Size{ 0 };
 		std::uint32_t Vec4Size{ 0 };
 		std::uint32_t DrawVertSize{ 0 };
 		std::uint32_t DrawIdxSize{ 0 };
+		std::uint32_t DrawCmdSize{ 0 };
+		std::uint32_t TextureIdSize{ 0 };
+		std::uint32_t WcharSize{ 0 };
 	};
 
 	using ImGuiAllocateFunction = void* (*)(std::size_t, void*);
@@ -95,8 +102,8 @@ namespace SFSEMenuFramework::Model
 
 	static_assert(sizeof(void*) == 8);
 	static_assert(sizeof(StringView) == 16);
-	static_assert(sizeof(ImGuiLayout) == 32);
+	static_assert(sizeof(ImGuiLayout) == 56);
 	static_assert(sizeof(RenderContext) == 48);
-	static_assert(sizeof(PanelRegistration) == 104);
+	static_assert(sizeof(PanelRegistration) == 128);
 	static_assert(sizeof(Interface) == 16);
 }

@@ -3,6 +3,7 @@
 #include <SFSEMenuFramework/API.h>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <Windows.h>
 
@@ -14,7 +15,10 @@
 
 namespace SFSEMenuFramework
 {
-	using RenderFunction = void(__stdcall*)();
+	using RenderFunction = void(__stdcall*)() noexcept;
+	static_assert(
+		IMGUI_VERSION_NUM == 19080,
+		"SFSE Menu Framework consumers require Dear ImGui 1.90.8");
 
 	namespace Detail
 	{
@@ -24,6 +28,34 @@ namespace SFSEMenuFramework
 		};
 
 		inline thread_local std::string currentSection;
+
+		[[nodiscard]] constexpr std::uint32_t GetImGuiConfigurationFlags() noexcept
+		{
+			std::uint32_t flags{};
+#if defined(IMGUI_DISABLE) || defined(IMGUI_DISABLE_OBSOLETE_FUNCTIONS) || \
+	defined(IMGUI_DISABLE_OBSOLETE_KEYIO) || defined(IMGUI_DISABLE_DEBUG_TOOLS) || \
+	defined(IMGUI_DISABLE_DEFAULT_ALLOCATORS)
+			flags |= 1U << 0U;
+#endif
+#if defined(IMGUI_USE_BGRA_PACKED_COLOR)
+			flags |= 1U << 1U;
+#endif
+#if defined(IMGUI_USE_WCHAR32)
+			flags |= 1U << 2U;
+#endif
+#if defined(IMGUI_OVERRIDE_DRAWVERT_STRUCT_LAYOUT) || defined(ImTextureID) || \
+	defined(ImDrawIdx) || defined(ImDrawCallback)
+			flags |= 1U << 3U;
+#endif
+#if defined(IMGUI_USER_CONFIG) || defined(IMGUI_INCLUDE_IMGUI_USER_H)
+			flags |= 1U << 4U;
+#endif
+#if defined(IMGUI_ENABLE_FREETYPE) || defined(IMGUI_ENABLE_FREETYPE_LUNASVG) || \
+	defined(IMGUI_ENABLE_STB_TRUETYPE)
+			flags |= 1U << 5U;
+#endif
+			return flags;
+		}
 
 		[[nodiscard]] inline const Model::Interface* RequestInterface() noexcept
 		{
@@ -56,12 +88,18 @@ namespace SFSEMenuFramework
 			return Model::ImGuiLayout{
 				.StructureSize = sizeof(Model::ImGuiLayout),
 				.VersionNumber = IMGUI_VERSION_NUM,
+				.SourceRevision = Model::IMGUI_SOURCE_REVISION,
+				.ConfigurationFlags = GetImGuiConfigurationFlags(),
 				.IoSize = sizeof(ImGuiIO),
 				.StyleSize = sizeof(ImGuiStyle),
+				.ContextSize = sizeof(ImGuiContext),
 				.Vec2Size = sizeof(ImVec2),
 				.Vec4Size = sizeof(ImVec4),
 				.DrawVertSize = sizeof(ImDrawVert),
-				.DrawIdxSize = sizeof(ImDrawIdx)
+				.DrawIdxSize = sizeof(ImDrawIdx),
+				.DrawCmdSize = sizeof(ImDrawCmd),
+				.TextureIdSize = sizeof(ImTextureID),
+				.WcharSize = sizeof(ImWchar)
 			};
 		}
 
@@ -98,20 +136,14 @@ namespace SFSEMenuFramework
 			ImGui::SetCurrentContext(
 				static_cast<ImGuiContext*>(a_context->ImGuiContext));
 
-			auto result = Model::PanelRenderResult::Continue;
-			try {
-				static_cast<ConsumerPanel*>(a_userData)->Render();
-			} catch (...) {
-				// A consumer exception must not unwind through the framework renderer.
-				result = Model::PanelRenderResult::Failed;
-			}
+			static_cast<ConsumerPanel*>(a_userData)->Render();
 
 			ImGui::SetCurrentContext(previousContext);
 			ImGui::SetAllocatorFunctions(
 				previousAllocate,
 				previousFree,
 				previousAllocatorUserData);
-			return result;
+			return Model::PanelRenderResult::Continue;
 		}
 
 		[[nodiscard]] inline bool IsValidText(
@@ -120,7 +152,8 @@ namespace SFSEMenuFramework
 		{
 			return !a_text.empty() &&
 			       a_text.size() <= a_maximumLength &&
-			       a_text.find('\0') == std::string_view::npos;
+			       a_text.find('\0') == std::string_view::npos &&
+			       a_text.find('\x1F') == std::string_view::npos;
 		}
 
 		[[nodiscard]] inline Model::StringView ToModelString(

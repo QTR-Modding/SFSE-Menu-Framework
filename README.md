@@ -22,7 +22,7 @@ hook, or input hook:
 ```cpp
 #include <SFSEMenuFramework/SFSEMenuFramework.h>
 
-void __stdcall RenderSettings()
+void __stdcall RenderSettings() noexcept
 {
     ImGui::TextUnformatted("Hello from my SFSE plugin");
 }
@@ -42,8 +42,13 @@ Call the registration function from the SFSE `kPostLoad` message so it works
 regardless of DLL load order. Consumer projects must compile the four Dear ImGui
 core sources at version 1.90.8, commit
 `6f7b5d0ee2fe9948ab871a530888a6dc5c960700`, and must not compile or initialize
-an ImGui platform or renderer backend. The SDK header binds the consumer's ImGui
-copy to the framework context and allocator for each callback.
+an ImGui platform or renderer backend. The pinned `imconfig.h` must remain
+unmodified. Registration validates the public and internal ImGui layouts and
+rejects known non-default configuration families; the source-revision token is
+the consumer's declaration that it compiled the pinned core sources. The SDK
+header binds the consumer's ImGui copy to the framework context and allocator
+for each callback. Render callbacks must be `noexcept` and must balance every
+ImGui `Begin`/`End` and `Push`/`Pop` operation.
 
 ## Build
 

@@ -1,9 +1,11 @@
 #include "PanelRegistry.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <bit>
 #include <cstring>
 #include <mutex>
@@ -18,15 +20,15 @@ namespace SFSEMenuFramework
 
 		struct Registry final
 		{
-			std::mutex                     Mutex;
-			PanelRegistry::Snapshot         Panels;
-			Model::PanelHandle              NextHandle{ 1 };
+			std::mutex                                        Mutex;
+			std::atomic<PanelRegistry::SnapshotPointer>        Panels;
+			Model::PanelHandle                                 NextHandle{ 1 };
 		};
 
-		[[nodiscard]] Registry& GetRegistry()
+		[[nodiscard]] Registry* GetRegistry() noexcept
 		{
-			static auto* registry = new Registry();
-			return *registry;
+			static auto* registry = new (std::nothrow) Registry();
+			return registry;
 		}
 
 		[[nodiscard]] bool IsValidText(
@@ -44,12 +46,18 @@ namespace SFSEMenuFramework
 		{
 			return a_layout.StructureSize >= sizeof(Model::ImGuiLayout) &&
 			       a_layout.VersionNumber == IMGUI_VERSION_NUM &&
+			       a_layout.SourceRevision == Model::IMGUI_SOURCE_REVISION &&
+			       a_layout.ConfigurationFlags == 0 &&
 			       a_layout.IoSize == sizeof(ImGuiIO) &&
 			       a_layout.StyleSize == sizeof(ImGuiStyle) &&
+			       a_layout.ContextSize == sizeof(ImGuiContext) &&
 			       a_layout.Vec2Size == sizeof(ImVec2) &&
 			       a_layout.Vec4Size == sizeof(ImVec4) &&
 			       a_layout.DrawVertSize == sizeof(ImDrawVert) &&
-			       a_layout.DrawIdxSize == sizeof(ImDrawIdx);
+			       a_layout.DrawIdxSize == sizeof(ImDrawIdx) &&
+			       a_layout.DrawCmdSize == sizeof(ImDrawCmd) &&
+			       a_layout.TextureIdSize == sizeof(ImTextureID) &&
+			       a_layout.WcharSize == sizeof(ImWchar);
 		}
 
 		[[nodiscard]] bool IsExecutableImageAddress(
@@ -135,23 +143,40 @@ namespace SFSEMenuFramework
 			panel->Render = a_registration->Render;
 			panel->UserData = a_registration->UserData;
 
-			auto& registry = GetRegistry();
-			std::scoped_lock lock{ registry.Mutex };
-			if (registry.Panels.size() >= maximumPanelCount) {
+			auto* registry = GetRegistry();
+			if (!registry) {
+				return Model::RegistrationResult::OutOfMemory;
+			}
+			std::scoped_lock lock{ registry->Mutex };
+			const auto current = registry->Panels.load(std::memory_order_acquire);
+			if (current && current->size() >= maximumPanelCount) {
 				return Model::RegistrationResult::RegistryFull;
 			}
-			for (const auto& registered : registry.Panels) {
-				if (registered->OwnerModule == panel->OwnerModule &&
-					registered->Id == panel->Id) {
-					return Model::RegistrationResult::DuplicateId;
+			if (current) {
+				for (const auto& registered : *current) {
+					if (registered->OwnerModule == panel->OwnerModule &&
+						registered->Id == panel->Id) {
+						return Model::RegistrationResult::DuplicateId;
+					}
 				}
 			}
 
-			panel->Handle = registry.NextHandle++;
-			registry.Panels.emplace_back(std::move(panel));
+			auto next = current ?
+			                std::make_shared<Snapshot>(*current) :
+			                std::make_shared<Snapshot>();
+			panel->Handle = registry->NextHandle++;
+			const auto registeredHandle = panel->Handle;
+			next->emplace_back(std::move(panel));
+			std::stable_sort(
+				next->begin(),
+				next->end(),
+				[](const auto& a_left, const auto& a_right) {
+					return a_left->Section < a_right->Section;
+				});
 			if (a_handle) {
-				*a_handle = registry.Panels.back()->Handle;
+				*a_handle = registeredHandle;
 			}
+			registry->Panels.store(std::move(next), std::memory_order_release);
 			return Model::RegistrationResult::Success;
 		} catch (const std::bad_alloc&) {
 			return Model::RegistrationResult::OutOfMemory;
@@ -160,19 +185,12 @@ namespace SFSEMenuFramework
 		}
 	}
 
-	PanelRegistry::Snapshot PanelRegistry::GetSnapshot()
+	PanelRegistry::SnapshotPointer PanelRegistry::GetSnapshot() noexcept
 	{
-		auto& registry = GetRegistry();
-		std::scoped_lock lock{ registry.Mutex };
-
-		Snapshot snapshot;
-		snapshot.reserve(registry.Panels.size());
-		for (const auto& panel : registry.Panels) {
-			if (panel->Enabled.load(std::memory_order_acquire)) {
-				snapshot.push_back(panel);
-			}
-		}
-		return snapshot;
+		const auto* registry = GetRegistry();
+		return registry ?
+		           registry->Panels.load(std::memory_order_acquire) :
+		           nullptr;
 	}
 
 	void PanelRegistry::Render(

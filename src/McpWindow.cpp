@@ -6,7 +6,7 @@
 #include <imgui.h>
 
 #include <algorithm>
-#include <string>
+#include <string_view>
 
 namespace
 {
@@ -47,20 +47,32 @@ namespace
 	void RenderRegisteredPanels(
 		const SFSEMenuFramework::Model::RenderContext& a_context)
 	{
-		const auto panels = SFSEMenuFramework::PanelRegistry::GetSnapshot();
-		if (panels.empty()) {
+		const auto snapshot = SFSEMenuFramework::PanelRegistry::GetSnapshot();
+		if (!snapshot || snapshot->empty()) {
 			selectedPanelHandle = 0;
 			ImGui::TextDisabled("No SFSE plugins have registered a panel.");
+			return;
+		}
+		const auto& panels = *snapshot;
+		const auto isEnabled = [](const auto& a_panel) {
+			return a_panel &&
+			       a_panel->Enabled.load(std::memory_order_acquire);
+		};
+		const auto firstEnabled = std::ranges::find_if(panels, isEnabled);
+		if (firstEnabled == panels.end()) {
+			selectedPanelHandle = 0;
+			ImGui::TextDisabled("No SFSE plugin panels are currently available.");
 			return;
 		}
 
 		auto selected = std::ranges::find_if(
 			panels,
-			[](const auto& a_panel) {
-				return a_panel->Handle == selectedPanelHandle;
+			[&](const auto& a_panel) {
+				return isEnabled(a_panel) &&
+				       a_panel->Handle == selectedPanelHandle;
 			});
 		if (selected == panels.end()) {
-			selected = panels.begin();
+			selected = firstEnabled;
 			selectedPanelHandle = (*selected)->Handle;
 		}
 
@@ -74,8 +86,11 @@ namespace
 				"##MCPNavigation",
 				ImVec2{ navigationWidth, 0.0F },
 				childFlags)) {
-			std::string previousSection;
+			std::string_view previousSection;
 			for (const auto& panel : panels) {
+				if (!isEnabled(panel)) {
+					continue;
+				}
 				if (panel->Section != previousSection) {
 					if (!previousSection.empty()) {
 						ImGui::Spacing();
@@ -92,7 +107,8 @@ namespace
 					selected = std::ranges::find_if(
 						panels,
 						[&](const auto& a_candidate) {
-							return a_candidate->Handle == selectedPanelHandle;
+							return isEnabled(a_candidate) &&
+							       a_candidate->Handle == selectedPanelHandle;
 						});
 				}
 				ImGui::PopID();
