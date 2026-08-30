@@ -10,8 +10,10 @@
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstring>
+#include <utility>
 
 namespace SFSEMenuFramework::InputCapture
 {
@@ -51,6 +53,30 @@ namespace SFSEMenuFramework::InputCapture
 			Closed
 		};
 
+		enum class DiagnosticTraceState : std::uint8_t
+		{
+			Idle,
+			Preparing,
+			Armed,
+			Writing,
+			Ready,
+			Reporting,
+			Completed
+		};
+
+		struct DiagnosticSample final
+		{
+			std::uint32_t EventIndex{ 0 };
+			std::uint32_t EventType{ 0 };
+			std::uint32_t DeviceType{ 0 };
+			std::uint32_t DeviceID{ 0 };
+			std::int32_t  IDCode{ -1 };
+			std::uint32_t TimeCode{ 0 };
+			std::uint32_t Status{ 0 };
+			std::uint32_t ValueBits{ 0 };
+			std::uint32_t HeldDownBits{ 0 };
+		};
+
 		using InputProcessor = RE::BSInputDeviceManagerInput::PerformInputProcessing_t*;
 
 		std::atomic<HookState>      hookState{ HookState::Uninitialized };
@@ -61,6 +87,10 @@ namespace SFSEMenuFramework::InputCapture
 		std::atomic<bool>           inputBatchReportPending{ false };
 		std::atomic<DiagnosticEdge> edgeReportPending{ DiagnosticEdge::None };
 		std::atomic_flag            eventLimitLogged{};
+		std::atomic<DiagnosticTraceState> diagnosticTraceState{
+			DiagnosticTraceState::Idle
+		};
+		DiagnosticSample diagnosticSample{};
 
 		struct ToggleTracker final
 		{
@@ -229,6 +259,39 @@ namespace SFSEMenuFramework::InputCapture
 			       WindowManager::SetMainWindowOpen(true);
 		}
 
+		void RecordKeyboardDiagnostic(
+			const RE::ButtonEvent& a_button,
+			std::size_t            a_eventIndex) noexcept
+		{
+			if (a_button.deviceType != RE::InputEvent::DeviceType::kKeyboard) {
+				return;
+			}
+
+			auto expected = DiagnosticTraceState::Armed;
+			if (!diagnosticTraceState.compare_exchange_strong(
+					expected,
+					DiagnosticTraceState::Writing,
+					std::memory_order_acq_rel,
+					std::memory_order_acquire)) {
+				return;
+			}
+
+			diagnosticSample = {
+				.EventIndex = static_cast<std::uint32_t>(a_eventIndex),
+				.EventType = std::to_underlying(a_button.eventType),
+				.DeviceType = std::to_underlying(a_button.deviceType),
+				.DeviceID = a_button.deviceID,
+				.IDCode = a_button.idCode,
+				.TimeCode = a_button.timeCode,
+				.Status = std::to_underlying(a_button.status),
+				.ValueBits = std::bit_cast<std::uint32_t>(a_button.value),
+				.HeldDownBits = std::bit_cast<std::uint32_t>(a_button.heldDownSecs),
+			};
+			diagnosticTraceState.store(
+				DiagnosticTraceState::Ready,
+				std::memory_order_release);
+		}
+
 		void ProcessInput(
 			RE::BSInputEventReceiver* a_receiver,
 			const RE::InputEvent*      a_queueHead)
@@ -244,10 +307,13 @@ namespace SFSEMenuFramework::InputCapture
 				std::size_t eventCount{};
 				bool stateChanged{};
 				while (event && eventCount < maximumInputEvents) {
-					if (!stateChanged &&
-						event->eventType == RE::InputEvent::EventType::kButton) {
-						stateChanged = ProcessOpenClose(
-							static_cast<const RE::ButtonEvent&>(*event));
+					if (event->eventType == RE::InputEvent::EventType::kButton) {
+						const auto& button =
+							static_cast<const RE::ButtonEvent&>(*event);
+						RecordKeyboardDiagnostic(button, eventCount);
+						if (!stateChanged) {
+							stateChanged = ProcessOpenClose(button);
+						}
 					}
 					event = event->next;
 					++eventCount;
@@ -294,6 +360,25 @@ namespace SFSEMenuFramework::InputCapture
 				original(a_receiver, a_queueHead);
 			}
 		}
+	}
+
+	void ArmKeyboardDiagnosticTrace() noexcept
+	{
+		auto expected = DiagnosticTraceState::Idle;
+		if (!diagnosticTraceState.compare_exchange_strong(
+				expected,
+				DiagnosticTraceState::Preparing,
+				std::memory_order_acq_rel,
+				std::memory_order_acquire)) {
+			return;
+		}
+
+		diagnosticSample = {};
+		diagnosticTraceState.store(
+			DiagnosticTraceState::Armed,
+			std::memory_order_release);
+		logger::info(
+			"Input primitive trace armed for the first keyboard ButtonEvent");
 	}
 
 	bool Install()
@@ -390,6 +475,44 @@ namespace SFSEMenuFramework::InputCapture
 				"BSInputDeviceManager input receiver {} the Mod Control Panel",
 				edge == DiagnosticEdge::Opened ? "opened" : "closed");
 		}
+
+		auto expected = DiagnosticTraceState::Ready;
+		if (!diagnosticTraceState.compare_exchange_strong(
+				expected,
+				DiagnosticTraceState::Reporting,
+				std::memory_order_acq_rel,
+				std::memory_order_acquire)) {
+			return;
+		}
+
+		const auto sample = diagnosticSample;
+		const auto value = std::bit_cast<float>(sample.ValueBits);
+		const auto heldDown = std::bit_cast<float>(sample.HeldDownBits);
+		const bool bindingMatches = sample.IDCode >= 0 &&
+			static_cast<std::uint32_t>(sample.IDCode) ==
+				FrameworkSettings::GetToggleKey();
+		const bool initialPress = value != 0.0F && heldDown == 0.0F;
+		logger::info(
+			"Input primitive trace: event={}, type={}, device={}, device-id={}, id={} (0x{:X}), time={}, status={}, value={} (0x{:08X}), held={} (0x{:08X}), configured DIK={}, mode={}, binding-match={}, initial-press={}",
+			sample.EventIndex,
+			sample.EventType,
+			sample.DeviceType,
+			sample.DeviceID,
+			sample.IDCode,
+			static_cast<std::uint32_t>(sample.IDCode),
+			sample.TimeCode,
+			sample.Status,
+			value,
+			sample.ValueBits,
+			heldDown,
+			sample.HeldDownBits,
+			FrameworkSettings::GetToggleKey(),
+			std::to_underlying(FrameworkSettings::GetToggleMode()),
+			bindingMatches,
+			initialPress);
+		diagnosticTraceState.store(
+			DiagnosticTraceState::Completed,
+			std::memory_order_release);
 	}
 
 	void SetModal(bool a_modal) noexcept
