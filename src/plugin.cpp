@@ -1,3 +1,5 @@
+#include "InputCapture.h"
+#include "LifecycleProbe.h"
 #include "MenuLifecycle.h"
 #include "RenderHooks.h"
 
@@ -15,6 +17,7 @@ namespace
 		if (!a_message || a_message->type != SFSE::MessagingInterface::kPostDataLoad) {
 			return;
 		}
+		SFSEMenuFramework::LifecycleProbe::RecordPostDataLoad();
 
 		if (!initializationComplete.load(std::memory_order_acquire)) {
 			return;
@@ -71,9 +74,16 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return true;
 	}
 
+	if (!SFSEMenuFramework::InputCapture::Install()) {
+		logger::critical(
+			"Failed to install the early native input lifecycle probe; the plugin will remain loaded but inactive");
+		return true;
+	}
+
 	initializationComplete.store(true, std::memory_order_release);
 
-	logger::info("Menu input lifecycle waiting for SFSE post-data-load");
+	logger::info("Native input lifecycle probe installed before SFSE post-data-load");
+	logger::info("Menu input ownership waiting for SFSE post-data-load");
 	logger::info(
 		"External panel interface v{} available",
 		SFSEMenuFramework::Model::INTERFACE_VERSION);

@@ -126,6 +126,7 @@ namespace SFSEMenuFramework::MenuLifecycle
 		}
 		Win32Platform::SetHostWindowCallback(&ReconcileHostWindow);
 		MenuOwnership::Install(a_taskInterface);
+		InputCapture::ArmFunctionalCapture();
 		installReady.store(true, std::memory_order_release);
 		logger::info("Mod Control Panel ready; use the configured hotkey to open it");
 		return true;

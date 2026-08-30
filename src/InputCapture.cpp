@@ -1,6 +1,7 @@
 #include "InputCapture.h"
 
 #include "FrameworkSettings.h"
+#include "LifecycleProbe.h"
 #include "WindowManager.h"
 
 #include <RE/B/BSInputDeviceManagerInput.h>
@@ -59,6 +60,7 @@ namespace SFSEMenuFramework::InputCapture
 
 		std::atomic<HookState>      hookState{ HookState::Uninitialized };
 		std::atomic<InputProcessor> originalInputProcessor{ nullptr };
+		std::atomic<bool>           functionalCaptureArmed{ false };
 		std::atomic<bool>           modal{ false };
 		std::atomic<std::uint64_t>  pendingKeyboardSuppression{ 0 };
 		std::atomic<std::uint32_t>  keyboardEdgeGeneration{ 0 };
@@ -321,6 +323,16 @@ namespace SFSEMenuFramework::InputCapture
 			RE::BSInputEventReceiver* a_receiver,
 			const RE::InputEvent*      a_queueHead)
 		{
+			LifecycleProbe::RecordInputCallback(a_queueHead != nullptr);
+			if (!functionalCaptureArmed.load(std::memory_order_acquire)) {
+				const auto original =
+					originalInputProcessor.load(std::memory_order_acquire);
+				if (original) {
+					original(a_receiver, a_queueHead);
+				}
+				return;
+			}
+
 			ExpirePendingKeyboardEdge();
 			if (a_queueHead &&
 				!inputBatchObserved.test_and_set(std::memory_order_relaxed)) {
@@ -479,8 +491,14 @@ namespace SFSEMenuFramework::InputCapture
 		return true;
 	}
 
+	void ArmFunctionalCapture() noexcept
+	{
+		functionalCaptureArmed.store(true, std::memory_order_release);
+	}
+
 	void FlushDiagnostics() noexcept
 	{
+		LifecycleProbe::Flush();
 		ExpirePendingKeyboardEdge();
 		if (keyboardEdgeCorrelationMissed.exchange(
 				false,
@@ -565,7 +583,8 @@ namespace SFSEMenuFramework::InputCapture
 
 	bool IsOperational() noexcept
 	{
-		return hookState.load(std::memory_order_acquire) == HookState::Ready &&
+		return functionalCaptureArmed.load(std::memory_order_acquire) &&
+		       hookState.load(std::memory_order_acquire) == HookState::Ready &&
 		       !captureFaulted.load(std::memory_order_acquire);
 	}
 }
