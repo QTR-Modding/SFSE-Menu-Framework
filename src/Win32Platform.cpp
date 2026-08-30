@@ -381,6 +381,8 @@ namespace SFSEMenuFramework::Win32Platform
 
 		const bool shouldAcceptInput =
 			a_acceptInput && ::GetForegroundWindow() == state.Window;
+		auto& io = ImGui::GetIO();
+		io.MouseDrawCursor = shouldAcceptInput;
 
 		if (state.HasInputState &&
 			state.WasAcceptingInput == shouldAcceptInput) {
@@ -388,7 +390,6 @@ namespace SFSEMenuFramework::Win32Platform
 		}
 
 		if (shouldAcceptInput) {
-			auto& io = ImGui::GetIO();
 			io.ClearEventsQueue();
 			io.ClearInputKeys();
 		}
@@ -401,7 +402,6 @@ namespace SFSEMenuFramework::Win32Platform
 			ImGui_ImplWin32_WndProcHandler(state.Window, WM_MOUSELEAVE, 0, 0);
 			ImGui_ImplWin32_WndProcHandler(state.Window, WM_NCMOUSELEAVE, 0, 0);
 			ImGui_ImplWin32_WndProcHandler(state.Window, WM_KILLFOCUS, 0, 0);
-			auto& io = ImGui::GetIO();
 			io.ClearEventsQueue();
 			io.ClearInputKeys();
 		}
