@@ -17,6 +17,12 @@ namespace SFSEMenuFramework::D3D12Renderer
 {
 	namespace
 	{
+		// SKSE Menu Framework 3 defaults FontSizeMedium to 32 px and builds
+		// that font into its atlas (commit
+		// 928e01ab459822a8d233ab99f0419ea1de23c775, GPL-3.0). This port uses
+		// ImGui's MIT-licensed embedded font at the same size until the full
+		// configurable SFSE font loader is ported.
+		constexpr float defaultFontSizePixels = 32.0F;
 		using Microsoft::WRL::ComPtr;
 		constexpr std::size_t frameResourceCount = 4;
 		constexpr std::uint64_t maximumMainWindowFrameAgeMilliseconds = 250;
@@ -276,6 +282,15 @@ namespace SFSEMenuFramework::D3D12Renderer
 				ImGuiConfigFlags_NavEnableKeyboard |
 				ImGuiConfigFlags_NavEnableGamepad |
 				ImGuiConfigFlags_NoMouseCursorChange;
+			ImFontConfig fontConfiguration{};
+			fontConfiguration.SizePixels = defaultFontSizePixels;
+			io.FontDefault = io.Fonts->AddFontDefault(&fontConfiguration);
+			if (!io.FontDefault || !io.Fonts->Build()) {
+				logger::critical("Failed to build the 32 px ImGui font atlas");
+				a_state.InitializationFailed = true;
+				ResetInitialization(a_state);
+				return false;
+			}
 			ImGui::StyleColorsDark();
 
 			const auto shaderCpuHandle = a_state.ShaderHeap->GetCPUDescriptorHandleForHeapStart();
