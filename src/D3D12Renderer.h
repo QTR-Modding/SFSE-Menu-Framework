@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 
+#include <Windows.h>
 #include <d3d12.h>
 
 namespace SFSEMenuFramework::D3D12Renderer
@@ -28,10 +29,20 @@ namespace SFSEMenuFramework::D3D12Renderer
 		CommandList2Unavailable,
 		FrameSlotBusy,
 		InvalidTarget,
+		PlatformFrameUnavailable,
+		InvalidDisplaySize,
 		Count
 	};
 
 	[[nodiscard]] bool Initialize(ID3D12Device* a_device);
+	[[nodiscard]] bool UpdatePlatform();
+	void               SetPlatformInputEnabled(bool a_enabled);
+	[[nodiscard]] bool HasRecentMainWindowFrame(std::uint64_t a_generation) noexcept;
+	void ProcessWindowMessage(
+		HWND   a_window,
+		UINT   a_message,
+		WPARAM a_wParam,
+		LPARAM a_lParam);
 
 	[[nodiscard]] RenderResult Render(
 		ID3D12GraphicsCommandList*    a_commandList,

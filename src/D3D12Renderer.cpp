@@ -1,12 +1,15 @@
 #include "D3D12Renderer.h"
 
+#include "Win32Platform.h"
 #include "WindowManager.h"
 
 #include <backends/imgui_impl_dx12.h>
 #include <imgui.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cmath>
 #include <mutex>
 
 #include <wrl/client.h>
@@ -17,6 +20,10 @@ namespace SFSEMenuFramework::D3D12Renderer
 	{
 		using Microsoft::WRL::ComPtr;
 		constexpr std::size_t frameResourceCount = 4;
+		constexpr std::uint64_t maximumMainWindowFrameAgeMilliseconds = 1500;
+
+		std::atomic<std::uint64_t> renderedMainWindowGeneration{ 0 };
+		std::atomic<std::uint64_t> lastMainWindowRenderTick{ 0 };
 
 		struct CompletionSlot final
 		{
@@ -37,6 +44,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 			std::chrono::steady_clock::time_point          LastFrame{};
 			bool                                           HasFrameTime{ false };
 			bool                                           InitializationFailed{ false };
+			bool                                           PlatformFrameReady{ false };
+			bool                                           PlatformInitializationFailed{ false };
 		};
 
 		[[nodiscard]] RendererState& GetRendererState()
@@ -45,9 +54,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 			return *state;
 		}
 
-		[[nodiscard]] std::mutex& GetRendererMutex()
+		[[nodiscard]] std::recursive_mutex& GetRendererMutex()
 		{
-			static auto* mutex = new std::mutex();
+			static auto* mutex = new std::recursive_mutex();
 			return *mutex;
 		}
 
@@ -66,6 +75,12 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 		void ResetInitialization(RendererState& a_state)
 		{
+			if (Win32Platform::HasLiveBackend()) {
+				logger::critical(
+					"Refusing to destroy an ImGui context while the Win32 backend is live");
+				return;
+			}
+
 			if (a_state.Context) {
 				ImGui::SetCurrentContext(a_state.Context);
 				if (ImGui::GetIO().BackendRendererUserData) {
@@ -252,6 +267,10 @@ namespace SFSEMenuFramework::D3D12Renderer
 			io.IniFilename = nullptr;
 			io.LogFilename = nullptr;
 			io.ConfigWindowsMoveFromTitleBarOnly = true;
+			io.ConfigFlags |=
+				ImGuiConfigFlags_NavEnableKeyboard |
+				ImGuiConfigFlags_NavEnableGamepad |
+				ImGuiConfigFlags_NoMouseCursorChange;
 			ImGui::StyleColorsDark();
 
 			const auto shaderCpuHandle = a_state.ShaderHeap->GetCPUDescriptorHandleForHeapStart();
@@ -310,6 +329,84 @@ namespace SFSEMenuFramework::D3D12Renderer
 		return InitializeLocked(GetRendererState(), a_device);
 	}
 
+	bool UpdatePlatform()
+	{
+		std::scoped_lock lock{ GetRendererMutex() };
+		auto& rendererState = GetRendererState();
+		if (!rendererState.Context || rendererState.PlatformInitializationFailed) {
+			return false;
+		}
+
+		ImGui::SetCurrentContext(rendererState.Context);
+		switch (Win32Platform::Initialize()) {
+		case Win32Platform::InitializeResult::Deferred:
+			return false;
+		case Win32Platform::InitializeResult::Failed:
+			rendererState.PlatformInitializationFailed = true;
+			return false;
+		case Win32Platform::InitializeResult::Ready:
+			break;
+		}
+
+		if (!Win32Platform::IsHostWindowUsable()) {
+			Win32Platform::UpdateInputState(false);
+			return false;
+		}
+
+		if (!rendererState.PlatformFrameReady) {
+			if (!Win32Platform::PrepareFrame()) {
+				return false;
+			}
+			rendererState.PlatformFrameReady = true;
+		}
+		return true;
+	}
+
+	void SetPlatformInputEnabled(bool a_enabled)
+	{
+		std::scoped_lock lock{ GetRendererMutex() };
+		auto& rendererState = GetRendererState();
+		if (!rendererState.Context || !Win32Platform::IsInitialized()) {
+			return;
+		}
+
+		ImGui::SetCurrentContext(rendererState.Context);
+		Win32Platform::UpdateInputState(
+			a_enabled && Win32Platform::IsHostWindowUsable());
+	}
+
+	bool HasRecentMainWindowFrame(std::uint64_t a_generation) noexcept
+	{
+		if (a_generation == 0 ||
+			renderedMainWindowGeneration.load(std::memory_order_acquire) != a_generation) {
+			return false;
+		}
+
+		const auto lastTick = lastMainWindowRenderTick.load(std::memory_order_acquire);
+		return lastTick != 0 &&
+		       (::GetTickCount64() - lastTick) <= maximumMainWindowFrameAgeMilliseconds;
+	}
+
+	void ProcessWindowMessage(
+		HWND   a_window,
+		UINT   a_message,
+		WPARAM a_wParam,
+		LPARAM a_lParam)
+	{
+		std::scoped_lock lock{ GetRendererMutex() };
+		auto& rendererState = GetRendererState();
+		if (!rendererState.Context) {
+			return;
+		}
+
+		ImGui::SetCurrentContext(rendererState.Context);
+		Win32Platform::ProcessWindowMessage(
+			a_window,
+			a_message,
+			a_wParam,
+			a_lParam);
+	}
+
 	RenderResult Render(
 		ID3D12GraphicsCommandList*    a_commandList,
 		ID3D12Resource*               a_renderTarget,
@@ -358,25 +455,51 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 		ImGui::SetCurrentContext(rendererState.Context);
 		auto& io = ImGui::GetIO();
-		io.DisplaySize = ImVec2{
-			static_cast<float>(description.Width),
-			static_cast<float>(description.Height)
-		};
-		io.DisplayFramebufferScale = ImVec2{ 1.0F, 1.0F };
+		if (Win32Platform::IsInitialized()) {
+			if (!rendererState.PlatformFrameReady) {
+				return RenderResult::PlatformFrameUnavailable;
+			}
+			if (!std::isfinite(io.DisplaySize.x) ||
+				!std::isfinite(io.DisplaySize.y) ||
+				io.DisplaySize.x <= 0.0F ||
+				io.DisplaySize.y <= 0.0F) {
+				rendererState.PlatformFrameReady = false;
+				return RenderResult::InvalidDisplaySize;
+			}
 
-		const auto now = std::chrono::steady_clock::now();
-		if (rendererState.HasFrameTime) {
-			const auto elapsed = std::chrono::duration<float>(now - rendererState.LastFrame).count();
-			io.DeltaTime = std::clamp(elapsed, 0.001F, 0.1F);
+			io.DisplayFramebufferScale = ImVec2{
+				static_cast<float>(description.Width) / io.DisplaySize.x,
+				static_cast<float>(description.Height) / io.DisplaySize.y
+			};
+			rendererState.PlatformFrameReady = false;
 		} else {
-			io.DeltaTime = 1.0F / 60.0F;
-			rendererState.HasFrameTime = true;
+			io.DisplaySize = ImVec2{
+				static_cast<float>(description.Width),
+				static_cast<float>(description.Height)
+			};
+			io.DisplayFramebufferScale = ImVec2{ 1.0F, 1.0F };
+
+			const auto now = std::chrono::steady_clock::now();
+			if (rendererState.HasFrameTime) {
+				const auto elapsed =
+					std::chrono::duration<float>(now - rendererState.LastFrame).count();
+				io.DeltaTime = std::clamp(elapsed, 0.001F, 0.1F);
+			} else {
+				io.DeltaTime = 1.0F / 60.0F;
+				rendererState.HasFrameTime = true;
+			}
+			rendererState.LastFrame = now;
 		}
-		rendererState.LastFrame = now;
 
 		ImGui_ImplDX12_NewFrame();
+		const auto openGeneration = WindowManager::GetMainWindowOpenGeneration();
+		if (!HasRecentMainWindowFrame(openGeneration) ||
+			!WindowManager::IsMainWindowOpenGeneration(openGeneration)) {
+			io.ClearEventsQueue();
+			io.ClearInputKeys();
+		}
 		ImGui::NewFrame();
-		WindowManager::RenderOpenWindows();
+		const auto renderedGeneration = WindowManager::RenderOpenWindows();
 		ImGui::Render();
 
 		D3D12_RENDER_TARGET_VIEW_DESC renderTargetView{};
@@ -402,6 +525,13 @@ namespace SFSEMenuFramework::D3D12Renderer
 			a_commandList,
 			a_engineHeaps.Count,
 			a_engineHeaps.Heaps.data());
+
+		if (renderedGeneration != 0) {
+			renderedMainWindowGeneration.store(
+				renderedGeneration,
+				std::memory_order_release);
+			lastMainWindowRenderTick.store(::GetTickCount64(), std::memory_order_release);
+		}
 
 		return RenderResult::Rendered;
 	}

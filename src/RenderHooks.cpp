@@ -483,7 +483,7 @@ namespace SFSEMenuFramework::RenderHooks
 				load(epochTableExhaustions));
 			logger::info(
 				"Render outcomes: invalid-args={}, busy={}, device-query={}, device-mismatch={}, "
-				"list2={}, slot-busy={}, invalid-target={}",
+				"list2={}, slot-busy={}, invalid-target={}, platform-frame={}, display-size={}",
 				load(renderResults[static_cast<std::size_t>(
 					D3D12Renderer::RenderResult::InvalidArguments)]),
 				load(renderResults[static_cast<std::size_t>(D3D12Renderer::RenderResult::Busy)]),
@@ -496,7 +496,11 @@ namespace SFSEMenuFramework::RenderHooks
 				load(renderResults[static_cast<std::size_t>(
 					D3D12Renderer::RenderResult::FrameSlotBusy)]),
 				load(renderResults[static_cast<std::size_t>(
-					D3D12Renderer::RenderResult::InvalidTarget)]));
+					D3D12Renderer::RenderResult::InvalidTarget)]),
+				load(renderResults[static_cast<std::size_t>(
+					D3D12Renderer::RenderResult::PlatformFrameUnavailable)]),
+				load(renderResults[static_cast<std::size_t>(
+					D3D12Renderer::RenderResult::InvalidDisplaySize)]));
 		}
 
 		[[nodiscard]] bool CopyHeapSnapshot(

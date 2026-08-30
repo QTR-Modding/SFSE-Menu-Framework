@@ -51,9 +51,8 @@ bool SFSEMenuFramework::McpWindow::Install()
 		return false;
 	}
 
-	interface->BlockUserInput.store(false, std::memory_order_relaxed);
-	interface->IsOpen.store(true, std::memory_order_release);
-	return true;
+	interface->BlockUserInput.store(true, std::memory_order_relaxed);
+	return WindowManager::SetMainWindowOpen(true);
 }
 
 void __stdcall SFSEMenuFramework::McpWindow::Render()
@@ -86,9 +85,7 @@ void __stdcall SFSEMenuFramework::McpWindow::Render()
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 0.0F, 0.0F });
 
 		if (ImGui::Button("X", ImVec2{ closeButtonSize, closeButtonSize })) {
-			if (auto* mainWindow = WindowManager::GetMainWindow()) {
-				mainWindow->IsOpen.store(false, std::memory_order_release);
-			}
+			static_cast<void>(WindowManager::SetMainWindowOpen(false));
 		}
 
 		ImGui::PopStyleVar();

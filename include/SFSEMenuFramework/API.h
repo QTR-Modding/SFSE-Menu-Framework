@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 
 namespace SFSEMenuFramework::Model
 {
@@ -11,5 +12,6 @@ namespace SFSEMenuFramework::Model
 	public:
 		std::atomic<bool> IsOpen{ false };
 		std::atomic<bool> BlockUserInput{ true };
+		std::atomic<std::uint64_t> OpenGeneration{ 0 };
 	};
 }

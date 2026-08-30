@@ -1,4 +1,5 @@
 #include "McpWindow.h"
+#include "MenuOwnership.h"
 #include "RenderHooks.h"
 
 SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
@@ -18,6 +19,12 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
+	const auto* taskInterface = SFSE::GetTaskInterface();
+	if (!taskInterface) {
+		logger::critical("The SFSE task interface is unavailable");
+		return false;
+	}
+
 	if (!SFSEMenuFramework::McpWindow::Install()) {
 		logger::critical("Failed to register the built-in Mod Control Panel window");
 		return false;
@@ -28,6 +35,7 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
-	logger::info("Empty Mod Control Panel window registered");
+	SFSEMenuFramework::MenuOwnership::Install(*taskInterface);
+	logger::info("Mod Control Panel registered; press F1 to toggle it");
 	return true;
 }
