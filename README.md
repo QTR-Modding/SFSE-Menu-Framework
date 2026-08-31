@@ -80,7 +80,10 @@ same cursor, input, pause, and blur ownership; nonblocking windows continue to
 render without taking Starfield input. `GetMainWindow`,
 `IsAnyBlockingWindowOpened`, `SetHotkeyEnabled`, and `IsHotkeyEnabled` are also
 available. The configured hotkey controls only the main Mod Control Panel;
-`Escape` can still close it while hotkeys are disabled.
+`Escape` can still close it while hotkeys are disabled. Opening or re-blocking
+a framework window does not warp the OS cursor. Before `kPostDataLoad`, the
+virtual cursor reuses its prior position or starts from the current Windows
+cursor position when available.
 
 Call panel and window registration from the SFSE `kPostLoad` message so it works
 regardless of DLL load order. Consumer projects must compile the four Dear ImGui
@@ -118,9 +121,14 @@ xmake project -k vsxmake
 
 SFSE Menu Framework is licensed under [GPL-3.0-only](COPYING) with the [Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS). Dear ImGui remains available under its [MIT license](extern/imgui/LICENSE.txt).
 
-This project is a Starfield port of [SKSE Menu Framework 3 at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, `AddWindow`/`WindowInterface`/`GetMainWindow` API, aggregate blocking-window behavior, hotkey enable control, software-cursor and cursor-centering behavior, preserve-PrintScreen modal policy, toggle and close behavior, and fresh `LB` + double-press gamepad default are directly adapted under GPL-3.0.
+This project is a Starfield port of [SKSE Menu Framework 3 at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, `AddWindow`/`WindowInterface`/`GetMainWindow` API, aggregate blocking-window behavior, hotkey enable control, software-cursor behavior, preserve-PrintScreen modal policy, toggle and close behavior, and fresh `LB` + double-press gamepad default are directly adapted under GPL-3.0.
 
-Starfield's pre-`kPostDataLoad` relative-mouse bridge is an independent Windows Raw Input implementation; SKSE Menu Framework has no equivalent relative-motion path.
+The pinned SKSE Menu Framework source centers the cursor whenever a blocking
+window opens; this port deliberately preserves cursor position instead.
+Starfield's pre-`kPostDataLoad` relative-mouse bridge is an independent Windows
+Raw Input implementation; SKSE Menu Framework has no equivalent relative-motion
+path. Its only physical cursor placement transfers the already-visible virtual
+position into Starfield's normal cursor route at that lifecycle handoff.
 
 The verified vtable-hook installation and guarded rollback pattern is adapted from [Toggle Dialogue Camera SF at commit `8021fa9`](https://github.com/QTR-Modding/ToggleDialogueCameraSF/tree/8021fa934591aac1c71266cc4abc5cb1c24e28d7), under GPL-3.0-or-later with its Modding and GPL-3.0 Linking Exceptions.
 

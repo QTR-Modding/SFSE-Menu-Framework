@@ -150,8 +150,6 @@ namespace SFSEMenuFramework::Win32Platform
 		std::atomic<DWORD>              initializedHostWindowThreadID{ 0 };
 		std::atomic<HostWindowCallback> hostWindowCallback{ nullptr };
 		std::atomic<std::uint64_t>      inputStateGeneration{ 1 };
-		std::atomic<HWND>               centeredCursorWindow{ nullptr };
-		std::atomic<std::uint64_t>      centeredCursorGeneration{ 0 };
 		std::atomic<PointerRoute>       pointerRoute{ PointerRoute::Disabled };
 		std::atomic<std::uint64_t>      earlyRawMouseGeneration{ 0 };
 		std::atomic<std::uint64_t>      rawMouseFaultGeneration{ 0 };
@@ -204,10 +202,12 @@ namespace SFSEMenuFramework::Win32Platform
 			GetRawMouseState() = {};
 		}
 
-		void ResetCenteredCursorState() noexcept
+		void DeactivateRawMouseState() noexcept
 		{
-			centeredCursorGeneration.store(0, std::memory_order_relaxed);
-			centeredCursorWindow.store(nullptr, std::memory_order_release);
+			auto& state = GetRawMouseState();
+			state.Generation = 0;
+			state.ButtonsDown = 0;
+			state.Initialized = false;
 		}
 
 		[[nodiscard]] KeyboardToggleState& GetKeyboardToggleState()
@@ -1470,13 +1470,44 @@ namespace SFSEMenuFramework::Win32Platform
 
 			ResetWindowThreadMouseState(a_window);
 			auto& state = GetRawMouseState();
+			std::int64_t initialX{};
+			std::int64_t initialY{};
+			if (state.Window == a_window) {
+				initialX = std::clamp<std::int64_t>(
+					state.X,
+					clientArea.left,
+					clientArea.right - 1);
+				initialY = std::clamp<std::int64_t>(
+					state.Y,
+					clientArea.top,
+					clientArea.bottom - 1);
+			} else {
+				POINT cursorPosition{};
+				if (::GetCursorPos(&cursorPosition) &&
+					::ScreenToClient(a_window, &cursorPosition)) {
+					initialX = std::clamp<std::int64_t>(
+						cursorPosition.x,
+						clientArea.left,
+						clientArea.right - 1);
+					initialY = std::clamp<std::int64_t>(
+						cursorPosition.y,
+						clientArea.top,
+						clientArea.bottom - 1);
+				} else {
+					// A bounded virtual starting point is still required when
+					// Windows cannot expose the first absolute pointer position.
+					// This fallback does not move the OS cursor.
+					initialX = clientArea.left +
+						(clientArea.right - clientArea.left) / 2;
+					initialY = clientArea.top +
+						(clientArea.bottom - clientArea.top) / 2;
+				}
+			}
 			state = {
 				.Window = a_window,
 				.Generation = a_generation,
-				.X = clientArea.left +
-					(clientArea.right - clientArea.left) / 2,
-				.Y = clientArea.top +
-					(clientArea.bottom - clientArea.top) / 2,
+				.X = initialX,
+				.Y = initialY,
 				.ButtonsDown = 0,
 				.Initialized = true
 			};
@@ -1679,7 +1710,7 @@ namespace SFSEMenuFramework::Win32Platform
 			if (a_message == WM_NCDESTROY) {
 				static_cast<void>(UpdateInputState(false));
 				ResetKeyboardToggleState();
-				ResetCenteredCursorState();
+				ResetRawMouseState();
 				hostWindowTearingDown.store(true, std::memory_order_release);
 				hostCallbackPending.store(false, std::memory_order_release);
 				if (const auto callback =
@@ -1800,7 +1831,7 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 			static_cast<void>(UpdateInputState(false));
 			ResetKeyboardToggleState();
-			ResetCenteredCursorState();
+			ResetRawMouseState();
 			hostWindowTearingDown.store(true, std::memory_order_release);
 			hostCallbackPending.store(false, std::memory_order_release);
 			if (const auto callback =
@@ -1861,7 +1892,6 @@ namespace SFSEMenuFramework::Win32Platform
 		hostWindowTearingDown.store(false, std::memory_order_release);
 		hostCallbackPending.store(false, std::memory_order_release);
 		ResetKeyboardToggleState();
-		ResetCenteredCursorState();
 		ResetRawMouseState();
 		acceptInput.store(false, std::memory_order_release);
 		pointerRoute.store(PointerRoute::Disabled, std::memory_order_release);
@@ -1936,54 +1966,6 @@ namespace SFSEMenuFramework::Win32Platform
 		       clientArea.bottom > clientArea.top;
 	}
 
-	bool CenterCursorForBlockingWindowOpen(std::uint64_t a_generation) noexcept
-	{
-		if (a_generation == 0 || !IsCurrentThreadHostWindowThread()) {
-			return false;
-		}
-
-		const auto window = initializedHostWindow.load(std::memory_order_acquire);
-		if (hostWindowTearingDown.load(std::memory_order_acquire) ||
-			!subclassActive.load(std::memory_order_acquire) || !window) {
-			return false;
-		}
-		if (centeredCursorGeneration.load(std::memory_order_acquire) == a_generation &&
-			centeredCursorWindow.load(std::memory_order_relaxed) == window) {
-			return true;
-		}
-
-		// Adapted from SKSE Menu Framework 3's
-		// Hooks.cpp::CenterMouseCursorInWindow at commit
-		// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0). The
-		// Starfield port additionally binds the one-shot center operation to the
-		// verified host HWND thread and the exact rendered blocking generation.
-		const auto foregroundWindow = ::GetForegroundWindow();
-		if (foregroundWindow != window &&
-			!::IsChild(window, foregroundWindow)) {
-			return false;
-		}
-
-		RECT clientArea{};
-		if (!::GetClientRect(window, &clientArea) ||
-			clientArea.right <= clientArea.left ||
-			clientArea.bottom <= clientArea.top) {
-			return false;
-		}
-
-		POINT center{
-			clientArea.left + (clientArea.right - clientArea.left) / 2,
-			clientArea.top + (clientArea.bottom - clientArea.top) / 2
-		};
-		if (!::ClientToScreen(window, &center) ||
-			!::SetCursorPos(center.x, center.y)) {
-			return false;
-		}
-
-		centeredCursorWindow.store(window, std::memory_order_relaxed);
-		centeredCursorGeneration.store(a_generation, std::memory_order_release);
-		return true;
-	}
-
 	bool UpdateInputState(
 		bool a_acceptInput,
 		std::uint64_t a_earlyRawMouseGeneration)
@@ -1993,10 +1975,6 @@ namespace SFSEMenuFramework::Win32Platform
 			window && IsCurrentThreadHostWindowThread();
 
 		const auto disableInput = [&]() {
-			// A focus or lease transition may let Starfield move the OS pointer
-			// without changing the menu's open generation. Recenter when that
-			// generation becomes interactive again.
-			ResetCenteredCursorState();
 			{
 				auto& queue = GetInputQueue();
 				std::scoped_lock lock{ queue.Mutex };
@@ -2016,7 +1994,7 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 			if (onHostWindowThread) {
 				ResetWindowThreadMouseState(window);
-				ResetRawMouseState();
+				DeactivateRawMouseState();
 			}
 		};
 
@@ -2114,7 +2092,7 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 		}
 		ResetWindowThreadMouseState(window);
-		ResetRawMouseState();
+		DeactivateRawMouseState();
 		if (!subclassActive.load(std::memory_order_acquire) ||
 			::GetForegroundWindow() != window) {
 			disableInput();

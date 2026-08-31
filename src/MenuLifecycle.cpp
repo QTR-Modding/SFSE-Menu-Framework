@@ -113,8 +113,6 @@ namespace SFSEMenuFramework::MenuLifecycle
 				return;
 			}
 
-			static_cast<void>(
-				Win32Platform::CenterCursorForBlockingWindowOpen(generation));
 			if (!D3D12Renderer::SetPlatformInputEnabled(true, generation)) {
 				logger::critical(
 					"Early relative mouse routing could not be armed; closing all blocking framework windows");
@@ -152,10 +150,6 @@ namespace SFSEMenuFramework::MenuLifecycle
 			const bool suppressNativeInput =
 				disposition != InputDisposition::PassThrough;
 			InputCapture::SetModal(suppressNativeInput);
-			if (disposition == InputDisposition::RouteToMenu) {
-				static_cast<void>(Win32Platform::CenterCursorForBlockingWindowOpen(
-					WindowManager::GetBlockingWindowOpenGeneration()));
-			}
 			const bool platformInputReady =
 				D3D12Renderer::SetPlatformInputEnabled(
 				disposition == InputDisposition::RouteToMenu);
