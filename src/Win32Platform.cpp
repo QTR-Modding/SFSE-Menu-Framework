@@ -97,6 +97,7 @@ namespace SFSEMenuFramework::Win32Platform
 		{
 			std::uint32_t ButtonsDown{ 0 };
 			int           TrackedArea{ 0 };
+			bool          ReleasingCapture{ false };
 		};
 
 		struct RawMouseState final
@@ -1181,7 +1182,9 @@ namespace SFSEMenuFramework::Win32Platform
 			if (IsMouseButtonUp(a_message)) {
 				state.ButtonsDown &= ~buttonMask;
 				if (state.ButtonsDown == 0 && ::GetCapture() == a_window) {
+					state.ReleasingCapture = true;
 					static_cast<void>(::ReleaseCapture());
+					state.ReleasingCapture = false;
 				}
 			}
 		}
@@ -1725,9 +1728,26 @@ namespace SFSEMenuFramework::Win32Platform
 				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
 			}
 
-			if (a_message == WM_CAPTURECHANGED || a_message == WM_CANCELMODE) {
+			if (a_message == WM_CAPTURECHANGED) {
+				auto& mouseState = GetWindowThreadMouseState();
+
+				// ReleaseCapture() normally emits WM_CAPTURECHANGED after the final
+				// mouse-button-up. Preserve that release event so ImGui MenuItem and
+				// Selectable widgets can activate.
+				if (mouseState.ReleasingCapture) {
+					mouseState.ReleasingCapture = false;
+					return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
+				}
+
 				ResetWindowThreadMouseState(a_window);
 				GetRawMouseState().ButtonsDown = 0;
+				RequestInputReset();
+				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
+			}
+
+			if (a_message == WM_CANCELMODE) {
+				GetRawMouseState().ButtonsDown = 0;
+				ResetWindowThreadMouseState(a_window);
 				RequestInputReset();
 				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
 			}

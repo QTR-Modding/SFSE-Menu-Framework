@@ -21,6 +21,7 @@ namespace SFSEMenuFramework::SettingsWindow
 		constexpr char WINDOW_ID[] = "Settings##Window";
 
 		bool isOpen{};
+		bool focusRequested{};
 		bool resetPlacement{};
 
 		void ApplyRuntimeSettings()
@@ -225,11 +226,13 @@ namespace SFSEMenuFramework::SettingsWindow
 	void Open() noexcept
 	{
 		isOpen = true;
+		focusRequested = true;
 	}
 
 	void Close() noexcept
 	{
 		isOpen = false;
+		focusRequested = false;
 	}
 
 	void ResetPlacement() noexcept
@@ -252,6 +255,10 @@ namespace SFSEMenuFramework::SettingsWindow
 			ImVec2{ viewport->Size.x * 0.4F, viewport->Size.y * 0.4F },
 			resetPlacement ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
 		resetPlacement = false;
+		if (focusRequested) {
+			ImGui::SetNextWindowFocus();
+			focusRequested = false;
+		}
 
 		constexpr ImGuiWindowFlags windowFlags =
 			ImGuiWindowFlags_NoCollapse |

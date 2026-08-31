@@ -23,7 +23,7 @@ add_requires("nlohmann_json 3.11.3")
 
 local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
-local plugin_version = "0.6.0"
+local plugin_version = "0.6.1"
 local plugin_author = "Quantumyilmaz"
 
 set_project(plugin_name)
