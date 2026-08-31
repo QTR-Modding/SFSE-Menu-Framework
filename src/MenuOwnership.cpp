@@ -112,32 +112,22 @@ namespace SFSEMenuFramework::MenuOwnership
 
 		[[nodiscard]] bool WantsInputOwnership() noexcept
 		{
-			const auto* mainWindow = WindowManager::GetMainWindow();
-			return mainWindow &&
-			       mainWindow->IsOpen.load(std::memory_order_acquire) &&
-			       mainWindow->BlockUserInput.load(std::memory_order_acquire);
+			return WindowManager::IsAnyBlockingWindowOpened();
 		}
 
 		[[nodiscard]] bool WantsWindowOpen() noexcept
 		{
-			const auto* mainWindow = WindowManager::GetMainWindow();
-			return mainWindow && mainWindow->IsOpen.load(std::memory_order_acquire);
+			return WindowManager::IsAnyWindowOpen();
 		}
 
 		[[nodiscard]] bool WantsPauseOwnership(const ReconcileContext& a_context) noexcept
 		{
-			const auto* mainWindow = WindowManager::GetMainWindow();
-			return a_context.PauseAllowed && mainWindow &&
-			       mainWindow->IsOpen.load(std::memory_order_acquire) &&
-			       mainWindow->PauseGame.load(std::memory_order_acquire);
+			return a_context.PauseAllowed && WindowManager::ShouldPauseGame();
 		}
 
 		[[nodiscard]] bool WantsBlurOwnership() noexcept
 		{
-			const auto* mainWindow = WindowManager::GetMainWindow();
-			return mainWindow &&
-			       mainWindow->IsOpen.load(std::memory_order_acquire) &&
-			       mainWindow->BlurBackground.load(std::memory_order_acquire);
+			return WindowManager::ShouldBlurBackground();
 		}
 
 		void MarkFaulted(OwnershipState& a_state, const char* a_reason)
@@ -147,7 +137,7 @@ namespace SFSEMenuFramework::MenuOwnership
 				a_state.OwnerMismatchWarned = true;
 				logger::critical("Menu ownership faulted: {}", a_reason);
 			}
-			static_cast<void>(WindowManager::SetMainWindowOpen(false));
+			WindowManager::CloseAllBlockingWindows();
 			PublishState(LifecycleState::Faulted, ReleaseDisposition(a_state));
 		}
 

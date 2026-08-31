@@ -25,12 +25,12 @@ namespace SFSEMenuFramework::D3D12Renderer
 		constexpr float defaultFontSizePixels = 32.0F;
 		using Microsoft::WRL::ComPtr;
 		constexpr std::size_t frameResourceCount = 4;
-		constexpr std::uint64_t maximumMainWindowFrameAgeMilliseconds = 250;
+		constexpr std::uint64_t maximumBlockingWindowFrameAgeMilliseconds = 250;
 		constexpr char imguiIniFilename[] =
 			"Data/SFSE/Plugins/SFSEMenuFramework.imgui.ini";
 
-		std::atomic<std::uint64_t> renderedMainWindowGeneration{ 0 };
-		std::atomic<std::uint64_t> lastMainWindowRenderTick{ 0 };
+		std::atomic<std::uint64_t> renderedBlockingWindowGeneration{ 0 };
+		std::atomic<std::uint64_t> lastBlockingWindowRenderTick{ 0 };
 		std::atomic<std::uint64_t> nextContextGeneration{ 1 };
 		std::atomic<bool>          rendererReady{ false };
 
@@ -360,16 +360,16 @@ namespace SFSEMenuFramework::D3D12Renderer
 		return a_enabled ? enable && applied : applied;
 	}
 
-	bool HasRecentMainWindowFrame(std::uint64_t a_generation) noexcept
+	bool HasRecentBlockingWindowFrame(std::uint64_t a_generation) noexcept
 	{
 		if (a_generation == 0 ||
-			renderedMainWindowGeneration.load(std::memory_order_acquire) != a_generation) {
+			renderedBlockingWindowGeneration.load(std::memory_order_acquire) != a_generation) {
 			return false;
 		}
 
-		const auto lastTick = lastMainWindowRenderTick.load(std::memory_order_acquire);
+		const auto lastTick = lastBlockingWindowRenderTick.load(std::memory_order_acquire);
 		return lastTick != 0 &&
-		       (::GetTickCount64() - lastTick) <= maximumMainWindowFrameAgeMilliseconds;
+		       (::GetTickCount64() - lastTick) <= maximumBlockingWindowFrameAgeMilliseconds;
 	}
 
 	RenderResult Render(
@@ -432,9 +432,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 			static_cast<float>(description.Width) / io.DisplaySize.x,
 			static_cast<float>(description.Height) / io.DisplaySize.y
 		};
-		const auto openGeneration = WindowManager::GetMainWindowOpenGeneration();
-		if (!HasRecentMainWindowFrame(openGeneration) ||
-			!WindowManager::IsMainWindowOpenGeneration(openGeneration)) {
+		const auto openGeneration = WindowManager::GetBlockingWindowOpenGeneration();
+		if (!HasRecentBlockingWindowFrame(openGeneration) ||
+			!WindowManager::IsBlockingWindowOpenGeneration(openGeneration)) {
 			io.ClearEventsQueue();
 			io.ClearInputKeys();
 		}
@@ -483,10 +483,10 @@ namespace SFSEMenuFramework::D3D12Renderer
 			a_engineHeaps.Heaps.data());
 
 		if (renderedGeneration != 0) {
-			renderedMainWindowGeneration.store(
+			renderedBlockingWindowGeneration.store(
 				renderedGeneration,
 				std::memory_order_release);
-			lastMainWindowRenderTick.store(::GetTickCount64(), std::memory_order_release);
+			lastBlockingWindowRenderTick.store(::GetTickCount64(), std::memory_order_release);
 			static_cast<void>(Win32Platform::PostHostWindowCallback());
 		}
 

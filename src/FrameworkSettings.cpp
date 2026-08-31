@@ -148,7 +148,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 
 		constexpr std::uint32_t defaultToggleKey = 0x3B;
 		constexpr ToggleMode    defaultToggleMode = ToggleMode::SinglePress;
-		constexpr std::uint32_t defaultToggleKeyGamePad = 0;
+		constexpr std::uint32_t defaultToggleKeyGamePad = 256;
 		constexpr ToggleMode defaultToggleModeGamePad = ToggleMode::DoublePress;
 		constexpr bool       defaultFreezeTimeOnMenu = true;
 		constexpr bool       defaultBlurBackgroundOnMenu = true;

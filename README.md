@@ -49,7 +49,40 @@ void RegisterMenu()
 }
 ```
 
-Call the registration function from the SFSE `kPostLoad` message so it works
+Consumers can also register a separate, resizable ImGui window with the same
+SKSE Menu Framework-style control surface:
+
+```cpp
+SFSEMenuFramework::Model::WindowInterface* window{};
+
+void __stdcall RenderWindow() noexcept
+{
+    bool open = window->IsOpen.load();
+    ImGui::Begin("My Plugin Window", &open);
+    ImGui::TextUnformatted("Consumer-owned window");
+    ImGui::End();
+    window->IsOpen.store(open);
+}
+
+void RegisterWindow()
+{
+    window = SFSEMenuFramework::AddWindow(&RenderWindow, true);
+    if (window) {
+        window->IsOpen.store(true);
+    }
+}
+```
+
+`AddWindow` returns a stable process-lifetime `WindowInterface`, matching the
+original framework's assignment model. `IsOpen` and `BlockUserInput` are atomic
+and may be changed directly. Every open blocking window participates in the
+same cursor, input, pause, and blur ownership; nonblocking windows continue to
+render without taking Starfield input. `GetMainWindow`,
+`IsAnyBlockingWindowOpened`, `SetHotkeyEnabled`, and `IsHotkeyEnabled` are also
+available. The configured hotkey controls only the main Mod Control Panel;
+`Escape` can still close it while hotkeys are disabled.
+
+Call panel and window registration from the SFSE `kPostLoad` message so it works
 regardless of DLL load order. Consumer projects must compile the four Dear ImGui
 core sources at version 1.90.8, commit
 `6f7b5d0ee2fe9948ab871a530888a6dc5c960700`, and must not compile or initialize
@@ -85,7 +118,7 @@ xmake project -k vsxmake
 
 SFSE Menu Framework is licensed under [GPL-3.0-only](COPYING) with the [Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS). Dear ImGui remains available under its [MIT license](extern/imgui/LICENSE.txt).
 
-This project is a Starfield port of [SKSE Menu Framework 3 at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, software-cursor and cursor-centering behavior, preserve-PrintScreen modal policy, toggle and close behavior, and blocking-window semantics are directly adapted under GPL-3.0.
+This project is a Starfield port of [SKSE Menu Framework 3 at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, `AddWindow`/`WindowInterface`/`GetMainWindow` API, aggregate blocking-window behavior, hotkey enable control, software-cursor and cursor-centering behavior, preserve-PrintScreen modal policy, toggle and close behavior, and fresh `LB` + double-press gamepad default are directly adapted under GPL-3.0.
 
 Starfield's pre-`kPostDataLoad` relative-mouse bridge is an independent Windows Raw Input implementation; SKSE Menu Framework has no equivalent relative-motion path.
 

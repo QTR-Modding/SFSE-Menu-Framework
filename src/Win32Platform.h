@@ -20,7 +20,7 @@ namespace SFSEMenuFramework::Win32Platform
 	[[nodiscard]] bool             IsInitialized() noexcept;
 	[[nodiscard]] bool             HasLiveBackend() noexcept;
 	[[nodiscard]] bool             IsHostWindowUsable() noexcept;
-	[[nodiscard]] bool             CenterCursorForMainWindowOpen(
+	[[nodiscard]] bool             CenterCursorForBlockingWindowOpen(
 		std::uint64_t a_generation) noexcept;
 	[[nodiscard]] bool             UpdateInputState(
 		bool a_acceptInput,

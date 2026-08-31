@@ -146,7 +146,7 @@ namespace SFSEMenuFramework::InputCapture
 			captureFaulted.store(true, std::memory_order_release);
 			modal.store(false, std::memory_order_release);
 			pendingKeyboardSuppression.store(0, std::memory_order_release);
-			static_cast<void>(WindowManager::SetMainWindowOpen(false));
+			WindowManager::CloseAllBlockingWindows();
 			if (!eventLimitLogged.test_and_set(std::memory_order_relaxed)) {
 				logger::critical(
 					"BSInputDeviceManager input queue exceeded {} events; modal native capture was disabled",
@@ -309,6 +309,9 @@ namespace SFSEMenuFramework::InputCapture
 			}
 
 			if (a_button.deviceType != RE::InputEvent::DeviceType::kGamepad) {
+				return false;
+			}
+			if (!WindowManager::IsHotkeyEnabled()) {
 				return false;
 			}
 

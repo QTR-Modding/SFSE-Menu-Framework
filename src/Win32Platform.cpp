@@ -608,7 +608,8 @@ namespace SFSEMenuFramework::Win32Platform
 			const bool valid =
 				dik != 0 && dik < state.Down.size() && state.Down[dik] &&
 				::GetForegroundWindow() == a_window &&
-				InputCapture::IsKeyboardEdgeOperational() && mainWindow &&
+				InputCapture::IsKeyboardEdgeOperational() &&
+				WindowManager::IsHotkeyEnabled() && mainWindow &&
 				!mainWindow->IsOpen.load(std::memory_order_acquire) &&
 				FrameworkSettings::GetToggleMode() ==
 					FrameworkSettings::ToggleMode::Hold &&
@@ -664,7 +665,7 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 
 			const auto configured = FrameworkSettings::GetToggleKey();
-			if (dik != configured) {
+			if (!WindowManager::IsHotkeyEnabled() || dik != configured) {
 				return false;
 			}
 
@@ -765,9 +766,9 @@ namespace SFSEMenuFramework::Win32Platform
 
 		[[nodiscard]] bool HasCurrentInputLease() noexcept
 		{
-			const auto generation = WindowManager::GetMainWindowOpenGeneration();
-			return D3D12Renderer::HasRecentMainWindowFrame(generation) &&
-			       WindowManager::IsMainWindowOpenGeneration(generation);
+			const auto generation = WindowManager::GetBlockingWindowOpenGeneration();
+			return D3D12Renderer::HasRecentBlockingWindowFrame(generation) &&
+			       WindowManager::IsBlockingWindowOpenGeneration(generation);
 		}
 
 		[[nodiscard]] bool IsKeyMessage(UINT a_message) noexcept
@@ -1358,7 +1359,7 @@ namespace SFSEMenuFramework::Win32Platform
 				earlyRawMouseGeneration.load(std::memory_order_acquire);
 			if (!state.Initialized || state.Window != a_window || generation == 0 ||
 				state.Generation != generation ||
-				!WindowManager::IsMainWindowOpenGeneration(generation)) {
+				!WindowManager::IsBlockingWindowOpenGeneration(generation)) {
 				return false;
 			}
 
@@ -1453,7 +1454,7 @@ namespace SFSEMenuFramework::Win32Platform
 			QueuedWindowMessage& a_seedMessage) noexcept
 		{
 			if (!a_window || a_generation == 0 ||
-				!WindowManager::IsMainWindowOpenGeneration(a_generation)) {
+				!WindowManager::IsBlockingWindowOpenGeneration(a_generation)) {
 				return false;
 			}
 
@@ -1663,10 +1664,10 @@ namespace SFSEMenuFramework::Win32Platform
 								std::memory_order_release);
 						}
 						logger::critical(
-							"Early raw mouse input failed for generation {}; closing the Mod Control Panel",
+							"Early raw mouse input failed for generation {}; closing all blocking framework windows",
 							generation);
 						static_cast<void>(UpdateInputState(false));
-						static_cast<void>(WindowManager::SetMainWindowOpen(false));
+						WindowManager::CloseAllBlockingWindows();
 						InputCapture::SetModal(false);
 						static_cast<void>(PostHostWindowCallback());
 					}
@@ -1935,7 +1936,7 @@ namespace SFSEMenuFramework::Win32Platform
 		       clientArea.bottom > clientArea.top;
 	}
 
-	bool CenterCursorForMainWindowOpen(std::uint64_t a_generation) noexcept
+	bool CenterCursorForBlockingWindowOpen(std::uint64_t a_generation) noexcept
 	{
 		if (a_generation == 0 || !IsCurrentThreadHostWindowThread()) {
 			return false;
@@ -1955,7 +1956,7 @@ namespace SFSEMenuFramework::Win32Platform
 		// Hooks.cpp::CenterMouseCursorInWindow at commit
 		// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0). The
 		// Starfield port additionally binds the one-shot center operation to the
-		// verified host HWND thread and the exact rendered open generation.
+		// verified host HWND thread and the exact rendered blocking generation.
 		const auto foregroundWindow = ::GetForegroundWindow();
 		if (foregroundWindow != window &&
 			!::IsChild(window, foregroundWindow)) {
@@ -2058,7 +2059,7 @@ namespace SFSEMenuFramework::Win32Platform
 			if (rawMouseFaultGeneration.load(std::memory_order_acquire) ==
 					a_earlyRawMouseGeneration ||
 				!HasCurrentInputLease() ||
-				!WindowManager::IsMainWindowOpenGeneration(
+				!WindowManager::IsBlockingWindowOpenGeneration(
 					a_earlyRawMouseGeneration)) {
 				disableInput();
 				return false;
@@ -2080,7 +2081,7 @@ namespace SFSEMenuFramework::Win32Platform
 			if (!subclassActive.load(std::memory_order_acquire) ||
 				::GetForegroundWindow() != window ||
 				!HasCurrentInputLease() ||
-				!WindowManager::IsMainWindowOpenGeneration(
+				!WindowManager::IsBlockingWindowOpenGeneration(
 					a_earlyRawMouseGeneration)) {
 				disableInput();
 				return false;

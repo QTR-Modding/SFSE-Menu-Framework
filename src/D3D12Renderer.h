@@ -38,7 +38,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 	[[nodiscard]] bool SetPlatformInputEnabled(
 		bool a_enabled,
 		std::uint64_t a_earlyRawMouseGeneration = 0);
-	[[nodiscard]] bool HasRecentMainWindowFrame(std::uint64_t a_generation) noexcept;
+	[[nodiscard]] bool HasRecentBlockingWindowFrame(std::uint64_t a_generation) noexcept;
 
 	[[nodiscard]] RenderResult Render(
 		ID3D12GraphicsCommandList*    a_commandList,

@@ -1,11 +1,13 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
 namespace SFSEMenuFramework::Model
 {
 	inline constexpr std::uint32_t INTERFACE_VERSION = 1;
+	inline constexpr std::uint32_t INTERFACE_VERSION_2 = 2;
 	inline constexpr std::uint32_t IMGUI_SOURCE_REVISION = 0x6F7B5D0E;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_ID_LENGTH = 255;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_TEXT_LENGTH = 255;
@@ -74,6 +76,16 @@ namespace SFSEMenuFramework::Model
 	using PanelRenderFunction = PanelRenderResult(__stdcall*)(
 		const RenderContext*,
 		void*) noexcept;
+	using WindowRenderFunction = void(__stdcall*)(
+		const RenderContext*,
+		void*) noexcept;
+
+	class WindowInterface
+	{
+	public:
+		std::atomic<bool> IsOpen{ false };
+		std::atomic<bool> BlockUserInput{ true };
+	};
 
 	struct PanelRegistration final
 	{
@@ -87,15 +99,45 @@ namespace SFSEMenuFramework::Model
 		void*               UserData{ nullptr };
 	};
 
+	struct WindowRegistration final
+	{
+		std::uint32_t        StructureSize{ sizeof(WindowRegistration) };
+		std::uint32_t        InterfaceVersion{ INTERFACE_VERSION_2 };
+		ImGuiLayout          ImGui{};
+		WindowRenderFunction Render{ nullptr };
+		void*                UserData{ nullptr };
+		std::uint8_t         BlockUserInput{ 1 };
+		std::uint8_t         Reserved[7]{};
+	};
+
 	using RegisterPanelFunction = RegistrationResult(__stdcall*)(
 		const PanelRegistration*,
 		PanelHandle*) noexcept;
+	using RegisterWindowFunction = RegistrationResult(__stdcall*)(
+		const WindowRegistration*,
+		WindowInterface**) noexcept;
+	using GetMainWindowFunction = WindowInterface* (__stdcall*)() noexcept;
+	using IsAnyBlockingWindowOpenedFunction = bool(__stdcall*)() noexcept;
+	using SetHotkeyEnabledFunction = void(__stdcall*)(bool) noexcept;
+	using IsHotkeyEnabledFunction = bool(__stdcall*)() noexcept;
 
 	struct Interface final
 	{
 		std::uint32_t         StructureSize{ sizeof(Interface) };
 		std::uint32_t         Version{ INTERFACE_VERSION };
 		RegisterPanelFunction RegisterPanel{ nullptr };
+	};
+
+	struct InterfaceV2 final
+	{
+		std::uint32_t                     StructureSize{ sizeof(InterfaceV2) };
+		std::uint32_t                     Version{ INTERFACE_VERSION_2 };
+		RegisterPanelFunction             RegisterPanel{ nullptr };
+		RegisterWindowFunction            RegisterWindow{ nullptr };
+		GetMainWindowFunction             GetMainWindow{ nullptr };
+		IsAnyBlockingWindowOpenedFunction IsAnyBlockingWindowOpened{ nullptr };
+		SetHotkeyEnabledFunction          SetHotkeyEnabled{ nullptr };
+		IsHotkeyEnabledFunction           IsHotkeyEnabled{ nullptr };
 	};
 
 	using QueryInterfaceFunction = const Interface* (__stdcall*)(std::uint32_t) noexcept;
@@ -105,5 +147,8 @@ namespace SFSEMenuFramework::Model
 	static_assert(sizeof(ImGuiLayout) == 56);
 	static_assert(sizeof(RenderContext) == 48);
 	static_assert(sizeof(PanelRegistration) == 128);
+	static_assert(sizeof(WindowRegistration) == 88);
 	static_assert(sizeof(Interface) == 16);
+	static_assert(sizeof(InterfaceV2) == 56);
+	static_assert(std::atomic<bool>::is_always_lock_free);
 }

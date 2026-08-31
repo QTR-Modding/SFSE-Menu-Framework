@@ -27,6 +27,11 @@ namespace SFSEMenuFramework
 			RenderFunction Render{ nullptr };
 		};
 
+		struct ConsumerWindow final
+		{
+			RenderFunction Render{ nullptr };
+		};
+
 		inline thread_local std::string currentSection;
 
 		[[nodiscard]] constexpr std::uint32_t GetImGuiConfigurationFlags() noexcept
@@ -80,6 +85,39 @@ namespace SFSEMenuFramework
 				frameworkInterface->StructureSize < sizeof(Model::Interface) ||
 				frameworkInterface->Version != Model::INTERFACE_VERSION ||
 				!frameworkInterface->RegisterPanel) {
+				return nullptr;
+			}
+
+			return frameworkInterface;
+		}
+
+		[[nodiscard]] inline const Model::InterfaceV2* RequestInterfaceV2() noexcept
+		{
+			const auto module = ::GetModuleHandleW(L"SFSEMenuFramework.dll");
+			if (!module) {
+				return nullptr;
+			}
+
+			const auto procedure =
+				::GetProcAddress(module, "SFSEMenuFramework_QueryInterface");
+			if (!procedure) {
+				return nullptr;
+			}
+
+			static_assert(sizeof(procedure) == sizeof(Model::QueryInterfaceFunction));
+			const auto query = std::bit_cast<Model::QueryInterfaceFunction>(procedure);
+			const auto* frameworkInterface =
+				reinterpret_cast<const Model::InterfaceV2*>(
+					query(Model::INTERFACE_VERSION_2));
+			if (!frameworkInterface ||
+				frameworkInterface->StructureSize < sizeof(Model::InterfaceV2) ||
+				frameworkInterface->Version != Model::INTERFACE_VERSION_2 ||
+				!frameworkInterface->RegisterPanel ||
+				!frameworkInterface->RegisterWindow ||
+				!frameworkInterface->GetMainWindow ||
+				!frameworkInterface->IsAnyBlockingWindowOpened ||
+				!frameworkInterface->SetHotkeyEnabled ||
+				!frameworkInterface->IsHotkeyEnabled) {
 				return nullptr;
 			}
 
@@ -147,6 +185,48 @@ namespace SFSEMenuFramework
 				previousFree,
 				previousAllocatorUserData);
 			return Model::PanelRenderResult::Continue;
+		}
+
+		inline void __stdcall RenderWindow(
+			const Model::RenderContext* a_context,
+			void*                       a_userData) noexcept
+		{
+			if (!a_context ||
+				a_context->StructureSize < sizeof(Model::RenderContext) ||
+				a_context->InterfaceVersion != Model::INTERFACE_VERSION ||
+				!a_context->ImGuiContext ||
+				!a_context->Allocate ||
+				!a_context->Free ||
+				!a_userData) {
+				return;
+			}
+
+			static_assert(std::is_same_v<Model::ImGuiAllocateFunction, ImGuiMemAllocFunc>);
+			static_assert(std::is_same_v<Model::ImGuiFreeFunction, ImGuiMemFreeFunc>);
+
+			auto* const previousContext = ImGui::GetCurrentContext();
+			ImGuiMemAllocFunc previousAllocate{};
+			ImGuiMemFreeFunc previousFree{};
+			void* previousAllocatorUserData{};
+			ImGui::GetAllocatorFunctions(
+				&previousAllocate,
+				&previousFree,
+				&previousAllocatorUserData);
+
+			ImGui::SetAllocatorFunctions(
+				a_context->Allocate,
+				a_context->Free,
+				a_context->AllocatorUserData);
+			ImGui::SetCurrentContext(
+				static_cast<ImGuiContext*>(a_context->ImGuiContext));
+
+			static_cast<ConsumerWindow*>(a_userData)->Render();
+
+			ImGui::SetCurrentContext(previousContext);
+			ImGui::SetAllocatorFunctions(
+				previousAllocate,
+				previousFree,
+				previousAllocatorUserData);
 		}
 
 		[[nodiscard]] inline bool IsValidText(
@@ -252,5 +332,72 @@ namespace SFSEMenuFramework
 		} catch (const std::bad_alloc&) {
 			return Model::RegistrationResult::OutOfMemory;
 		}
+	}
+
+	[[nodiscard]] inline Model::WindowInterface* AddWindow(
+		RenderFunction a_renderFunction,
+		bool           a_doesWindowPauseGame = true) noexcept
+	{
+		if (!a_renderFunction) {
+			return nullptr;
+		}
+
+		const auto* frameworkInterface = Detail::RequestInterfaceV2();
+		if (!frameworkInterface) {
+			return nullptr;
+		}
+
+		auto* consumerWindow =
+			new (std::nothrow) Detail::ConsumerWindow{ a_renderFunction };
+		if (!consumerWindow) {
+			return nullptr;
+		}
+
+		const Model::WindowRegistration registration{
+			.StructureSize = sizeof(Model::WindowRegistration),
+			.InterfaceVersion = Model::INTERFACE_VERSION_2,
+			.ImGui = Detail::GetImGuiLayout(),
+			.Render = &Detail::RenderWindow,
+			.UserData = consumerWindow,
+			.BlockUserInput = static_cast<std::uint8_t>(a_doesWindowPauseGame)
+		};
+		Model::WindowInterface* window{};
+		const auto result = frameworkInterface->RegisterWindow(&registration, &window);
+		if (result != Model::RegistrationResult::Success) {
+			delete consumerWindow;
+			return nullptr;
+		}
+
+		// Successful registrations intentionally retain their tiny callback
+		// state for the process lifetime; SFSE does not hot-unload plugins.
+		return window;
+	}
+
+	[[nodiscard]] inline Model::WindowInterface* GetMainWindow() noexcept
+	{
+		const auto* frameworkInterface = Detail::RequestInterfaceV2();
+		return frameworkInterface ? frameworkInterface->GetMainWindow() : nullptr;
+	}
+
+	[[nodiscard]] inline bool IsAnyBlockingWindowOpened() noexcept
+	{
+		const auto* frameworkInterface = Detail::RequestInterfaceV2();
+		return frameworkInterface ?
+		           frameworkInterface->IsAnyBlockingWindowOpened() :
+		           false;
+	}
+
+	inline void SetHotkeyEnabled(bool a_enabled) noexcept
+	{
+		const auto* frameworkInterface = Detail::RequestInterfaceV2();
+		if (frameworkInterface) {
+			frameworkInterface->SetHotkeyEnabled(a_enabled);
+		}
+	}
+
+	[[nodiscard]] inline bool IsHotkeyEnabled() noexcept
+	{
+		const auto* frameworkInterface = Detail::RequestInterfaceV2();
+		return frameworkInterface ? frameworkInterface->IsHotkeyEnabled() : false;
 	}
 }
