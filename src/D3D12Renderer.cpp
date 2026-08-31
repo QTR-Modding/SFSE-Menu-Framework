@@ -346,11 +346,18 @@ namespace SFSEMenuFramework::D3D12Renderer
 		return InitializeLocked(GetRendererState(), a_device);
 	}
 
-	void SetPlatformInputEnabled(bool a_enabled)
+	bool SetPlatformInputEnabled(
+		bool a_enabled,
+		std::uint64_t a_earlyRawMouseGeneration)
 	{
-		Win32Platform::UpdateInputState(
-			a_enabled && rendererReady.load(std::memory_order_acquire) &&
-			Win32Platform::IsInitialized() && Win32Platform::IsHostWindowUsable());
+		const bool canEnable =
+			rendererReady.load(std::memory_order_acquire) &&
+			Win32Platform::IsInitialized() && Win32Platform::IsHostWindowUsable();
+		const bool enable = a_enabled && canEnable;
+		const bool applied = Win32Platform::UpdateInputState(
+			enable,
+			enable ? a_earlyRawMouseGeneration : 0);
+		return a_enabled ? enable && applied : applied;
 	}
 
 	bool HasRecentMainWindowFrame(std::uint64_t a_generation) noexcept

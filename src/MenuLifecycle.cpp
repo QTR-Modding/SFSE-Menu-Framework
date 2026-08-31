@@ -94,7 +94,8 @@ namespace SFSEMenuFramework::MenuLifecycle
 				D3D12Renderer::HasRecentMainWindowFrame(generation) &&
 				WindowManager::IsMainWindowOpenGeneration(generation);
 			if (!routeToMenu) {
-				D3D12Renderer::SetPlatformInputEnabled(false);
+				static_cast<void>(
+					D3D12Renderer::SetPlatformInputEnabled(false));
 				InputCapture::SetModal(false);
 				return;
 			}
@@ -108,13 +109,22 @@ namespace SFSEMenuFramework::MenuLifecycle
 				logger::critical(
 					"Early native input capture could not be armed; closing the Mod Control Panel");
 				static_cast<void>(WindowManager::SetMainWindowOpen(false));
-				D3D12Renderer::SetPlatformInputEnabled(false);
+				static_cast<void>(
+					D3D12Renderer::SetPlatformInputEnabled(false));
 				return;
 			}
 
 			static_cast<void>(
 				Win32Platform::CenterCursorForMainWindowOpen(generation));
-			D3D12Renderer::SetPlatformInputEnabled(true);
+			if (!D3D12Renderer::SetPlatformInputEnabled(true, generation)) {
+				logger::critical(
+					"Early relative mouse routing could not be armed; closing the Mod Control Panel");
+				static_cast<void>(WindowManager::SetMainWindowOpen(false));
+				static_cast<void>(
+					D3D12Renderer::SetPlatformInputEnabled(false));
+				InputCapture::SetModal(false);
+				return;
+			}
 			if (!earlyInteractionLogged.test_and_set(std::memory_order_relaxed)) {
 				logger::info(
 					"Pre-post-data-load Mod Control Panel input activated for rendered generation {}",
@@ -147,7 +157,8 @@ namespace SFSEMenuFramework::MenuLifecycle
 				static_cast<void>(Win32Platform::CenterCursorForMainWindowOpen(
 					WindowManager::GetMainWindowOpenGeneration()));
 			}
-			D3D12Renderer::SetPlatformInputEnabled(
+			const bool platformInputReady =
+				D3D12Renderer::SetPlatformInputEnabled(
 				disposition == InputDisposition::RouteToMenu);
 
 			const auto* mainWindow = WindowManager::GetMainWindow();
@@ -155,11 +166,13 @@ namespace SFSEMenuFramework::MenuLifecycle
 				mainWindow->IsOpen.load(std::memory_order_acquire) &&
 				mainWindow->BlockUserInput.load(std::memory_order_acquire);
 			if (availability == MenuOwnership::HostAvailability::Interactive &&
-				blockingWindowOpen && disposition != InputDisposition::RouteToMenu) {
+				blockingWindowOpen &&
+				(disposition != InputDisposition::RouteToMenu || !platformInputReady)) {
 				logger::critical(
 					"Blocking menu ownership could not be completed; closing the Mod Control Panel");
 				static_cast<void>(WindowManager::SetMainWindowOpen(false));
-				D3D12Renderer::SetPlatformInputEnabled(false);
+				static_cast<void>(
+					D3D12Renderer::SetPlatformInputEnabled(false));
 				MenuOwnership::ReleaseOnHostWindowThread();
 				InputCapture::SetModal(
 					MenuOwnership::GetInputDisposition() != InputDisposition::PassThrough);
@@ -170,7 +183,8 @@ namespace SFSEMenuFramework::MenuLifecycle
 				logger::critical(
 					"Menu ownership was acquired without operational native capture; closing the Mod Control Panel");
 				static_cast<void>(WindowManager::SetMainWindowOpen(false));
-				D3D12Renderer::SetPlatformInputEnabled(false);
+				static_cast<void>(
+					D3D12Renderer::SetPlatformInputEnabled(false));
 				MenuOwnership::ReleaseOnHostWindowThread();
 			}
 		}

@@ -20,9 +20,10 @@ Bindings, toggle modes, pause, and background blur are configurable in the
 built-in Settings page and `Data/SFSE/Plugins/SFSEMenuFramework.ini`.
 The panel can open during startup as soon as Starfield's window and renderer are
 ready. As soon as the open panel has produced its first visible frame, its ImGui
-software cursor, mouse, keyboard, gamepad, and bounded native-input routing are
-active even before SFSE `kPostDataLoad`. Starfield cursor, control-layer, pause,
-and blur ownership activate after `kPostDataLoad`.
+software cursor, relative mouse movement, mouse buttons and wheel, keyboard,
+gamepad, and bounded native-input routing are active even before SFSE
+`kPostDataLoad`. Starfield cursor, control-layer, pause, and blur ownership
+activate after `kPostDataLoad`.
 
 ## C++ consumer API
 
@@ -84,7 +85,9 @@ xmake project -k vsxmake
 
 SFSE Menu Framework is licensed under [GPL-3.0-only](COPYING) with the [Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS). Dear ImGui remains available under its [MIT license](extern/imgui/LICENSE.txt).
 
-This project is a Starfield port of [SKSE Menu Framework 3 at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, software-cursor and cursor-centering behavior, native modal-input routing, toggle and close behavior, and menu-ownership semantics are directly adapted under GPL-3.0.
+This project is a Starfield port of [SKSE Menu Framework 3 at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, software-cursor and cursor-centering behavior, preserve-PrintScreen modal policy, toggle and close behavior, and blocking-window semantics are directly adapted under GPL-3.0.
+
+Starfield's pre-`kPostDataLoad` relative-mouse bridge is an independent Windows Raw Input implementation; SKSE Menu Framework has no equivalent relative-motion path.
 
 The verified vtable-hook installation and guarded rollback pattern is adapted from [Toggle Dialogue Camera SF at commit `8021fa9`](https://github.com/QTR-Modding/ToggleDialogueCameraSF/tree/8021fa934591aac1c71266cc4abc5cb1c24e28d7), under GPL-3.0-or-later with its Modding and GPL-3.0 Linking Exceptions.
 

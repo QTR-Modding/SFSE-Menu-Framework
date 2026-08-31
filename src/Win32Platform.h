@@ -22,7 +22,9 @@ namespace SFSEMenuFramework::Win32Platform
 	[[nodiscard]] bool             IsHostWindowUsable() noexcept;
 	[[nodiscard]] bool             CenterCursorForMainWindowOpen(
 		std::uint64_t a_generation) noexcept;
-	void                           UpdateInputState(bool a_acceptInput);
+	[[nodiscard]] bool             UpdateInputState(
+		bool a_acceptInput,
+		std::uint64_t a_earlyRawMouseGeneration = 0);
 	[[nodiscard]] bool             PrepareFrame();
 	void                           SetHostWindowCallback(HostWindowCallback a_callback) noexcept;
 	[[nodiscard]] bool             PostHostWindowCallback() noexcept;

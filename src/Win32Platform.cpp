@@ -39,6 +39,14 @@ namespace SFSEMenuFramework::Win32Platform
 			static_cast<UINT_PTR>(0x53464D4600000000ULL);
 		constexpr UINT_PTR keyboardHoldTimerTagMask =
 			static_cast<UINT_PTR>(0xFFFFFFFF00000000ULL);
+		constexpr std::size_t rawMouseMessageCapacity = 13;
+
+		enum class PointerRoute : std::uint8_t
+		{
+			Disabled,
+			EarlyRaw,
+			Legacy
+		};
 
 		struct WindowSearch final
 		{
@@ -91,6 +99,29 @@ namespace SFSEMenuFramework::Win32Platform
 			int           TrackedArea{ 0 };
 		};
 
+		struct RawMouseState final
+		{
+			HWND          Window{ nullptr };
+			std::uint64_t Generation{ 0 };
+			std::int64_t  X{ 0 };
+			std::int64_t  Y{ 0 };
+			std::uint32_t ButtonsDown{ 0 };
+			bool          Initialized{ false };
+		};
+
+		enum class RawMouseReadStatus : std::uint8_t
+		{
+			NotMouse,
+			Ready,
+			Failed
+		};
+
+		struct RawMouseReadResult final
+		{
+			RawMouseReadStatus Status{ RawMouseReadStatus::NotMouse };
+			RAWMOUSE           Mouse{};
+		};
+
 		struct KeyboardTransition final
 		{
 			std::uint32_t DIK{ 0 };
@@ -121,6 +152,9 @@ namespace SFSEMenuFramework::Win32Platform
 		std::atomic<std::uint64_t>      inputStateGeneration{ 1 };
 		std::atomic<HWND>               centeredCursorWindow{ nullptr };
 		std::atomic<std::uint64_t>      centeredCursorGeneration{ 0 };
+		std::atomic<PointerRoute>       pointerRoute{ PointerRoute::Disabled };
+		std::atomic<std::uint64_t>      earlyRawMouseGeneration{ 0 };
+		std::atomic<std::uint64_t>      rawMouseFaultGeneration{ 0 };
 		std::atomic_flag                mouseMessageLogged{};
 		std::atomic_flag                keyboardMessageLogged{};
 		std::atomic_flag                characterMessageLogged{};
@@ -134,6 +168,10 @@ namespace SFSEMenuFramework::Win32Platform
 		std::atomic_flag                subclassInstallFailureLogged{};
 		std::atomic_flag                subclassVerificationFailureLogged{};
 		std::atomic_flag                rawKeyboardReadFailureLogged{};
+		std::atomic_flag                rawMouseReadFailureLogged{};
+		std::atomic_flag                rawMouseMovementLogged{};
+		std::atomic_flag                rawMouseAbsoluteLogged{};
+		std::atomic_flag                rawMouseHandoffFailureLogged{};
 		std::atomic_flag                keyboardHoldTimerFailureLogged{};
 		std::atomic<std::uint32_t>      keyboardHoldTimerGeneration{ 0 };
 
@@ -153,6 +191,17 @@ namespace SFSEMenuFramework::Win32Platform
 		{
 			static auto* state = new WindowThreadMouseState();
 			return *state;
+		}
+
+		[[nodiscard]] RawMouseState& GetRawMouseState()
+		{
+			static auto* state = new RawMouseState();
+			return *state;
+		}
+
+		void ResetRawMouseState() noexcept
+		{
+			GetRawMouseState() = {};
 		}
 
 		void ResetCenteredCursorState() noexcept
@@ -360,6 +409,55 @@ namespace SFSEMenuFramework::Win32Platform
 				.DIK = dik,
 				.EngineEventID = engineEventID.value_or(-1),
 				.Down = (keyboard.Flags & RI_KEY_BREAK) == 0
+			};
+		}
+
+		[[nodiscard]] RawMouseReadResult ReadRawMouse(
+			LPARAM a_lParam) noexcept
+		{
+			RAWINPUTHEADER header{};
+			UINT headerSize = sizeof(header);
+			const auto headerBytes = ::GetRawInputData(
+				reinterpret_cast<HRAWINPUT>(a_lParam),
+				RID_HEADER,
+				&header,
+				&headerSize,
+				sizeof(RAWINPUTHEADER));
+			if (headerBytes == static_cast<UINT>(-1) ||
+				headerBytes != sizeof(header)) {
+				if (!rawMouseReadFailureLogged.test_and_set(
+						std::memory_order_relaxed)) {
+					logger::warn(
+						"Starfield RAWINPUT mouse header could not be read");
+				}
+				return { .Status = RawMouseReadStatus::Failed };
+			}
+			if (header.dwType != RIM_TYPEMOUSE) {
+				return { .Status = RawMouseReadStatus::NotMouse };
+			}
+
+			RAWINPUT input{};
+			UINT size = sizeof(input);
+			const auto copied = ::GetRawInputData(
+				reinterpret_cast<HRAWINPUT>(a_lParam),
+				RID_INPUT,
+				&input,
+				&size,
+				sizeof(RAWINPUTHEADER));
+			if (copied == static_cast<UINT>(-1) ||
+				copied < sizeof(RAWINPUTHEADER) + sizeof(RAWMOUSE) ||
+				input.header.dwType != RIM_TYPEMOUSE) {
+				if (!rawMouseReadFailureLogged.test_and_set(
+						std::memory_order_relaxed)) {
+					logger::warn(
+						"Starfield raw mouse packet could not be read");
+				}
+				return { .Status = RawMouseReadStatus::Failed };
+			}
+
+			return {
+				.Status = RawMouseReadStatus::Ready,
+				.Mouse = input.data.mouse
 			};
 		}
 
@@ -874,6 +972,48 @@ namespace SFSEMenuFramework::Win32Platform
 			return true;
 		}
 
+		[[nodiscard]] bool EnqueueRawMouseBatch(
+			const std::array<QueuedWindowMessage, rawMouseMessageCapacity>& a_messages,
+			std::size_t a_count,
+			std::uint64_t a_generation)
+		{
+			if (a_count == 0 || a_count > a_messages.size()) {
+				return a_count == 0;
+			}
+
+			auto& queue = GetInputQueue();
+			std::scoped_lock lock{ queue.Mutex };
+			if (!acceptInput.load(std::memory_order_acquire) ||
+				pointerRoute.load(std::memory_order_acquire) !=
+					PointerRoute::EarlyRaw ||
+				earlyRawMouseGeneration.load(std::memory_order_acquire) !=
+					a_generation) {
+				return false;
+			}
+
+			auto stagedMessages = queue.Messages;
+			auto stagedCount = queue.Count;
+			std::uint64_t coalesced{};
+			for (std::size_t index = 0; index < a_count; ++index) {
+				if (stagedCount != 0 &&
+					TryCoalesce(stagedMessages[stagedCount - 1], a_messages[index])) {
+					++coalesced;
+					continue;
+				}
+				if (stagedCount == stagedMessages.size()) {
+					queue.DroppedSinceDrain += queue.Count + a_count;
+					++queue.OverflowResetsSinceDrain;
+					InvalidateQueuedInput(queue);
+					return false;
+				}
+				stagedMessages[stagedCount++] = a_messages[index];
+			}
+			queue.Messages = stagedMessages;
+			queue.Count = stagedCount;
+			queue.CoalescedSinceDrain += coalesced;
+			return true;
+		}
+
 		[[nodiscard]] DrainedInput DrainQueuedInput()
 		{
 			DrainedInput result;
@@ -1045,6 +1185,357 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 		}
 
+		[[nodiscard]] WORD RawMouseKeyState(
+			std::uint32_t a_buttonsDown) noexcept
+		{
+			WORD result{};
+			if ((a_buttonsDown & (1U << 0)) != 0) {
+				result |= MK_LBUTTON;
+			}
+			if ((a_buttonsDown & (1U << 1)) != 0) {
+				result |= MK_RBUTTON;
+			}
+			if ((a_buttonsDown & (1U << 2)) != 0) {
+				result |= MK_MBUTTON;
+			}
+			if ((a_buttonsDown & (1U << 3)) != 0) {
+				result |= MK_XBUTTON1;
+			}
+			if ((a_buttonsDown & (1U << 4)) != 0) {
+				result |= MK_XBUTTON2;
+			}
+			return result;
+		}
+
+		// Starfield-specific Windows Raw Input bridge. SKSE Menu Framework 3 at
+		// 928e01ab459822a8d233ab99f0419ea1de23c775 has no relative-motion path;
+		// its cursor position is supplied by the stock Dear ImGui Win32 backend.
+
+		[[nodiscard]] LPARAM RawMousePositionParameter(
+			const RawMouseState& a_state) noexcept
+		{
+			return MAKELPARAM(
+				static_cast<WORD>(a_state.X),
+				static_cast<WORD>(a_state.Y));
+		}
+
+		void AppendRawMouseMessage(
+			std::array<QueuedWindowMessage, rawMouseMessageCapacity>& a_messages,
+			std::size_t& a_count,
+			HWND a_window,
+			UINT a_message,
+			WPARAM a_wParam,
+			LPARAM a_lParam) noexcept
+		{
+			if (a_count >= a_messages.size()) {
+				return;
+			}
+			a_messages[a_count++] = {
+				.Window = a_window,
+				.Message = a_message,
+				.WParam = a_wParam,
+				.LParam = a_lParam
+			};
+		}
+
+		[[nodiscard]] bool UpdateRawMousePosition(
+			HWND a_window,
+			const RAWMOUSE& a_mouse,
+			RawMouseState& a_state,
+			bool& a_positionChanged) noexcept
+		{
+			RECT clientArea{};
+			if (!::GetClientRect(a_window, &clientArea) ||
+				clientArea.right <= clientArea.left ||
+				clientArea.bottom <= clientArea.top ||
+				clientArea.left < 0 || clientArea.top < 0 ||
+				clientArea.right - 1 > (std::numeric_limits<SHORT>::max)() ||
+				clientArea.bottom - 1 > (std::numeric_limits<SHORT>::max)()) {
+				return false;
+			}
+
+			const auto previousX = a_state.X;
+			const auto previousY = a_state.Y;
+			if ((a_mouse.usFlags & MOUSE_MOVE_ABSOLUTE) != 0) {
+				const bool virtualDesktop =
+					(a_mouse.usFlags & MOUSE_VIRTUAL_DESKTOP) != 0;
+				const int originX = virtualDesktop ?
+					::GetSystemMetrics(SM_XVIRTUALSCREEN) : 0;
+				const int originY = virtualDesktop ?
+					::GetSystemMetrics(SM_YVIRTUALSCREEN) : 0;
+				const int width = ::GetSystemMetrics(
+					virtualDesktop ? SM_CXVIRTUALSCREEN : SM_CXSCREEN);
+				const int height = ::GetSystemMetrics(
+					virtualDesktop ? SM_CYVIRTUALSCREEN : SM_CYSCREEN);
+				if (width <= 0 || height <= 0) {
+					return false;
+				}
+
+				const auto normalizedX = static_cast<int>(std::clamp<std::int64_t>(
+					a_mouse.lLastX,
+					0,
+					65535));
+				const auto normalizedY = static_cast<int>(std::clamp<std::int64_t>(
+					a_mouse.lLastY,
+					0,
+					65535));
+				POINT point{
+					originX + ::MulDiv(normalizedX, width - 1, 65535),
+					originY + ::MulDiv(normalizedY, height - 1, 65535)
+				};
+				if (!::ScreenToClient(a_window, &point)) {
+					return false;
+				}
+				a_state.X = point.x;
+				a_state.Y = point.y;
+				if (!rawMouseAbsoluteLogged.test_and_set(
+						std::memory_order_relaxed)) {
+					logger::info(
+						"Early raw mouse route mapped absolute device coordinates");
+				}
+			} else {
+				a_state.X += a_mouse.lLastX;
+				a_state.Y += a_mouse.lLastY;
+			}
+
+			a_state.X = std::clamp<std::int64_t>(
+				a_state.X,
+				clientArea.left,
+				clientArea.right - 1);
+			a_state.Y = std::clamp<std::int64_t>(
+				a_state.Y,
+				clientArea.top,
+				clientArea.bottom - 1);
+			a_positionChanged =
+				a_state.X != previousX || a_state.Y != previousY;
+			return true;
+		}
+
+		void AppendRawButtonTransition(
+			std::array<QueuedWindowMessage, rawMouseMessageCapacity>& a_messages,
+			std::size_t& a_count,
+			HWND a_window,
+			RawMouseState& a_state,
+			USHORT a_rawFlags,
+			USHORT a_downFlag,
+			USHORT a_upFlag,
+			std::uint32_t a_buttonMask,
+			UINT a_downMessage,
+			UINT a_upMessage,
+			WORD a_xButton = 0) noexcept
+		{
+			const auto position = RawMousePositionParameter(a_state);
+			if ((a_rawFlags & a_downFlag) != 0) {
+				a_state.ButtonsDown |= a_buttonMask;
+				const auto keys = RawMouseKeyState(a_state.ButtonsDown);
+				AppendRawMouseMessage(
+					a_messages,
+					a_count,
+					a_window,
+					a_downMessage,
+					a_xButton != 0 ? MAKEWPARAM(keys, a_xButton) : keys,
+					position);
+			}
+			if ((a_rawFlags & a_upFlag) != 0) {
+				a_state.ButtonsDown &= ~a_buttonMask;
+				const auto keys = RawMouseKeyState(a_state.ButtonsDown);
+				AppendRawMouseMessage(
+					a_messages,
+					a_count,
+					a_window,
+					a_upMessage,
+					a_xButton != 0 ? MAKEWPARAM(keys, a_xButton) : keys,
+					position);
+			}
+		}
+
+		[[nodiscard]] bool ProcessEarlyRawMouse(
+			HWND a_window,
+			const RAWMOUSE& a_mouse) noexcept
+		{
+			auto& state = GetRawMouseState();
+			const auto generation =
+				earlyRawMouseGeneration.load(std::memory_order_acquire);
+			if (!state.Initialized || state.Window != a_window || generation == 0 ||
+				state.Generation != generation ||
+				!WindowManager::IsMainWindowOpenGeneration(generation)) {
+				return false;
+			}
+
+			bool positionChanged{};
+			if (!UpdateRawMousePosition(
+					a_window,
+					a_mouse,
+					state,
+					positionChanged)) {
+				return false;
+			}
+
+			std::array<QueuedWindowMessage, rawMouseMessageCapacity> messages{};
+			std::size_t count{};
+			const bool hasButtonsOrWheel = a_mouse.usButtonFlags != 0;
+			if (positionChanged || hasButtonsOrWheel) {
+				AppendRawMouseMessage(
+					messages,
+					count,
+					a_window,
+					WM_MOUSEMOVE,
+					RawMouseKeyState(state.ButtonsDown),
+					RawMousePositionParameter(state));
+			}
+
+			AppendRawButtonTransition(
+				messages, count, a_window, state, a_mouse.usButtonFlags,
+				RI_MOUSE_LEFT_BUTTON_DOWN, RI_MOUSE_LEFT_BUTTON_UP, 1U << 0,
+				WM_LBUTTONDOWN, WM_LBUTTONUP);
+			AppendRawButtonTransition(
+				messages, count, a_window, state, a_mouse.usButtonFlags,
+				RI_MOUSE_RIGHT_BUTTON_DOWN, RI_MOUSE_RIGHT_BUTTON_UP, 1U << 1,
+				WM_RBUTTONDOWN, WM_RBUTTONUP);
+			AppendRawButtonTransition(
+				messages, count, a_window, state, a_mouse.usButtonFlags,
+				RI_MOUSE_MIDDLE_BUTTON_DOWN, RI_MOUSE_MIDDLE_BUTTON_UP, 1U << 2,
+				WM_MBUTTONDOWN, WM_MBUTTONUP);
+			AppendRawButtonTransition(
+				messages, count, a_window, state, a_mouse.usButtonFlags,
+				RI_MOUSE_BUTTON_4_DOWN, RI_MOUSE_BUTTON_4_UP, 1U << 3,
+				WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1);
+			AppendRawButtonTransition(
+				messages, count, a_window, state, a_mouse.usButtonFlags,
+				RI_MOUSE_BUTTON_5_DOWN, RI_MOUSE_BUTTON_5_UP, 1U << 4,
+				WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON2);
+
+			const auto keys = RawMouseKeyState(state.ButtonsDown);
+			if ((a_mouse.usButtonFlags & RI_MOUSE_WHEEL) != 0) {
+				AppendRawMouseMessage(
+					messages,
+					count,
+					a_window,
+					WM_MOUSEWHEEL,
+					MAKEWPARAM(keys, a_mouse.usButtonData),
+					RawMousePositionParameter(state));
+			}
+			if ((a_mouse.usButtonFlags & RI_MOUSE_HWHEEL) != 0) {
+				AppendRawMouseMessage(
+					messages,
+					count,
+					a_window,
+					WM_MOUSEHWHEEL,
+					MAKEWPARAM(keys, a_mouse.usButtonData),
+					RawMousePositionParameter(state));
+			}
+
+			if (count == 0) {
+				return true;
+			}
+			for (std::size_t index = 0; index < count; ++index) {
+				UpdateWindowThreadMouseState(
+					a_window,
+					messages[index].Message,
+					messages[index].WParam);
+			}
+			if (!EnqueueRawMouseBatch(messages, count, generation)) {
+				state.ButtonsDown = 0;
+				ResetWindowThreadMouseState(a_window);
+				return false;
+			}
+			if (positionChanged &&
+				!rawMouseMovementLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::info(
+					"Early raw mouse route queued its first relative movement");
+			}
+			return true;
+		}
+
+		[[nodiscard]] bool InitializeEarlyRawMouse(
+			HWND a_window,
+			std::uint64_t a_generation,
+			QueuedWindowMessage& a_seedMessage) noexcept
+		{
+			if (!a_window || a_generation == 0 ||
+				!WindowManager::IsMainWindowOpenGeneration(a_generation)) {
+				return false;
+			}
+
+			RECT clientArea{};
+			if (!::GetClientRect(a_window, &clientArea) ||
+				clientArea.right <= clientArea.left ||
+				clientArea.bottom <= clientArea.top ||
+				clientArea.left < 0 || clientArea.top < 0 ||
+				clientArea.right - 1 > (std::numeric_limits<SHORT>::max)() ||
+				clientArea.bottom - 1 > (std::numeric_limits<SHORT>::max)()) {
+				return false;
+			}
+
+			ResetWindowThreadMouseState(a_window);
+			auto& state = GetRawMouseState();
+			state = {
+				.Window = a_window,
+				.Generation = a_generation,
+				.X = clientArea.left +
+					(clientArea.right - clientArea.left) / 2,
+				.Y = clientArea.top +
+					(clientArea.bottom - clientArea.top) / 2,
+				.ButtonsDown = 0,
+				.Initialized = true
+			};
+			a_seedMessage = {
+				.Window = a_window,
+				.Message = WM_MOUSEMOVE,
+				.WParam = 0,
+				.LParam = RawMousePositionParameter(state)
+			};
+			return true;
+		}
+
+		[[nodiscard]] bool PlaceLegacyCursorForRawHandoff(
+			HWND a_window,
+			POINT& a_clientPosition) noexcept
+		{
+			RECT clientArea{};
+			if (!a_window || !::GetClientRect(a_window, &clientArea) ||
+				clientArea.right <= clientArea.left ||
+				clientArea.bottom <= clientArea.top) {
+				return false;
+			}
+
+			const auto& state = GetRawMouseState();
+			if (state.Initialized && state.Window == a_window) {
+				a_clientPosition.x = static_cast<LONG>(std::clamp<std::int64_t>(
+					state.X,
+					clientArea.left,
+					clientArea.right - 1));
+				a_clientPosition.y = static_cast<LONG>(std::clamp<std::int64_t>(
+					state.Y,
+					clientArea.top,
+					clientArea.bottom - 1));
+			} else {
+				a_clientPosition = {
+					clientArea.left +
+						(clientArea.right - clientArea.left) / 2,
+					clientArea.top +
+						(clientArea.bottom - clientArea.top) / 2
+				};
+			}
+
+			auto screenPosition = a_clientPosition;
+			if (::ClientToScreen(a_window, &screenPosition) &&
+				::SetCursorPos(screenPosition.x, screenPosition.y)) {
+				logger::info(
+					"Early raw mouse position handed off to Starfield cursor ownership at {},{}",
+					a_clientPosition.x,
+					a_clientPosition.y);
+				return true;
+			}
+
+			if (!rawMouseHandoffFailureLogged.test_and_set(
+					std::memory_order_relaxed)) {
+				logger::critical(
+					"Early raw mouse position could not be handed off to the Starfield cursor");
+			}
+			return false;
+		}
+
 		void SendMouseReleaseMessages(HWND a_window)
 		{
 			ImGui_ImplWin32_WndProcHandler(a_window, WM_LBUTTONUP, 0, 0);
@@ -1139,12 +1630,53 @@ namespace SFSEMenuFramework::Win32Platform
 					static_cast<void>(
 						ProcessKeyboardTransition(a_window, *transition));
 				}
+				const bool acceptingRawInput =
+					acceptInput.load(std::memory_order_acquire);
+				const bool currentInputLease =
+					acceptingRawInput && HasCurrentInputLease();
+				if (acceptingRawInput && !currentInputLease) {
+					static_cast<void>(UpdateInputState(false));
+					static_cast<void>(PostHostWindowCallback());
+					LogInputMessageOnce(a_message);
+					return ::DefSubclassProc(
+						a_window,
+						a_message,
+						a_wParam,
+						a_lParam);
+				}
+				const bool earlyRawInput =
+					pointerRoute.load(std::memory_order_acquire) ==
+						PointerRoute::EarlyRaw &&
+					currentInputLease;
+				if (earlyRawInput) {
+					const auto generation =
+						earlyRawMouseGeneration.load(std::memory_order_acquire);
+					const auto mouse = ReadRawMouse(a_lParam);
+					const bool failed =
+						mouse.Status == RawMouseReadStatus::Failed ||
+						(mouse.Status == RawMouseReadStatus::Ready &&
+						 !ProcessEarlyRawMouse(a_window, mouse.Mouse));
+					if (failed) {
+						if (generation != 0) {
+							rawMouseFaultGeneration.store(
+								generation,
+								std::memory_order_release);
+						}
+						logger::critical(
+							"Early raw mouse input failed for generation {}; closing the Mod Control Panel",
+							generation);
+						static_cast<void>(UpdateInputState(false));
+						static_cast<void>(WindowManager::SetMainWindowOpen(false));
+						InputCapture::SetModal(false);
+						static_cast<void>(PostHostWindowCallback());
+					}
+				}
 				LogInputMessageOnce(a_message);
 				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
 			}
 
 			if (a_message == WM_NCDESTROY) {
-				UpdateInputState(false);
+				static_cast<void>(UpdateInputState(false));
 				ResetKeyboardToggleState();
 				ResetCenteredCursorState();
 				hostWindowTearingDown.store(true, std::memory_order_release);
@@ -1163,6 +1695,7 @@ namespace SFSEMenuFramework::Win32Platform
 
 			if (a_message == WM_CAPTURECHANGED || a_message == WM_CANCELMODE) {
 				ResetWindowThreadMouseState(a_window);
+				GetRawMouseState().ButtonsDown = 0;
 				RequestInputReset();
 				return ::DefSubclassProc(a_window, a_message, a_wParam, a_lParam);
 			}
@@ -1173,7 +1706,7 @@ namespace SFSEMenuFramework::Win32Platform
 					(a_message == WM_ACTIVATEAPP && a_wParam == FALSE) ||
 					(a_message == WM_ACTIVATE && LOWORD(a_wParam) == WA_INACTIVE);
 				if (losingFocus) {
-					UpdateInputState(false);
+					static_cast<void>(UpdateInputState(false));
 					ResetKeyboardToggleState();
 				}
 				if (a_message == WM_SETFOCUS || a_message == WM_KILLFOCUS) {
@@ -1211,7 +1744,7 @@ namespace SFSEMenuFramework::Win32Platform
 			const bool modalInput =
 				acceptInput.load(std::memory_order_acquire) && HasCurrentInputLease();
 			if (acceptInput.load(std::memory_order_relaxed) && !modalInput) {
-				UpdateInputState(false);
+				static_cast<void>(UpdateInputState(false));
 				static_cast<void>(PostHostWindowCallback());
 			}
 
@@ -1221,15 +1754,22 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 
 			LogInputMessageOnce(a_message);
-			if (IsLegacyMouseMessage(a_message)) {
+			const bool suppressDuplicateLegacyMouse =
+				IsLegacyMouseMessage(a_message) &&
+				pointerRoute.load(std::memory_order_acquire) ==
+					PointerRoute::EarlyRaw;
+			if (IsLegacyMouseMessage(a_message) &&
+				!suppressDuplicateLegacyMouse) {
 				UpdateWindowThreadMouseState(a_window, a_message, a_wParam);
 			}
-			static_cast<void>(EnqueueWindowMessage(
-				a_window,
-				a_message,
-				a_wParam,
-				a_lParam,
-				true));
+			if (!suppressDuplicateLegacyMouse) {
+				static_cast<void>(EnqueueWindowMessage(
+					a_window,
+					a_message,
+					a_wParam,
+					a_lParam,
+					true));
+			}
 
 			if (ShouldConsumeModalMessage(a_message, a_wParam, a_lParam)) {
 				return 0;
@@ -1257,7 +1797,7 @@ namespace SFSEMenuFramework::Win32Platform
 				logger::critical(
 					"Win32 window subclass state no longer matches its verified HWND/thread");
 			}
-			UpdateInputState(false);
+			static_cast<void>(UpdateInputState(false));
 			ResetKeyboardToggleState();
 			ResetCenteredCursorState();
 			hostWindowTearingDown.store(true, std::memory_order_release);
@@ -1321,6 +1861,11 @@ namespace SFSEMenuFramework::Win32Platform
 		hostCallbackPending.store(false, std::memory_order_release);
 		ResetKeyboardToggleState();
 		ResetCenteredCursorState();
+		ResetRawMouseState();
+		acceptInput.store(false, std::memory_order_release);
+		pointerRoute.store(PointerRoute::Disabled, std::memory_order_release);
+		earlyRawMouseGeneration.store(0, std::memory_order_release);
+		rawMouseFaultGeneration.store(0, std::memory_order_release);
 		subclassActive.store(true, std::memory_order_release);
 		RequestInputReset();
 		logger::info(
@@ -1438,36 +1983,157 @@ namespace SFSEMenuFramework::Win32Platform
 		return true;
 	}
 
-	void UpdateInputState(bool a_acceptInput)
+	bool UpdateInputState(
+		bool a_acceptInput,
+		std::uint64_t a_earlyRawMouseGeneration)
 	{
 		const auto window = initializedHostWindow.load(std::memory_order_acquire);
-		const bool shouldAcceptInput =
-			a_acceptInput && subclassActive.load(std::memory_order_acquire) &&
-			window && ::GetForegroundWindow() == window;
-		if (!shouldAcceptInput) {
+		const bool onHostWindowThread =
+			window && IsCurrentThreadHostWindowThread();
+
+		const auto disableInput = [&]() {
 			// A focus or lease transition may let Starfield move the OS pointer
 			// without changing the menu's open generation. Recenter when that
 			// generation becomes interactive again.
 			ResetCenteredCursorState();
+			{
+				auto& queue = GetInputQueue();
+				std::scoped_lock lock{ queue.Mutex };
+				const bool changed =
+					acceptInput.load(std::memory_order_relaxed) ||
+					pointerRoute.load(std::memory_order_relaxed) !=
+						PointerRoute::Disabled ||
+					earlyRawMouseGeneration.load(std::memory_order_relaxed) != 0;
+				acceptInput.store(false, std::memory_order_release);
+				pointerRoute.store(
+					PointerRoute::Disabled,
+					std::memory_order_release);
+				earlyRawMouseGeneration.store(0, std::memory_order_release);
+				if (changed) {
+					InvalidateQueuedInput(queue);
+				}
+			}
+			if (onHostWindowThread) {
+				ResetWindowThreadMouseState(window);
+				ResetRawMouseState();
+			}
+		};
+
+		const bool shouldAcceptInput =
+			a_acceptInput && subclassActive.load(std::memory_order_acquire) &&
+			window && ::GetForegroundWindow() == window;
+		if (!shouldAcceptInput) {
+			disableInput();
+			return true;
+		}
+		if (!onHostWindowThread) {
+			disableInput();
+			return false;
 		}
 
-		bool changed{};
-		{
-			auto& queue = GetInputQueue();
-			std::scoped_lock lock{ queue.Mutex };
-			const bool previous =
-				acceptInput.load(std::memory_order_relaxed);
-			if (previous != shouldAcceptInput) {
-				acceptInput.store(shouldAcceptInput, std::memory_order_release);
-				InvalidateQueuedInput(queue);
-				changed = true;
+		const auto desiredRoute = a_earlyRawMouseGeneration != 0 ?
+			PointerRoute::EarlyRaw :
+			PointerRoute::Legacy;
+		const auto previousRoute =
+			pointerRoute.load(std::memory_order_acquire);
+		const auto previousGeneration =
+			earlyRawMouseGeneration.load(std::memory_order_acquire);
+		const bool previouslyAccepted =
+			acceptInput.load(std::memory_order_acquire);
+		if (previouslyAccepted && previousRoute == desiredRoute &&
+			previousGeneration == a_earlyRawMouseGeneration) {
+			if (desiredRoute == PointerRoute::Legacy) {
+				return true;
+			}
+			const auto& state = GetRawMouseState();
+			if (state.Initialized && state.Window == window &&
+				state.Generation == a_earlyRawMouseGeneration &&
+				rawMouseFaultGeneration.load(std::memory_order_acquire) !=
+					a_earlyRawMouseGeneration) {
+				return true;
 			}
 		}
 
-		if ((changed || !shouldAcceptInput) && window &&
-			IsCurrentThreadHostWindowThread()) {
-			ResetWindowThreadMouseState(window);
+		if (desiredRoute == PointerRoute::EarlyRaw) {
+			if (rawMouseFaultGeneration.load(std::memory_order_acquire) ==
+					a_earlyRawMouseGeneration ||
+				!HasCurrentInputLease() ||
+				!WindowManager::IsMainWindowOpenGeneration(
+					a_earlyRawMouseGeneration)) {
+				disableInput();
+				return false;
+			}
+
+			QueuedWindowMessage seedMessage{};
+			if (!InitializeEarlyRawMouse(
+					window,
+					a_earlyRawMouseGeneration,
+					seedMessage)) {
+				disableInput();
+				return false;
+			}
+			UpdateWindowThreadMouseState(
+				window,
+				seedMessage.Message,
+				seedMessage.WParam);
+
+			if (!subclassActive.load(std::memory_order_acquire) ||
+				::GetForegroundWindow() != window ||
+				!HasCurrentInputLease() ||
+				!WindowManager::IsMainWindowOpenGeneration(
+					a_earlyRawMouseGeneration)) {
+				disableInput();
+				return false;
+			}
+
+			auto& queue = GetInputQueue();
+			{
+				std::scoped_lock lock{ queue.Mutex };
+				acceptInput.store(false, std::memory_order_release);
+				pointerRoute.store(
+					PointerRoute::EarlyRaw,
+					std::memory_order_release);
+				earlyRawMouseGeneration.store(
+					a_earlyRawMouseGeneration,
+					std::memory_order_release);
+				InvalidateQueuedInput(queue);
+				queue.Messages[queue.Count++] = seedMessage;
+				acceptInput.store(true, std::memory_order_release);
+			}
+			return true;
 		}
+
+		const bool handingOffEarlyRaw =
+			previouslyAccepted && previousRoute == PointerRoute::EarlyRaw;
+		if (handingOffEarlyRaw) {
+			POINT clientPosition{};
+			if (!PlaceLegacyCursorForRawHandoff(window, clientPosition)) {
+				disableInput();
+				return false;
+			}
+		}
+		ResetWindowThreadMouseState(window);
+		ResetRawMouseState();
+		if (!subclassActive.load(std::memory_order_acquire) ||
+			::GetForegroundWindow() != window) {
+			disableInput();
+			return false;
+		}
+
+		{
+			auto& queue = GetInputQueue();
+			std::scoped_lock lock{ queue.Mutex };
+			acceptInput.store(false, std::memory_order_release);
+			pointerRoute.store(PointerRoute::Legacy, std::memory_order_release);
+			earlyRawMouseGeneration.store(0, std::memory_order_release);
+			InvalidateQueuedInput(queue);
+			acceptInput.store(true, std::memory_order_release);
+		}
+		if (handingOffEarlyRaw) {
+			logger::info(
+				"Early raw mouse route committed its Starfield legacy cursor handoff");
+		}
+		return true;
 	}
 
 	bool PrepareFrame()
@@ -1509,7 +2175,7 @@ namespace SFSEMenuFramework::Win32Platform
 
 		if (acceptInput.load(std::memory_order_acquire) &&
 			::GetForegroundWindow() != window) {
-			UpdateInputState(false);
+			static_cast<void>(UpdateInputState(false));
 			static_cast<void>(PostHostWindowCallback());
 		}
 
@@ -1550,7 +2216,7 @@ namespace SFSEMenuFramework::Win32Platform
 		}
 
 		if (acceptingInput && ::GetForegroundWindow() != window) {
-			UpdateInputState(false);
+			static_cast<void>(UpdateInputState(false));
 			static_cast<void>(PostHostWindowCallback());
 			acceptingInput = false;
 			ResetBackendInput(window, false);

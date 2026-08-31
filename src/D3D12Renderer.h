@@ -35,7 +35,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 	};
 
 	[[nodiscard]] bool Initialize(ID3D12Device* a_device);
-	void               SetPlatformInputEnabled(bool a_enabled);
+	[[nodiscard]] bool SetPlatformInputEnabled(
+		bool a_enabled,
+		std::uint64_t a_earlyRawMouseGeneration = 0);
 	[[nodiscard]] bool HasRecentMainWindowFrame(std::uint64_t a_generation) noexcept;
 
 	[[nodiscard]] RenderResult Render(
