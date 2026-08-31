@@ -72,6 +72,7 @@ namespace SFSEMenuFramework
 					sizeof(information) ||
 				information.State != MEM_COMMIT ||
 				information.Type != MEM_IMAGE ||
+				(information.Protect & PAGE_GUARD) != 0 ||
 				!information.AllocationBase) {
 				return false;
 			}

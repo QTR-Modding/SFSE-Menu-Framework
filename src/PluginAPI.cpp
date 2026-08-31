@@ -1,3 +1,4 @@
+#include "EventManager.h"
 #include "PanelRegistry.h"
 #include "WindowManager.h"
 
@@ -39,6 +40,20 @@ namespace
 		return SFSEMenuFramework::WindowManager::IsHotkeyEnabled();
 	}
 
+	[[nodiscard]] SFSEMenuFramework::Model::RegistrationResult __stdcall
+	RegisterEvent(
+		const SFSEMenuFramework::Model::EventRegistration* a_registration,
+		SFSEMenuFramework::Model::EventHandle*              a_handle) noexcept
+	{
+		return SFSEMenuFramework::EventManager::Register(a_registration, a_handle);
+	}
+
+	void __stdcall UnregisterEvent(
+		SFSEMenuFramework::Model::EventHandle a_handle) noexcept
+	{
+		SFSEMenuFramework::EventManager::Unregister(a_handle);
+	}
+
 	const SFSEMenuFramework::Model::Interface interfaceV1{
 		.StructureSize = sizeof(SFSEMenuFramework::Model::Interface),
 		.Version = SFSEMenuFramework::Model::INTERFACE_VERSION,
@@ -55,6 +70,19 @@ namespace
 		.SetHotkeyEnabled = &SetHotkeyEnabled,
 		.IsHotkeyEnabled = &IsHotkeyEnabled
 	};
+
+	const SFSEMenuFramework::Model::InterfaceV3 interfaceV3{
+		.StructureSize = sizeof(SFSEMenuFramework::Model::InterfaceV3),
+		.Version = SFSEMenuFramework::Model::INTERFACE_VERSION_3,
+		.RegisterPanel = &RegisterPanel,
+		.RegisterWindow = &RegisterWindow,
+		.GetMainWindow = &GetMainWindow,
+		.IsAnyBlockingWindowOpened = &IsAnyBlockingWindowOpened,
+		.SetHotkeyEnabled = &SetHotkeyEnabled,
+		.IsHotkeyEnabled = &IsHotkeyEnabled,
+		.RegisterEvent = &RegisterEvent,
+		.UnregisterEvent = &UnregisterEvent
+	};
 }
 
 extern "C" __declspec(dllexport)
@@ -67,6 +95,9 @@ extern "C" __declspec(dllexport)
 	case SFSEMenuFramework::Model::INTERFACE_VERSION_2:
 		return reinterpret_cast<const SFSEMenuFramework::Model::Interface*>(
 			&interfaceV2);
+	case SFSEMenuFramework::Model::INTERFACE_VERSION_3:
+		return reinterpret_cast<const SFSEMenuFramework::Model::Interface*>(
+			&interfaceV3);
 	default:
 		return nullptr;
 	}

@@ -85,6 +85,42 @@ a framework window does not warp the OS cursor. Before `kPostDataLoad`, the
 virtual cursor reuses its prior position or starts from the current Windows
 cursor position when available.
 
+Consumers can subscribe to the same lifecycle events exposed by SKSE Menu
+Framework:
+
+```cpp
+SFSEMenuFramework::Model::Event* lifecycleEvent{};
+
+void __stdcall OnFrameworkEvent(
+    SFSEMenuFramework::Model::EventType type) noexcept
+{
+    // kOpenMenu, kCloseMenu, kBeforeRender, or kAfterRender
+}
+
+void RegisterEvents()
+{
+    lifecycleEvent = SFSEMenuFramework::AddEvent(&OnFrameworkEvent, 10.0F);
+}
+```
+
+Higher priorities run first; equal priorities retain registration order.
+Deleting the returned `Event` unregisters it. Deletion from another thread
+waits for an executing callback to finish and prevents any later callback from
+starting; self-deletion lets that current callback return normally.
+`kOpenMenu` and `kCloseMenu` report framework-routed main Mod Control Panel
+state edges only. Consumer-owned windows do not emit them, and directly storing
+through `GetMainWindow()->IsOpen` bypasses lifecycle delivery. Consumers should
+treat the main window's `IsOpen` as read-only and must not race direct stores
+against the framework's controls. All four callbacks run on the render thread.
+Queued open/close edges are drained before
+the following framework frame's `kBeforeRender`. They are ordered edge history,
+not state snapshots: if the MCP changes again before delivery, query
+`GetMainWindow()->IsOpen` separately for its current state. `kBeforeRender`
+and `kAfterRender` use the same listener snapshot around each successfully
+recorded framework frame; a listener explicitly removed between them is skipped
+for `kAfterRender`. Lifecycle callbacks run outside an active consumer ImGui
+frame and must not issue ImGui commands.
+
 Call panel and window registration from the SFSE `kPostLoad` message so it works
 regardless of DLL load order. Consumer projects must compile the four Dear ImGui
 core sources at version 1.90.8, commit
@@ -122,6 +158,15 @@ xmake project -k vsxmake
 SFSE Menu Framework is licensed under [GPL-3.0-only](COPYING) with the [Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS). Dear ImGui remains available under its [MIT license](extern/imgui/LICENSE.txt).
 
 This project is a Starfield port of [SKSE Menu Framework 3 at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, `AddWindow`/`WindowInterface`/`GetMainWindow` API, aggregate blocking-window behavior, hotkey enable control, software-cursor behavior, preserve-PrintScreen modal policy, toggle and close behavior, and fresh `LB` + double-press gamepad default are directly adapted under GPL-3.0.
+
+The lifecycle event enum, RAII listener API, priority-order intent, main-menu
+open/close intent, and before/after-render boundaries are also directly adapted
+from that pinned source. The pinned implementation does not store the supplied
+priority and leaves its RAII handle uninitialized; this port deliberately
+corrects both defects, validates listener handles, and uses quiescent,
+snapshot-based render-thread dispatch. Its Open/Close delivery is deferred to a
+safe Starfield render boundary instead of running synchronously inside the state
+mutation.
 
 The pinned SKSE Menu Framework source centers the cursor whenever a blocking
 window opens; this port deliberately preserves cursor position instead.

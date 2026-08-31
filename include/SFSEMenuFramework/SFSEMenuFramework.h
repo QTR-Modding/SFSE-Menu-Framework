@@ -124,6 +124,41 @@ namespace SFSEMenuFramework
 			return frameworkInterface;
 		}
 
+		[[nodiscard]] inline const Model::InterfaceV3* RequestInterfaceV3() noexcept
+		{
+			const auto module = ::GetModuleHandleW(L"SFSEMenuFramework.dll");
+			if (!module) {
+				return nullptr;
+			}
+
+			const auto procedure =
+				::GetProcAddress(module, "SFSEMenuFramework_QueryInterface");
+			if (!procedure) {
+				return nullptr;
+			}
+
+			static_assert(sizeof(procedure) == sizeof(Model::QueryInterfaceFunction));
+			const auto query = std::bit_cast<Model::QueryInterfaceFunction>(procedure);
+			const auto* frameworkInterface =
+				reinterpret_cast<const Model::InterfaceV3*>(
+					query(Model::INTERFACE_VERSION_3));
+			if (!frameworkInterface ||
+				frameworkInterface->StructureSize < sizeof(Model::InterfaceV3) ||
+				frameworkInterface->Version != Model::INTERFACE_VERSION_3 ||
+				!frameworkInterface->RegisterPanel ||
+				!frameworkInterface->RegisterWindow ||
+				!frameworkInterface->GetMainWindow ||
+				!frameworkInterface->IsAnyBlockingWindowOpened ||
+				!frameworkInterface->SetHotkeyEnabled ||
+				!frameworkInterface->IsHotkeyEnabled ||
+				!frameworkInterface->RegisterEvent ||
+				!frameworkInterface->UnregisterEvent) {
+				return nullptr;
+			}
+
+			return frameworkInterface;
+		}
+
 		[[nodiscard]] inline Model::ImGuiLayout GetImGuiLayout() noexcept
 		{
 			return Model::ImGuiLayout{
@@ -249,9 +284,59 @@ namespace SFSEMenuFramework
 		}
 	}
 
+	namespace Model
+	{
+		class Event;
+	}
+
+	[[nodiscard]] Model::Event* AddEvent(
+		Model::EventCallback a_callback,
+		float                a_priority = 0.0F) noexcept;
+
+	namespace Model
+	{
+		class Event final
+		{
+		public:
+			Event(const Event&) = delete;
+			Event(Event&&) = delete;
+			Event& operator=(const Event&) = delete;
+			Event& operator=(Event&&) = delete;
+
+			~Event() noexcept
+			{
+				if (Handle == 0) {
+					return;
+				}
+
+				const auto* frameworkInterface = Detail::RequestInterfaceV3();
+				if (frameworkInterface) {
+					frameworkInterface->UnregisterEvent(Handle);
+				}
+				Handle = 0;
+			}
+
+		private:
+			friend Event* ::SFSEMenuFramework::AddEvent(
+				EventCallback,
+				float) noexcept;
+
+			explicit Event(EventHandle a_handle) noexcept :
+				Handle(a_handle)
+			{}
+
+			EventHandle Handle{ 0 };
+		};
+	}
+
 	[[nodiscard]] inline bool IsInstalled() noexcept
 	{
 		return Detail::RequestInterface() != nullptr;
+	}
+
+	[[nodiscard]] inline bool IsEventAPIAvailable() noexcept
+	{
+		return Detail::RequestInterfaceV3() != nullptr;
 	}
 
 	[[nodiscard]] inline bool SetSection(std::string_view a_section)
@@ -371,6 +456,40 @@ namespace SFSEMenuFramework
 		// Successful registrations intentionally retain their tiny callback
 		// state for the process lifetime; SFSE does not hot-unload plugins.
 		return window;
+	}
+
+	[[nodiscard]] inline Model::Event* AddEvent(
+		Model::EventCallback a_callback,
+		float                a_priority) noexcept
+	{
+		if (!a_callback) {
+			return nullptr;
+		}
+
+		const auto* frameworkInterface = Detail::RequestInterfaceV3();
+		if (!frameworkInterface) {
+			return nullptr;
+		}
+
+		const Model::EventRegistration registration{
+			.StructureSize = sizeof(Model::EventRegistration),
+			.InterfaceVersion = Model::INTERFACE_VERSION_3,
+			.Callback = a_callback,
+			.Priority = a_priority
+		};
+		Model::EventHandle handle{};
+		const auto result = frameworkInterface->RegisterEvent(
+			&registration,
+			&handle);
+		if (result != Model::RegistrationResult::Success || handle == 0) {
+			return nullptr;
+		}
+
+		auto* event = new (std::nothrow) Model::Event(handle);
+		if (!event) {
+			frameworkInterface->UnregisterEvent(handle);
+		}
+		return event;
 	}
 
 	[[nodiscard]] inline Model::WindowInterface* GetMainWindow() noexcept

@@ -1,5 +1,6 @@
 #include "WindowManager.h"
 
+#include "EventManager.h"
 #include "Win32Platform.h"
 
 #include <imgui.h>
@@ -40,6 +41,7 @@ namespace
 		std::vector<std::unique_ptr<Window>>             Windows;
 		std::atomic<std::shared_ptr<const WindowSnapshot>> Published;
 		std::atomic<SFSEMenuFramework::WindowInterface*> MainWindow{ nullptr };
+		std::mutex                                      MainTransitionMutex;
 		std::mutex                                      StateMutex;
 		bool                                            RenderEnabled{ false };
 		bool                                            AnyOpen{ false };
@@ -141,7 +143,6 @@ namespace
 		if (current.MainOpen && !a_registry.MainOpen) {
 			IncrementGeneration(a_registry.MainGeneration);
 		}
-
 		a_registry.AnyOpen = current.AnyOpen;
 		a_registry.AnyBlocking = current.AnyBlocking;
 		a_registry.PauseGame = current.PauseGame;
@@ -196,6 +197,7 @@ namespace
 				sizeof(information) ||
 			information.State != MEM_COMMIT ||
 			information.Type != MEM_IMAGE ||
+			(information.Protect & PAGE_GUARD) != 0 ||
 			!information.AllocationBase) {
 			return false;
 		}
@@ -415,13 +417,19 @@ void SFSEMenuFramework::WindowManager::SetMainWindowRenderEnabled(
 
 bool SFSEMenuFramework::WindowManager::SetMainWindowOpen(bool a_open) noexcept
 {
-	auto* window = GetMainWindow();
-	if (!window ||
-		window->IsOpen.exchange(a_open, std::memory_order_acq_rel) == a_open) {
+	auto* registry = GetRegistry();
+	auto* window = registry ?
+		registry->MainWindow.load(std::memory_order_acquire) :
+		nullptr;
+	if (!registry || !window) {
 		return false;
 	}
 
-	if (auto* registry = GetRegistry()) {
+	{
+		std::scoped_lock lock{ registry->MainTransitionMutex };
+		if (!EventManager::SetMainWindowState(window->IsOpen, a_open)) {
+			return false;
+		}
 		static_cast<void>(RefreshState(*registry));
 	}
 	static_cast<void>(Win32Platform::PostHostWindowCallback());
@@ -430,24 +438,24 @@ bool SFSEMenuFramework::WindowManager::SetMainWindowOpen(bool a_open) noexcept
 
 bool SFSEMenuFramework::WindowManager::ToggleMainWindow() noexcept
 {
-	auto* window = GetMainWindow();
-	if (!window) {
+	auto* registry = GetRegistry();
+	auto* window = registry ?
+		registry->MainWindow.load(std::memory_order_acquire) :
+		nullptr;
+	if (!registry || !window) {
 		return false;
 	}
 
-	bool expected = window->IsOpen.load(std::memory_order_acquire);
-	while (!window->IsOpen.compare_exchange_weak(
-		expected,
-		!expected,
-		std::memory_order_acq_rel,
-		std::memory_order_acquire)) {
-	}
-
-	if (auto* registry = GetRegistry()) {
+	bool open{};
+	{
+		std::scoped_lock lock{ registry->MainTransitionMutex };
+		if (!EventManager::ToggleMainWindowState(window->IsOpen, &open)) {
+			return false;
+		}
 		static_cast<void>(RefreshState(*registry));
 	}
 	static_cast<void>(Win32Platform::PostHostWindowCallback());
-	return !expected;
+	return open;
 }
 
 bool SFSEMenuFramework::WindowManager::IsAnyWindowOpen() noexcept
@@ -502,19 +510,39 @@ void SFSEMenuFramework::WindowManager::CloseAllBlockingWindows() noexcept
 	}
 
 	bool changed{};
-	const auto snapshot = registry->Published.load(std::memory_order_acquire);
-	if (snapshot) {
-		for (auto* window : *snapshot) {
-			if (window &&
-				window->Interface.IsOpen.load(std::memory_order_acquire) &&
-				window->Interface.BlockUserInput.load(std::memory_order_acquire)) {
-				window->Interface.IsOpen.store(false, std::memory_order_release);
-				changed = true;
+	AggregateState state;
+	{
+		std::scoped_lock lock{ registry->MainTransitionMutex };
+		auto* const mainWindow =
+			registry->MainWindow.load(std::memory_order_acquire);
+		const auto snapshot =
+			registry->Published.load(std::memory_order_acquire);
+		if (snapshot) {
+			for (auto* window : *snapshot) {
+				if (!window ||
+					!window->Interface.BlockUserInput.load(
+						std::memory_order_acquire)) {
+					continue;
+				}
+
+				if (&window->Interface == mainWindow) {
+					changed =
+						EventManager::SetMainWindowState(
+							window->Interface.IsOpen,
+							false,
+							true) ||
+						changed;
+				} else {
+					changed =
+						window->Interface.IsOpen.exchange(
+							false,
+							std::memory_order_acq_rel) ||
+						changed;
+				}
 			}
 		}
+		state = RefreshState(*registry);
 	}
-
-	const auto state = RefreshState(*registry);
 	NotifyHostWindow(changed || state.Changed);
 }
 

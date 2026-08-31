@@ -1,5 +1,6 @@
 #include "D3D12Renderer.h"
 
+#include "EventManager.h"
 #include "Win32Platform.h"
 #include "WindowManager.h"
 
@@ -33,6 +34,17 @@ namespace SFSEMenuFramework::D3D12Renderer
 		std::atomic<std::uint64_t> lastBlockingWindowRenderTick{ 0 };
 		std::atomic<std::uint64_t> nextContextGeneration{ 1 };
 		std::atomic<bool>          rendererReady{ false };
+		thread_local bool          renderInProgress{};
+
+		struct RenderScope final
+		{
+			bool& InProgress;
+
+			~RenderScope() noexcept
+			{
+				InProgress = false;
+			}
+		};
 
 		struct CompletionSlot final
 		{
@@ -385,6 +397,11 @@ namespace SFSEMenuFramework::D3D12Renderer
 		}
 
 		std::scoped_lock lock{ GetRendererMutex() };
+		if (renderInProgress) {
+			return RenderResult::Busy;
+		}
+		renderInProgress = true;
+		const RenderScope renderScope{ renderInProgress };
 
 		Microsoft::WRL::ComPtr<ID3D12Device> commandListDevice;
 		if (FAILED(a_commandList->GetDevice(IID_PPV_ARGS(commandListDevice.GetAddressOf())))) {
@@ -415,6 +432,11 @@ namespace SFSEMenuFramework::D3D12Renderer
 			return RenderResult::InvalidTarget;
 		}
 
+		EventManager::Snapshot lifecycleSnapshot;
+		if (!EventManager::BeginFrame(lifecycleSnapshot)) {
+			return RenderResult::Busy;
+		}
+
 		ImGui::SetCurrentContext(rendererState.Context);
 		if (!Win32Platform::PrepareFrame()) {
 			return RenderResult::PlatformFrameUnavailable;
@@ -438,6 +460,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 			io.ClearEventsQueue();
 			io.ClearInputKeys();
 		}
+		EventManager::Dispatch(
+			Model::EventType::kBeforeRender,
+			lifecycleSnapshot);
 		ImGui::NewFrame();
 		ImGuiMemAllocFunc allocate{};
 		ImGuiMemFreeFunc free{};
@@ -489,6 +514,10 @@ namespace SFSEMenuFramework::D3D12Renderer
 			lastBlockingWindowRenderTick.store(::GetTickCount64(), std::memory_order_release);
 			static_cast<void>(Win32Platform::PostHostWindowCallback());
 		}
+
+		EventManager::Dispatch(
+			Model::EventType::kAfterRender,
+			lifecycleSnapshot);
 
 		return RenderResult::Rendered;
 	}

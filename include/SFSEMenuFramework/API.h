@@ -8,11 +8,13 @@ namespace SFSEMenuFramework::Model
 {
 	inline constexpr std::uint32_t INTERFACE_VERSION = 1;
 	inline constexpr std::uint32_t INTERFACE_VERSION_2 = 2;
+	inline constexpr std::uint32_t INTERFACE_VERSION_3 = 3;
 	inline constexpr std::uint32_t IMGUI_SOURCE_REVISION = 0x6F7B5D0E;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_ID_LENGTH = 255;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_TEXT_LENGTH = 255;
 
 	using PanelHandle = std::uint64_t;
+	using EventHandle = std::uint64_t;
 
 	enum class RegistrationResult : std::uint32_t
 	{
@@ -33,6 +35,15 @@ namespace SFSEMenuFramework::Model
 		Continue = 0,
 		Disable,
 		Failed
+	};
+
+	enum class EventType : std::uint32_t
+	{
+		kNone = 0,
+		kOpenMenu = 1,
+		kCloseMenu = 2,
+		kBeforeRender = 3,
+		kAfterRender = 4
 	};
 
 	struct StringView final
@@ -79,6 +90,7 @@ namespace SFSEMenuFramework::Model
 	using WindowRenderFunction = void(__stdcall*)(
 		const RenderContext*,
 		void*) noexcept;
+	using EventCallback = void(__stdcall*)(EventType) noexcept;
 
 	class WindowInterface
 	{
@@ -110,6 +122,15 @@ namespace SFSEMenuFramework::Model
 		std::uint8_t         Reserved[7]{};
 	};
 
+	struct EventRegistration final
+	{
+		std::uint32_t StructureSize{ sizeof(EventRegistration) };
+		std::uint32_t InterfaceVersion{ INTERFACE_VERSION_3 };
+		EventCallback Callback{ nullptr };
+		float         Priority{ 0.0F };
+		std::uint32_t Reserved{ 0 };
+	};
+
 	using RegisterPanelFunction = RegistrationResult(__stdcall*)(
 		const PanelRegistration*,
 		PanelHandle*) noexcept;
@@ -120,6 +141,10 @@ namespace SFSEMenuFramework::Model
 	using IsAnyBlockingWindowOpenedFunction = bool(__stdcall*)() noexcept;
 	using SetHotkeyEnabledFunction = void(__stdcall*)(bool) noexcept;
 	using IsHotkeyEnabledFunction = bool(__stdcall*)() noexcept;
+	using RegisterEventFunction = RegistrationResult(__stdcall*)(
+		const EventRegistration*,
+		EventHandle*) noexcept;
+	using UnregisterEventFunction = void(__stdcall*)(EventHandle) noexcept;
 
 	struct Interface final
 	{
@@ -140,6 +165,20 @@ namespace SFSEMenuFramework::Model
 		IsHotkeyEnabledFunction           IsHotkeyEnabled{ nullptr };
 	};
 
+	struct InterfaceV3 final
+	{
+		std::uint32_t                     StructureSize{ sizeof(InterfaceV3) };
+		std::uint32_t                     Version{ INTERFACE_VERSION_3 };
+		RegisterPanelFunction             RegisterPanel{ nullptr };
+		RegisterWindowFunction            RegisterWindow{ nullptr };
+		GetMainWindowFunction             GetMainWindow{ nullptr };
+		IsAnyBlockingWindowOpenedFunction IsAnyBlockingWindowOpened{ nullptr };
+		SetHotkeyEnabledFunction          SetHotkeyEnabled{ nullptr };
+		IsHotkeyEnabledFunction           IsHotkeyEnabled{ nullptr };
+		RegisterEventFunction             RegisterEvent{ nullptr };
+		UnregisterEventFunction           UnregisterEvent{ nullptr };
+	};
+
 	using QueryInterfaceFunction = const Interface* (__stdcall*)(std::uint32_t) noexcept;
 
 	static_assert(sizeof(void*) == 8);
@@ -148,7 +187,9 @@ namespace SFSEMenuFramework::Model
 	static_assert(sizeof(RenderContext) == 48);
 	static_assert(sizeof(PanelRegistration) == 128);
 	static_assert(sizeof(WindowRegistration) == 88);
+	static_assert(sizeof(EventRegistration) == 24);
 	static_assert(sizeof(Interface) == 16);
 	static_assert(sizeof(InterfaceV2) == 56);
+	static_assert(sizeof(InterfaceV3) == 72);
 	static_assert(std::atomic<bool>::is_always_lock_free);
 }
