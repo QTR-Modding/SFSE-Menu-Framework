@@ -51,6 +51,7 @@ namespace
 		bool                                            MainOpen{ false };
 		std::uint64_t                                   BlockingGeneration{ 0 };
 		std::uint64_t                                   MainGeneration{ 0 };
+		std::uint64_t                                   MainSessionGeneration{ 0 };
 		std::atomic<bool>                               HotkeyEnabled{ true };
 	};
 
@@ -66,6 +67,7 @@ namespace
 		std::uint32_t BlockingOpenEdges{ 0 };
 		std::uint64_t BlockingGeneration{ 0 };
 		std::uint64_t MainGeneration{ 0 };
+		std::uint64_t MainSessionGeneration{ 0 };
 	};
 
 	[[nodiscard]] Registry* GetRegistry() noexcept
@@ -142,6 +144,7 @@ namespace
 		}
 		if (current.MainOpen && !a_registry.MainOpen) {
 			IncrementGeneration(a_registry.MainGeneration);
+			IncrementGeneration(a_registry.MainSessionGeneration);
 		}
 		a_registry.AnyOpen = current.AnyOpen;
 		a_registry.AnyBlocking = current.AnyBlocking;
@@ -154,6 +157,9 @@ namespace
 			0;
 		current.MainGeneration = current.MainOpen ?
 			a_registry.MainGeneration :
+			0;
+		current.MainSessionGeneration = current.MainOpen ?
+			a_registry.MainSessionGeneration :
 			0;
 		return current;
 	}
@@ -430,6 +436,10 @@ bool SFSEMenuFramework::WindowManager::SetMainWindowOpen(bool a_open) noexcept
 		if (!EventManager::SetMainWindowState(window->IsOpen, a_open)) {
 			return false;
 		}
+		// SKSE-MF's Close restores the main/config blocking defaults after
+		// Resume Game. Store only after IsOpen changed so a close cannot expose
+		// a transient blocking-open edge to aggregate-state observers.
+		window->BlockUserInput.store(true, std::memory_order_release);
 		static_cast<void>(RefreshState(*registry));
 	}
 	static_cast<void>(Win32Platform::PostHostWindowCallback());
@@ -452,6 +462,7 @@ bool SFSEMenuFramework::WindowManager::ToggleMainWindow() noexcept
 		if (!EventManager::ToggleMainWindowState(window->IsOpen, &open)) {
 			return false;
 		}
+		window->BlockUserInput.store(true, std::memory_order_release);
 		static_cast<void>(RefreshState(*registry));
 	}
 	static_cast<void>(Win32Platform::PostHostWindowCallback());
@@ -611,4 +622,16 @@ bool SFSEMenuFramework::WindowManager::IsMainWindowOpenGeneration(
 	const auto state = RefreshState(*registry);
 	NotifyHostWindow(state.Changed);
 	return state.MainOpen && state.MainGeneration == a_generation;
+}
+
+std::uint64_t
+	SFSEMenuFramework::WindowManager::GetMainWindowSessionGeneration() noexcept
+{
+	auto* registry = GetRegistry();
+	if (!registry) {
+		return 0;
+	}
+	const auto state = RefreshState(*registry);
+	NotifyHostWindow(state.Changed);
+	return state.MainSessionGeneration;
 }

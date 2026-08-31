@@ -16,8 +16,20 @@ SFSE Menu Framework is a native Starfield Script Extender plugin for building Im
 - On a gamepad, double-press the left bumper to open it; one press closes it.
 - Press `Escape` while the panel is open to return to the game.
 
-Bindings, toggle modes, pause, and background blur are configurable in the
-built-in Settings page and `Data/SFSE/Plugins/SFSEMenuFramework.ini`.
+Bindings, toggle modes, pause, and background blur are configurable through
+`Options > Open Settings` and
+`Data/SFSE/Plugins/SFSEMenuFramework.ini`.
+The main window follows SKSE Menu Framework's shell: slash-delimited entries
+form a collapsible navigation tree, the search box filters top-level mod
+sections, and favorite sections sort before the remaining alphabetical list.
+Sections can also be archived and restored through `Options`; that state is
+stored in
+`Data/SFSE/Plugins/SFSEMenuFrameworkMenuConfig.json`.
+`Options > Resume Game` leaves the ImGui windows visible while returning
+control to Starfield. Close and reopen the MCP to make it modal again.
+Built-in window placement is retained across restarts in
+`Data/SFSE/Plugins/SFSEMenuFramework.imgui.ini`; `Reset Windows` replaces that
+saved placement with the centered defaults.
 The panel can open during startup as soon as Starfield's window and renderer are
 ready. As soon as the open panel has produced its first visible frame, its ImGui
 software cursor, relative mouse movement, mouse buttons and wheel, keyboard,
@@ -45,9 +57,14 @@ void RegisterMenu()
         return;
     }
 
-    SFSEMenuFramework::AddSectionItem("Settings", &RenderSettings);
+    SFSEMenuFramework::AddSectionItem("Settings/General", &RenderSettings);
 }
 ```
+
+The title passed to `AddSectionItem` may contain `/` separators. Combined
+with the current section, it recreates SKSE Menu Framework's arbitrary-depth
+menu path without changing the binary interface. Use `SetSection` for the
+top-level menu name and place nested path separators in `AddSectionItem`.
 
 Consumers can also register a separate, resizable ImGui window with the same
 SKSE Menu Framework-style control surface:
@@ -81,9 +98,8 @@ render without taking Starfield input. `GetMainWindow`,
 `IsAnyBlockingWindowOpened`, `SetHotkeyEnabled`, and `IsHotkeyEnabled` are also
 available. The configured hotkey controls only the main Mod Control Panel;
 `Escape` can still close it while hotkeys are disabled. Opening or re-blocking
-a framework window does not warp the OS cursor. Before `kPostDataLoad`, the
-virtual cursor reuses its prior position or starts from the current Windows
-cursor position when available.
+a framework-rendered ImGui window can currently center the software cursor
+once; subsequent mouse movement remains unrestricted.
 
 Consumers can subscribe to the same lifecycle events exposed by SKSE Menu
 Framework:
@@ -157,7 +173,21 @@ xmake project -k vsxmake
 
 SFSE Menu Framework is licensed under [GPL-3.0-only](COPYING) with the [Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS). Dear ImGui remains available under its [MIT license](extern/imgui/LICENSE.txt).
 
-This project is a Starfield port of [SKSE Menu Framework 3 at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, `AddWindow`/`WindowInterface`/`GetMainWindow` API, aggregate blocking-window behavior, hotkey enable control, software-cursor behavior, preserve-PrintScreen modal policy, toggle and close behavior, and fresh `LB` + double-press gamepad default are directly adapted under GPL-3.0.
+This project is a Starfield port of [SKSE Menu Framework 3 by SkyrimThiago at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, `AddWindow`/`WindowInterface`/`GetMainWindow` API, aggregate blocking-window behavior, hotkey enable control, software-cursor behavior, preserve-PrintScreen modal policy, toggle and close behavior, and fresh `LB` + double-press gamepad default are directly adapted under GPL-3.0.
+
+The MCP shell is directly adapted from that revision's `include/UI.h`,
+`src/UI.cpp`, `include/RootMenuConfig.h`, and
+`src/RootMenuConfig.cpp`: slash-path navigation, recursive tree selection,
+root-only text filtering, favorites-first ordering, archive confirmation and
+recovery, the Options menu, the separate Settings-window presentation, and
+the visible-but-nonmodal Resume Game behavior. The port rebuilds a
+render-thread view from immutable `PanelRegistry` snapshots and stable panel
+handles instead of copying the source's unsynchronized raw-pointer tree. Its
+favorite/archive controls use ASCII labels because the SFSE font atlas does
+not yet include SKSE Menu Framework's Font Awesome assets. English UI labels
+are embedded rather than copied into translation sidecars. Unlike the pinned
+source's process-only placement state, the Starfield port retains built-in
+window placement through its ImGui ini file.
 
 The lifecycle event enum, RAII listener API, priority-order intent, main-menu
 open/close intent, and before/after-render boundaries are also directly adapted
@@ -169,7 +199,7 @@ safe Starfield render boundary instead of running synchronously inside the state
 mutation.
 
 The pinned SKSE Menu Framework source centers the cursor whenever a blocking
-window opens; this port deliberately preserves cursor position instead.
+window opens; the current port retains that one-time behavior.
 Starfield's pre-`kPostDataLoad` relative-mouse bridge is an independent Windows
 Raw Input implementation; SKSE Menu Framework has no equivalent relative-motion
 path. Its only physical cursor placement transfers the already-visible virtual
@@ -178,3 +208,8 @@ position into Starfield's normal cursor route at that lifecycle handoff.
 The verified vtable-hook installation and guarded rollback pattern is adapted from [Toggle Dialogue Camera SF at commit `8021fa9`](https://github.com/QTR-Modding/ToggleDialogueCameraSF/tree/8021fa934591aac1c71266cc4abc5cb1c24e28d7), under GPL-3.0-or-later with its Modding and GPL-3.0 Linking Exceptions.
 
 The Starfield cursor, control-layer, simulation-pause, and native-main-thread queue ownership-transfer protocols are adapted from [OSF UI at commit `14b7565`](https://github.com/ozooma10/osf-ui/tree/14b7565bbc7689b07fdccdb74525b9505f9f0dd6) by ozooma10, under GPL-3.0 with its Modding and GPL-3.0 Linking Exceptions.
+
+Favorites and archive persistence uses
+[JSON for Modern C++ 3.11.3](https://github.com/nlohmann/json/tree/v3.11.3),
+which remains available under the MIT license included in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

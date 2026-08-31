@@ -19,9 +19,11 @@ end
 
 includes(path.join(os.projectdir(), "lib", "commonlibsf"))
 
+add_requires("nlohmann_json 3.11.3")
+
 local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
-local plugin_version = "0.5.0"
+local plugin_version = "0.6.0"
 local plugin_author = "Quantumyilmaz"
 
 set_project(plugin_name)
@@ -79,6 +81,7 @@ target(dll_name, function()
     set_pcxxheader("src/PCH.h")
 
     add_deps("imgui")
+	add_packages("nlohmann_json")
     add_defines("_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING")
     add_syslinks("comctl32")
     add_files("src/**.cpp")

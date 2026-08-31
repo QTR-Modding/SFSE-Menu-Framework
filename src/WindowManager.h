@@ -44,5 +44,6 @@ namespace SFSEMenuFramework
 		[[nodiscard]] static std::uint64_t GetMainWindowOpenGeneration() noexcept;
 		[[nodiscard]] static bool IsMainWindowOpenGeneration(
 			std::uint64_t a_generation) noexcept;
+		[[nodiscard]] static std::uint64_t GetMainWindowSessionGeneration() noexcept;
 	};
 }
