@@ -203,11 +203,13 @@ namespace
 				ImGuiTreeNodeFlags_NoTreePushOnOpen;
 		}
 
-		const bool nodeOpen = ImGui::TreeNodeEx(
-			a_node.get(),
+		const auto* labelBegin = a_node->Name.data();
+		const auto* labelEnd = labelBegin + a_node->Name.size();
+		const bool nodeOpen = ImGui::TreeNodeBehavior(
+			ImGui::GetCurrentWindow()->GetID(a_node.get()),
 			flags,
-			"%s",
-			a_node->Name.c_str());
+			labelBegin,
+			labelEnd);
 		const bool itemClicked = ImGui::IsItemClicked();
 		const bool itemToggledOpen = ImGui::IsItemToggledOpen();
 		const bool gamePadButtonPressed =
