@@ -59,88 +59,34 @@ namespace SFSEMenuFramework
 			}
 		}
 
-		template <class Interface, std::uint32_t Version, auto... RequiredFunctions>
-		[[nodiscard]] inline const Interface* RequestValidatedInterface() noexcept
-		{
-			if (const auto query = GetQueryInterface(); !query) {
-				return nullptr;
-			} else {
-				const auto* result = reinterpret_cast<const Interface*>(query(Version));
-				return result && result->StructureSize >= sizeof(Interface) &&
-					result->Version == Version &&
-					((result->*RequiredFunctions) && ...) ? result : nullptr;
-			}
-		}
-
 		[[nodiscard]] inline const Model::Interface* RequestInterface() noexcept
 		{
-			return RequestValidatedInterface<Model::Interface,
-				Model::INTERFACE_VERSION,
-				&Model::Interface::RegisterPanel>();
-		}
+			const auto query = GetQueryInterface();
+			if (!query) {
+				return nullptr;
+			}
 
-		[[nodiscard]] inline const Model::InterfaceV2* RequestInterfaceV2() noexcept
-		{
-			return RequestValidatedInterface<Model::InterfaceV2,
-				Model::INTERFACE_VERSION_2,
-				&Model::InterfaceV2::RegisterPanel,
-				&Model::InterfaceV2::RegisterWindow,
-				&Model::InterfaceV2::GetMainWindow,
-				&Model::InterfaceV2::IsAnyBlockingWindowOpened,
-				&Model::InterfaceV2::SetHotkeyEnabled,
-				&Model::InterfaceV2::IsHotkeyEnabled>();
-		}
-
-		[[nodiscard]] inline const Model::InterfaceV3* RequestInterfaceV3() noexcept
-		{
-			return RequestValidatedInterface<Model::InterfaceV3,
-				Model::INTERFACE_VERSION_3,
-				&Model::InterfaceV3::RegisterPanel,
-				&Model::InterfaceV3::RegisterWindow,
-				&Model::InterfaceV3::GetMainWindow,
-				&Model::InterfaceV3::IsAnyBlockingWindowOpened,
-				&Model::InterfaceV3::SetHotkeyEnabled,
-				&Model::InterfaceV3::IsHotkeyEnabled,
-				&Model::InterfaceV3::RegisterEvent,
-				&Model::InterfaceV3::UnregisterEvent>();
-		}
-
-		[[nodiscard]] inline const Model::InterfaceV4* RequestInterfaceV4() noexcept
-		{
-			return RequestValidatedInterface<Model::InterfaceV4,
-				Model::INTERFACE_VERSION_4,
-				&Model::InterfaceV4::RegisterPanel,
-				&Model::InterfaceV4::RegisterWindow,
-				&Model::InterfaceV4::GetMainWindow,
-				&Model::InterfaceV4::IsAnyBlockingWindowOpened,
-				&Model::InterfaceV4::SetHotkeyEnabled,
-				&Model::InterfaceV4::IsHotkeyEnabled,
-				&Model::InterfaceV4::RegisterEvent,
-				&Model::InterfaceV4::UnregisterEvent,
-				&Model::InterfaceV4::RegisterInputEvent,
-				&Model::InterfaceV4::UnregisterInputEvent,
-				&Model::InterfaceV4::RegisterHudElement,
-				&Model::InterfaceV4::UnregisterHudElement>();
-		}
-
-		[[nodiscard]] inline const Model::InterfaceV5* RequestInterfaceV5() noexcept
-		{
-			return RequestValidatedInterface<Model::InterfaceV5,
-				Model::INTERFACE_VERSION_5,
-				&Model::InterfaceV5::RegisterPanel,
-				&Model::InterfaceV5::RegisterWindow,
-				&Model::InterfaceV5::GetMainWindow,
-				&Model::InterfaceV5::IsAnyBlockingWindowOpened,
-				&Model::InterfaceV5::SetHotkeyEnabled,
-				&Model::InterfaceV5::IsHotkeyEnabled,
-				&Model::InterfaceV5::RegisterEvent,
-				&Model::InterfaceV5::UnregisterEvent,
-				&Model::InterfaceV5::RegisterInputEvent,
-				&Model::InterfaceV5::UnregisterInputEvent,
-				&Model::InterfaceV5::RegisterHudElement,
-				&Model::InterfaceV5::UnregisterHudElement,
-				&Model::InterfaceV5::PushFont,
-				&Model::InterfaceV5::PopFont>();
+			const auto* result = query(Model::INTERFACE_VERSION);
+			if (!result ||
+				result->StructureSize < sizeof(Model::Interface) ||
+				result->Version != Model::INTERFACE_VERSION ||
+				!result->RegisterPanel ||
+				!result->RegisterWindow ||
+				!result->GetMainWindow ||
+				!result->IsAnyBlockingWindowOpened ||
+				!result->SetHotkeyEnabled ||
+				!result->IsHotkeyEnabled ||
+				!result->RegisterEvent ||
+				!result->UnregisterEvent ||
+				!result->RegisterInputEvent ||
+				!result->UnregisterInputEvent ||
+				!result->RegisterHudElement ||
+				!result->UnregisterHudElement ||
+				!result->PushFont ||
+				!result->PopFont) {
+				return nullptr;
+			}
+			return result;
 		}
 
 		[[nodiscard]] inline Model::ImGuiLayout GetImGuiLayout() noexcept
@@ -269,7 +215,7 @@ namespace SFSEMenuFramework
 
 			~Event() noexcept {
 				if (Handle != 0) {
-					if (const auto* api = Detail::RequestInterfaceV3()) {
+					if (const auto* api = Detail::RequestInterface()) {
 						api->UnregisterEvent(Handle);
 					}
 					Handle = 0;
@@ -297,7 +243,7 @@ namespace SFSEMenuFramework
 			~InputEvent() noexcept
 			{
 				if (Handle != 0) {
-					if (const auto* api = Detail::RequestInterfaceV4()) {
+					if (const auto* api = Detail::RequestInterface()) {
 						api->UnregisterInputEvent(Handle);
 					}
 					Handle = 0;
@@ -326,7 +272,7 @@ namespace SFSEMenuFramework
 			~HudElement() noexcept
 			{
 				if (Handle != 0) {
-					if (const auto* api = Detail::RequestInterfaceV4()) {
+					if (const auto* api = Detail::RequestInterface()) {
 						api->UnregisterHudElement(Handle);
 					}
 					Handle = 0;
@@ -357,32 +303,12 @@ namespace SFSEMenuFramework
 		return Detail::RequestInterface() != nullptr;
 	}
 
-	[[nodiscard]] inline bool IsEventAPIAvailable() noexcept
-	{
-		return Detail::RequestInterfaceV3() != nullptr;
-	}
-
-	[[nodiscard]] inline bool IsInputEventAPIAvailable() noexcept
-	{
-		return Detail::RequestInterfaceV4() != nullptr;
-	}
-
-	[[nodiscard]] inline bool IsHudElementAPIAvailable() noexcept
-	{
-		return Detail::RequestInterfaceV4() != nullptr;
-	}
-
-	[[nodiscard]] inline bool IsFontAPIAvailable() noexcept
-	{
-		return Detail::RequestInterfaceV5() != nullptr;
-	}
-
 	[[nodiscard]] inline bool PushFont(std::string_view a_name) noexcept
 	{
 		if (!Detail::IsValidText(a_name, Model::MAXIMUM_FONT_NAME_LENGTH)) {
 			return false;
 		}
-		const auto* api = Detail::RequestInterfaceV5();
+		const auto* api = Detail::RequestInterface();
 		if (!api) {
 			return false;
 		}
@@ -392,7 +318,7 @@ namespace SFSEMenuFramework
 
 	[[nodiscard]] inline bool PopFont() noexcept
 	{
-		const auto* api = Detail::RequestInterfaceV5();
+		const auto* api = Detail::RequestInterface();
 		return api && api->PopFont();
 	}
 
@@ -556,7 +482,7 @@ namespace SFSEMenuFramework
 			return nullptr;
 		}
 
-		const auto* api = Detail::RequestInterfaceV2();
+		const auto* api = Detail::RequestInterface();
 		if (!api) {
 			return nullptr;
 		}
@@ -569,7 +495,7 @@ namespace SFSEMenuFramework
 
 		const Model::WindowRegistration registration{
 			.StructureSize = sizeof(Model::WindowRegistration),
-			.InterfaceVersion = Model::INTERFACE_VERSION_2,
+			.InterfaceVersion = Model::INTERFACE_VERSION,
 			.ImGui = Detail::GetImGuiLayout(),
 			.Render = &Detail::RenderWindow,
 			.UserData = consumerWindow,
@@ -595,14 +521,14 @@ namespace SFSEMenuFramework
 			return nullptr;
 		}
 
-		const auto* api = Detail::RequestInterfaceV3();
+		const auto* api = Detail::RequestInterface();
 		if (!api) {
 			return nullptr;
 		}
 
 		const Model::EventRegistration registration{
 			.StructureSize = sizeof(Model::EventRegistration),
-			.InterfaceVersion = Model::INTERFACE_VERSION_3,
+			.InterfaceVersion = Model::INTERFACE_VERSION,
 			.Callback = a_callback,
 			.Priority = a_priority
 		};
@@ -626,14 +552,14 @@ namespace SFSEMenuFramework
 			return nullptr;
 		}
 
-		const auto* api = Detail::RequestInterfaceV4();
+		const auto* api = Detail::RequestInterface();
 		if (!api) {
 			return nullptr;
 		}
 
 		const Model::InputEventRegistration registration{
 			.StructureSize = sizeof(Model::InputEventRegistration),
-			.InterfaceVersion = Model::INTERFACE_VERSION_4,
+			.InterfaceVersion = Model::INTERFACE_VERSION,
 			.Callback = a_callback
 		};
 		Model::InputEventHandle handle{};
@@ -656,7 +582,7 @@ namespace SFSEMenuFramework
 			return nullptr;
 		}
 
-		const auto* api = Detail::RequestInterfaceV4();
+		const auto* api = Detail::RequestInterface();
 		if (!api) {
 			return nullptr;
 		}
@@ -669,7 +595,7 @@ namespace SFSEMenuFramework
 
 		const Model::HudElementRegistration registration{
 			.StructureSize = sizeof(Model::HudElementRegistration),
-			.InterfaceVersion = Model::INTERFACE_VERSION_4,
+			.InterfaceVersion = Model::INTERFACE_VERSION,
 			.ImGui = Detail::GetImGuiLayout(),
 			.Render = &Detail::RenderHudElement,
 			.UserData = callbackState
@@ -692,26 +618,26 @@ namespace SFSEMenuFramework
 
 	[[nodiscard]] inline Model::WindowInterface* GetMainWindow() noexcept
 	{
-		const auto* api = Detail::RequestInterfaceV2();
+		const auto* api = Detail::RequestInterface();
 		return api ? api->GetMainWindow() : nullptr;
 	}
 
 	[[nodiscard]] inline bool IsAnyBlockingWindowOpened() noexcept
 	{
-		const auto* api = Detail::RequestInterfaceV2();
+		const auto* api = Detail::RequestInterface();
 		return api ? api->IsAnyBlockingWindowOpened() : false;
 	}
 
 	inline void SetHotkeyEnabled(bool a_enabled) noexcept
 	{
-		if (const auto* api = Detail::RequestInterfaceV2()) {
+		if (const auto* api = Detail::RequestInterface()) {
 			api->SetHotkeyEnabled(a_enabled);
 		}
 	}
 
 	[[nodiscard]] inline bool IsHotkeyEnabled() noexcept
 	{
-		const auto* api = Detail::RequestInterfaceV2();
+		const auto* api = Detail::RequestInterface();
 		return api ? api->IsHotkeyEnabled() : false;
 	}
 }

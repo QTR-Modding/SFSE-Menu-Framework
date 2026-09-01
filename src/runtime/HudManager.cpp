@@ -42,7 +42,7 @@ namespace SFSEMenuFramework::HudManager
 				sizeof(Model::ImGuiLayout)) {
 			return Model::RegistrationResult::StructureTooSmall;
 		}
-		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION_4) {
+		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION) {
 			return Model::RegistrationResult::UnsupportedVersion;
 		}
 		if (!Detail::HasMatchingImGuiLayout(a_registration->ImGui)) {

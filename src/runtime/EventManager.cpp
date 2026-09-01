@@ -140,7 +140,7 @@ namespace SFSEMenuFramework
 		if (a_registration->StructureSize < sizeof(Model::EventRegistration)) {
 			return Model::RegistrationResult::StructureTooSmall;
 		}
-		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION_3) {
+		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION) {
 			return Model::RegistrationResult::UnsupportedVersion;
 		}
 		if (!a_registration->Callback ||

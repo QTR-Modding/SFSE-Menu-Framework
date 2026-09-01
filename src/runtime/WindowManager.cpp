@@ -201,7 +201,7 @@ namespace SFSEMenuFramework
 			a_registration->ImGui.StructureSize < sizeof(Model::ImGuiLayout)) {
 			return Model::RegistrationResult::StructureTooSmall;
 		}
-		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION_2) {
+		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION) {
 			return Model::RegistrationResult::UnsupportedVersion;
 		}
 		if (!a_registration->Render || a_registration->BlockUserInput > 1) {

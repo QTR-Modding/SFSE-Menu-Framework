@@ -46,7 +46,7 @@ namespace SFSEMenuFramework::InputEventManager
 			sizeof(Model::InputEventRegistration)) {
 			return Model::RegistrationResult::StructureTooSmall;
 		}
-		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION_4) {
+		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION) {
 			return Model::RegistrationResult::UnsupportedVersion;
 		}
 		if (!Detail::IsExecutableImageFunction(a_registration->Callback)) {

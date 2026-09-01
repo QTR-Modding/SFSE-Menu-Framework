@@ -35,52 +35,9 @@ namespace
 		return FontManager::PopFont();
 	}
 
-	const Model::Interface interfaceV1{
+	const Model::Interface consumerInterface{
 		.StructureSize = sizeof(Model::Interface),
 		.Version = Model::INTERFACE_VERSION,
-		.RegisterPanel = &PanelRegistry::Register
-	};
-	const Model::InterfaceV2 interfaceV2{
-		.StructureSize = sizeof(Model::InterfaceV2),
-		.Version = Model::INTERFACE_VERSION_2,
-		.RegisterPanel = &PanelRegistry::Register,
-		.RegisterWindow = &WindowManager::RegisterWindow,
-		.GetMainWindow = &GetMainWindowAPI,
-		.IsAnyBlockingWindowOpened = &WindowManager::IsAnyBlockingWindowOpened,
-		.SetHotkeyEnabled = &WindowManager::SetHotkeyEnabled,
-		.IsHotkeyEnabled = &WindowManager::IsHotkeyEnabled
-	};
-	const Model::InterfaceV3 interfaceV3{
-		.StructureSize = sizeof(Model::InterfaceV3),
-		.Version = Model::INTERFACE_VERSION_3,
-		.RegisterPanel = &PanelRegistry::Register,
-		.RegisterWindow = &WindowManager::RegisterWindow,
-		.GetMainWindow = &GetMainWindowAPI,
-		.IsAnyBlockingWindowOpened = &WindowManager::IsAnyBlockingWindowOpened,
-		.SetHotkeyEnabled = &WindowManager::SetHotkeyEnabled,
-		.IsHotkeyEnabled = &WindowManager::IsHotkeyEnabled,
-		.RegisterEvent = &EventManager::Register,
-		.UnregisterEvent = &EventManager::Unregister
-	};
-	const Model::InterfaceV4 interfaceV4{
-		.StructureSize = sizeof(Model::InterfaceV4),
-		.Version = Model::INTERFACE_VERSION_4,
-		.RegisterPanel = &PanelRegistry::Register,
-		.RegisterWindow = &WindowManager::RegisterWindow,
-		.GetMainWindow = &GetMainWindowAPI,
-		.IsAnyBlockingWindowOpened = &WindowManager::IsAnyBlockingWindowOpened,
-		.SetHotkeyEnabled = &WindowManager::SetHotkeyEnabled,
-		.IsHotkeyEnabled = &WindowManager::IsHotkeyEnabled,
-		.RegisterEvent = &EventManager::Register,
-		.UnregisterEvent = &EventManager::Unregister,
-		.RegisterInputEvent = &InputEventManager::Register,
-		.UnregisterInputEvent = &InputEventManager::Unregister,
-		.RegisterHudElement = &HudManager::Register,
-		.UnregisterHudElement = &HudManager::Unregister
-	};
-	const Model::InterfaceV5 interfaceV5{
-		.StructureSize = sizeof(Model::InterfaceV5),
-		.Version = Model::INTERFACE_VERSION_5,
 		.RegisterPanel = &PanelRegistry::Register,
 		.RegisterWindow = &WindowManager::RegisterWindow,
 		.GetMainWindow = &GetMainWindowAPI,
@@ -103,18 +60,5 @@ extern "C" __declspec(dllexport)
 	SFSEMenuFramework_QueryInterface(std::uint32_t a_version) noexcept
 {
 	using namespace SFSEMenuFramework::Model;
-	switch (a_version) {
-	case INTERFACE_VERSION:
-		return &interfaceV1;
-	case INTERFACE_VERSION_2:
-		return reinterpret_cast<const Interface*>(&interfaceV2);
-	case INTERFACE_VERSION_3:
-		return reinterpret_cast<const Interface*>(&interfaceV3);
-	case INTERFACE_VERSION_4:
-		return reinterpret_cast<const Interface*>(&interfaceV4);
-	case INTERFACE_VERSION_5:
-		return reinterpret_cast<const Interface*>(&interfaceV5);
-	default:
-		return nullptr;
-	}
+	return a_version == INTERFACE_VERSION ? &consumerInterface : nullptr;
 }

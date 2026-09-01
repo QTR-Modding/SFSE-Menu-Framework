@@ -5,7 +5,7 @@ The public consumer API lives separately under `include/SFSEMenuFramework`.
 
 The implementation is organized by responsibility:
 
-- `api`: exported interface tables and the single DLL query entry point.
+- `api`: the exported interface table and single DLL query entry point.
 - `runtime`: lifecycle/HUD dispatch, panel/window registration, callback snapshots, and consumer validation.
 - `config`: framework settings, persistence, and root-menu visibility.
 - `appearance`: live font/theme ownership; `appearance/fonts` separates font

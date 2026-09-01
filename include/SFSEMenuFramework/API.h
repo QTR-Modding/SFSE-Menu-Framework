@@ -12,10 +12,6 @@ namespace RE
 namespace SFSEMenuFramework::Model
 {
 	inline constexpr std::uint32_t INTERFACE_VERSION = 1;
-	inline constexpr std::uint32_t INTERFACE_VERSION_2 = 2;
-	inline constexpr std::uint32_t INTERFACE_VERSION_3 = 3;
-	inline constexpr std::uint32_t INTERFACE_VERSION_4 = 4;
-	inline constexpr std::uint32_t INTERFACE_VERSION_5 = 5;
 	inline constexpr std::uint32_t IMGUI_SOURCE_REVISION = 0x6F7B5D0E;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_ID_LENGTH = 255;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_TEXT_LENGTH = 255;
@@ -129,7 +125,7 @@ namespace SFSEMenuFramework::Model
 	struct WindowRegistration final
 	{
 		std::uint32_t        StructureSize{ sizeof(WindowRegistration) };
-		std::uint32_t        InterfaceVersion{ INTERFACE_VERSION_2 };
+		std::uint32_t        InterfaceVersion{ INTERFACE_VERSION };
 		ImGuiLayout          ImGui{};
 		WindowRenderFunction Render{ nullptr };
 		void*                UserData{ nullptr };
@@ -140,7 +136,7 @@ namespace SFSEMenuFramework::Model
 	struct EventRegistration final
 	{
 		std::uint32_t StructureSize{ sizeof(EventRegistration) };
-		std::uint32_t InterfaceVersion{ INTERFACE_VERSION_3 };
+		std::uint32_t InterfaceVersion{ INTERFACE_VERSION };
 		EventCallback Callback{ nullptr };
 		float         Priority{ 0.0F };
 		std::uint32_t Reserved{ 0 };
@@ -149,14 +145,14 @@ namespace SFSEMenuFramework::Model
 	struct InputEventRegistration final
 	{
 		std::uint32_t      StructureSize{ sizeof(InputEventRegistration) };
-		std::uint32_t      InterfaceVersion{ INTERFACE_VERSION_4 };
+		std::uint32_t      InterfaceVersion{ INTERFACE_VERSION };
 		InputEventCallback Callback{ nullptr };
 	};
 
 	struct HudElementRegistration final
 	{
 		std::uint32_t            StructureSize{ sizeof(HudElementRegistration) };
-		std::uint32_t            InterfaceVersion{ INTERFACE_VERSION_4 };
+		std::uint32_t            InterfaceVersion{ INTERFACE_VERSION };
 		ImGuiLayout              ImGui{};
 		HudElementRenderFunction Render{ nullptr };
 		void*                    UserData{ nullptr };
@@ -191,59 +187,8 @@ namespace SFSEMenuFramework::Model
 
 	struct Interface final
 	{
-		std::uint32_t         StructureSize{ sizeof(Interface) };
-		std::uint32_t         Version{ INTERFACE_VERSION };
-		RegisterPanelFunction RegisterPanel{ nullptr };
-	};
-
-	struct InterfaceV2 final
-	{
-		std::uint32_t                     StructureSize{ sizeof(InterfaceV2) };
-		std::uint32_t                     Version{ INTERFACE_VERSION_2 };
-		RegisterPanelFunction             RegisterPanel{ nullptr };
-		RegisterWindowFunction            RegisterWindow{ nullptr };
-		GetMainWindowFunction             GetMainWindow{ nullptr };
-		IsAnyBlockingWindowOpenedFunction IsAnyBlockingWindowOpened{ nullptr };
-		SetHotkeyEnabledFunction          SetHotkeyEnabled{ nullptr };
-		IsHotkeyEnabledFunction           IsHotkeyEnabled{ nullptr };
-	};
-
-	struct InterfaceV3 final
-	{
-		std::uint32_t                     StructureSize{ sizeof(InterfaceV3) };
-		std::uint32_t                     Version{ INTERFACE_VERSION_3 };
-		RegisterPanelFunction             RegisterPanel{ nullptr };
-		RegisterWindowFunction            RegisterWindow{ nullptr };
-		GetMainWindowFunction             GetMainWindow{ nullptr };
-		IsAnyBlockingWindowOpenedFunction IsAnyBlockingWindowOpened{ nullptr };
-		SetHotkeyEnabledFunction          SetHotkeyEnabled{ nullptr };
-		IsHotkeyEnabledFunction           IsHotkeyEnabled{ nullptr };
-		RegisterEventFunction             RegisterEvent{ nullptr };
-		UnregisterEventFunction           UnregisterEvent{ nullptr };
-	};
-
-	struct InterfaceV4 final
-	{
-		std::uint32_t                     StructureSize{ sizeof(InterfaceV4) };
-		std::uint32_t                     Version{ INTERFACE_VERSION_4 };
-		RegisterPanelFunction             RegisterPanel{ nullptr };
-		RegisterWindowFunction            RegisterWindow{ nullptr };
-		GetMainWindowFunction             GetMainWindow{ nullptr };
-		IsAnyBlockingWindowOpenedFunction IsAnyBlockingWindowOpened{ nullptr };
-		SetHotkeyEnabledFunction          SetHotkeyEnabled{ nullptr };
-		IsHotkeyEnabledFunction           IsHotkeyEnabled{ nullptr };
-		RegisterEventFunction             RegisterEvent{ nullptr };
-		UnregisterEventFunction           UnregisterEvent{ nullptr };
-		RegisterInputEventFunction        RegisterInputEvent{ nullptr };
-		UnregisterInputEventFunction      UnregisterInputEvent{ nullptr };
-		RegisterHudElementFunction        RegisterHudElement{ nullptr };
-		UnregisterHudElementFunction      UnregisterHudElement{ nullptr };
-	};
-
-	struct InterfaceV5 final
-	{
-		std::uint32_t                     StructureSize{ sizeof(InterfaceV5) };
-		std::uint32_t                     Version{ INTERFACE_VERSION_5 };
+		std::uint32_t                     StructureSize{ sizeof(Interface) };
+		std::uint32_t                     Version{ INTERFACE_VERSION };
 		RegisterPanelFunction             RegisterPanel{ nullptr };
 		RegisterWindowFunction            RegisterWindow{ nullptr };
 		GetMainWindowFunction             GetMainWindow{ nullptr };
@@ -271,11 +216,7 @@ namespace SFSEMenuFramework::Model
 	static_assert(sizeof(EventRegistration) == 24);
 	static_assert(sizeof(InputEventRegistration) == 16);
 	static_assert(sizeof(HudElementRegistration) == 80);
-	static_assert(sizeof(Interface) == 16);
-	static_assert(sizeof(InterfaceV2) == 56);
-	static_assert(sizeof(InterfaceV3) == 72);
-	static_assert(sizeof(InterfaceV4) == 104);
-	static_assert(sizeof(InterfaceV5) == 120);
-	static_assert(offsetof(InterfaceV5, PushFont) == sizeof(InterfaceV4));
+	static_assert(sizeof(Interface) == 120);
+	static_assert(offsetof(Interface, PushFont) == 104);
 	static_assert(std::atomic<bool>::is_always_lock_free);
 }
