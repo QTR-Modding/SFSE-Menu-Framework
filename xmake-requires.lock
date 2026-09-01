@@ -11,6 +11,12 @@
             },
             version = "4.3.4"
         },
+        ["freetype 2.14.3#a0c24696"] = {
+            repo = {
+                url = "xmake-packages"
+            },
+            version = "2.14.3"
+        },
         ["ninja#f56260b5"] = {
             repo = {
                 branch = "master",

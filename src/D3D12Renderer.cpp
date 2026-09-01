@@ -1,6 +1,9 @@
 #include "D3D12Renderer.h"
 
+#include "D3D12FontTexture.h"
 #include "EventManager.h"
+#include "FontManager.h"
+#include "ThemeManager.h"
 #include "Win32Platform.h"
 #include "WindowManager.h"
 
@@ -11,6 +14,7 @@
 #include <cmath>
 #include <mutex>
 #include <type_traits>
+#include <utility>
 
 #include <wrl/client.h>
 
@@ -18,12 +22,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 {
 	namespace
 	{
-		// SKSE Menu Framework 3 defaults FontSizeMedium to 32 px and builds
-		// that font into its atlas (commit
-		// 928e01ab459822a8d233ab99f0419ea1de23c775, GPL-3.0). This port uses
-		// ImGui's MIT-licensed embedded font at the same size until the full
-		// configurable SFSE font loader is ported.
-		constexpr float defaultFontSizePixels = 32.0F;
 		using Microsoft::WRL::ComPtr;
 		constexpr std::size_t frameResourceCount = 4;
 		constexpr std::uint64_t maximumBlockingWindowFrameAgeMilliseconds = 250;
@@ -50,6 +48,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		{
 			std::uint32_t LastCompletedValue{ 0 };
 			std::uint32_t PendingValue{ 0 };
+			D3D12FontTexture::Resources FontResources;
 			bool          Pending{ false };
 		};
 
@@ -60,6 +59,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			ComPtr<ID3D12DescriptorHeap>                   RenderTargetHeap;
 			ComPtr<ID3D12Resource>                         CompletionBuffer;
 			std::array<CompletionSlot, frameResourceCount> CompletionSlots{};
+			D3D12FontTexture::Resources                   ActiveFontResources;
 			std::uint64_t                                  NextFrameIndex{ 0 };
 			ImGuiContext*                                  Context{ nullptr };
 			std::uint64_t                                  ContextGeneration{ 0 };
@@ -111,6 +111,11 @@ namespace SFSEMenuFramework::D3D12Renderer
 			}
 
 			a_state.RenderTargetHeap.Reset();
+			a_state.ActiveFontResources.Reset();
+			for (auto& slot : a_state.CompletionSlots) {
+				slot.FontResources.Reset();
+				slot.Pending = false;
+			}
 			a_state.ShaderHeap.Reset();
 			a_state.CompletionBuffer.Reset();
 			a_state.Device.Reset();
@@ -204,6 +209,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			}
 
 			slot.LastCompletedValue = completedValue;
+			slot.FontResources.Reset();
 			slot.Pending = false;
 			return true;
 		}
@@ -225,7 +231,43 @@ namespace SFSEMenuFramework::D3D12Renderer
 			a_commandList->WriteBufferImmediate(1, &marker, &mode);
 
 			slot.Pending = true;
+			slot.FontResources = a_state.ActiveFontResources;
+			a_state.ActiveFontResources.UploadBuffer.Reset();
 			++a_state.NextFrameIndex;
+		}
+
+		struct FontUploadContext final
+		{
+			ID3D12Device*              Device{};
+			ID3D12GraphicsCommandList* CommandList{};
+			D3D12FontTexture::Resources Candidate;
+		};
+
+		[[nodiscard]] bool BuildFontTexture(
+			const unsigned char*             a_pixels,
+			int                              a_width,
+			int                              a_height,
+			FontManager::TextureBuildResult& a_result,
+			void*                            a_userData) noexcept
+		{
+			auto* context = static_cast<FontUploadContext*>(a_userData);
+			if (!context || !context->Device || !context->CommandList ||
+				!D3D12FontTexture::Create(
+					context->Device,
+					context->CommandList,
+					a_pixels,
+					a_width,
+					a_height,
+					context->Candidate)) {
+				return false;
+			}
+
+			static_assert(sizeof(std::uintptr_t) >= sizeof(UINT64));
+			a_result.TextureID = static_cast<std::uintptr_t>(
+				context->Candidate.ShaderHeap
+					->GetGPUDescriptorHandleForHeapStart()
+					.ptr);
+			return true;
 		}
 
 		[[nodiscard]] bool InitializeLocked(RendererState& a_state, ID3D12Device* a_device)
@@ -294,16 +336,13 @@ namespace SFSEMenuFramework::D3D12Renderer
 				ImGuiConfigFlags_NavEnableKeyboard |
 				ImGuiConfigFlags_NavEnableGamepad |
 				ImGuiConfigFlags_NoMouseCursorChange;
-			ImFontConfig fontConfiguration{};
-			fontConfiguration.SizePixels = defaultFontSizePixels;
-			io.FontDefault = io.Fonts->AddFontDefault(&fontConfiguration);
-			if (!io.FontDefault || !io.Fonts->Build()) {
-				logger::critical("Failed to build the 32 px ImGui font atlas");
+			if (!FontManager::BuildDefaultAtlas(io)) {
+				logger::critical("Failed to build the configured ImGui font atlas");
 				a_state.InitializationFailed = true;
 				ResetInitialization(a_state);
 				return false;
 			}
-			ImGui::StyleColorsDark();
+			ThemeManager::Initialize();
 
 			const auto shaderCpuHandle = a_state.ShaderHeap->GetCPUDescriptorHandleForHeapStart();
 			const auto shaderGpuHandle = a_state.ShaderHeap->GetGPUDescriptorHandleForHeapStart();
@@ -326,6 +365,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 				ResetInitialization(a_state);
 				return false;
 			}
+			a_state.ActiveFontResources.Reset();
+			a_state.ActiveFontResources.ShaderHeap = a_state.ShaderHeap;
 
 			rendererReady.store(true, std::memory_order_release);
 			logger::info("ImGui DirectX 12 renderer initialized");
@@ -438,17 +479,34 @@ namespace SFSEMenuFramework::D3D12Renderer
 		}
 
 		ImGui::SetCurrentContext(rendererState.Context);
+		auto& io = ImGui::GetIO();
 		if (!Win32Platform::PrepareFrame()) {
 			return RenderResult::PlatformFrameUnavailable;
 		}
 		ImGui_ImplDX12_NewFrame();
-		auto& io = ImGui::GetIO();
 		if (!std::isfinite(io.DisplaySize.x) ||
 			!std::isfinite(io.DisplaySize.y) ||
 			io.DisplaySize.x <= 0.0F ||
 			io.DisplaySize.y <= 0.0F) {
 			return RenderResult::InvalidDisplaySize;
 		}
+
+		FontUploadContext fontUpload{
+			.Device = rendererState.Device.Get(),
+			.CommandList = a_commandList
+		};
+		const auto fontApplyResult = FontManager::ApplyPendingAtlas(
+			io,
+			BuildFontTexture,
+			&fontUpload);
+		if (fontApplyResult == FontManager::LiveApplyResult::Applied) {
+			rendererState.ActiveFontResources = std::move(fontUpload.Candidate);
+			if (!ThemeManager::QueueUIScale(FontManager::GetActiveUIScale())) {
+				logger::critical("Could not queue the validated live UI scale");
+			}
+			logger::info("Applied live ImGui font and UI scale");
+		}
+		ThemeManager::ApplyPending();
 
 		io.DisplayFramebufferScale = ImVec2{
 			static_cast<float>(description.Width) / io.DisplaySize.x,
@@ -496,7 +554,12 @@ namespace SFSEMenuFramework::D3D12Renderer
 			&renderTargetView,
 			renderTargetHandle);
 
-		ID3D12DescriptorHeap* frameworkHeaps[]{ rendererState.ShaderHeap.Get() };
+		auto* activeFontHeap =
+			rendererState.ActiveFontResources.ShaderHeap.Get();
+		if (!activeFontHeap) {
+			return RenderResult::DeviceMismatch;
+		}
+		ID3D12DescriptorHeap* frameworkHeaps[]{ activeFontHeap };
 		a_setDescriptorHeaps(a_commandList, 1, frameworkHeaps);
 		a_commandList->OMSetRenderTargets(1, &renderTargetHandle, FALSE, nullptr);
 		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), a_commandList);

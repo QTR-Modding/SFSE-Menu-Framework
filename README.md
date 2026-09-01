@@ -13,12 +13,32 @@ SFSE Menu Framework is a native Starfield Script Extender plugin for building Im
 ## Controls
 
 - Press `F1` once to open or close the Mod Control Panel.
-- On a gamepad, double-press the left bumper to open it; one press closes it.
+- On a gamepad, double-press Start to open it; one press closes it.
 - Press `Escape` while the panel is open to return to the game.
 
-Bindings, toggle modes, pause, and background blur are configurable through
+Menu style, bindings, toggle modes, pause, background blur, font face,
+variable font weight, logical font size, and manual UI scale are configurable through
 `Options > Open Settings` and
 `Data/SFSE/Plugins/SFSEMenuFramework.ini`.
+The bundled `CLASSIC`, `MODERN`, `SKYRIMDEFAULT`, and `STARFIELD` themes live in
+`Data/SFSE/Plugins/SFSEMenuFrameworkThemes`. Additional JSON themes using
+the same schema appear in the selector after the next game restart.
+The framework defaults to the `CLASSIC` theme and bundled Jost 400 Book face
+at 48 logical px, rasterized with FreeType native hinting. Jost 500 Medium is
+also bundled. The `STARFIELD` theme pairs with the bundled Space Grotesk
+variable face, which supports live weights from 300 through 700; weight 500 is
+the intended starting point. At 4K, 32 logical px and UI scale 1.5 are the
+intended size and scale starting point.
+ASCII-named direct-child `.ttf` and `.otf` files placed in
+`Data/SFSE/Plugins/Fonts` appear in the selector after the next game restart.
+Font face, variable weight, font size, and UI-scale previews apply live;
+weight, size, and scale commit when their controls are released, and `Save`
+persists the current preview.
+If the selected font is missing or cannot build the framework tries the
+bundled Jost faces and then ImGui's embedded font. Custom font files are
+trusted local mod assets. A standard OpenType `wght` axis is detected
+automatically; other variation axes, color fonts, CFF2, and otherwise
+specialized OpenType features are not controlled by the framework.
 The main window follows SKSE Menu Framework's shell: slash-delimited entries
 form a collapsible navigation tree, the search box filters top-level mod
 sections, and favorite sections sort before the remaining alphabetical list.
@@ -145,9 +165,12 @@ an ImGui platform or renderer backend. The pinned `imconfig.h` must remain
 unmodified. Registration validates the public and internal ImGui layouts and
 rejects known non-default configuration families; the source-revision token is
 the consumer's declaration that it compiled the pinned core sources. The SDK
-header binds the consumer's ImGui copy to the framework context and allocator
-for each callback. Render callbacks must be `noexcept` and must balance every
-ImGui `Begin`/`End` and `Push`/`Pop` operation.
+	header binds the consumer's ImGui copy to the framework context and allocator
+	for each callback. Render callbacks must be `noexcept` and must balance every
+	ImGui `Begin`/`End` and `Push`/`Pop` operation.
+The ImGui context and `ImGui::GetIO().Fonts` atlas address remain stable across
+live font changes, but cached `ImFont*` values do not. Consumers must reacquire
+font pointers inside every render callback.
 Because a registered page can render before `kPostDataLoad`, its callback must
 gate any data-dependent engine access at the consumer plugin's own lifecycle
 boundary.
@@ -171,7 +194,12 @@ xmake project -k vsxmake
 
 ## License
 
-SFSE Menu Framework is licensed under [GPL-3.0-only](COPYING) with the [Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS). Dear ImGui remains available under its [MIT license](extern/imgui/LICENSE.txt).
+Original SFSE Menu Framework code is licensed under
+[GPL-3.0-only](COPYING) with the
+[Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS).
+SKSE Menu Framework-derived portions remain GPL-3.0-only as detailed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Dear ImGui remains
+available under its [MIT license](extern/imgui/LICENSE.txt).
 
 This project is a Starfield port of [SKSE Menu Framework 3 by SkyrimThiago at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, `AddWindow`/`WindowInterface`/`GetMainWindow` API, aggregate blocking-window behavior, hotkey enable control, software-cursor behavior, preserve-PrintScreen modal policy, toggle and close behavior, and fresh `LB` + double-press gamepad default are directly adapted under GPL-3.0.
 
@@ -188,6 +216,27 @@ not yet include SKSE Menu Framework's Font Awesome assets. English UI labels
 are embedded rather than copied into translation sidecars. Unlike the pinned
 source's process-only placement state, the Starfield port retains built-in
 window placement through its ImGui ini file.
+
+Theme discovery, the dark-style baseline, the JSON style schema, the
+`#RRGGBBAA` color behavior, the Settings selector, and the bundled
+`classic.json`, `modern.json`, and `skyrimDefault.json` assets are directly
+adapted from that pinned revision's `include/Theme.h`, `src/Theme.cpp`,
+`src/Config.cpp`, and `src/UI.cpp`. The port validates a complete temporary
+style and commits it at the next Starfield ImGui frame boundary, so a malformed
+theme cannot partially alter the live style.
+
+Font discovery, configured-primary selection, the 32 px default, fallback
+behavior, rebuild request/consume flow, and render-boundary atlas replacement
+are directly adapted from that pinned revision's `src/FontManager.cpp`,
+`src/Hooks.cpp`, and `src/Config.cpp`. The Starfield port substitutes the freely
+redistributable Jost 500 Medium and Jost 400 Book faces for SKSE Menu
+Framework's Skyrim font assets and uses FreeType native hinting without
+horizontal pixel snapping. Static Space Grotesk Medium and the Space Grotesk
+300-700 variable-weight face are bundled independently as redistributable
+Starfield-inspired options; Starfield's proprietary NB Architekt and NB
+Grotesk font data are not redistributed. Variable-axis selection,
+candidate-atlas validation, manual UI scale, and per-generation DirectX 12
+descriptor/texture retirement are Starfield-specific.
 
 The lifecycle event enum, RAII listener API, priority-order intent, main-menu
 open/close intent, and before/after-render boundaries are also directly adapted

@@ -1,5 +1,6 @@
 #include "McpWindow.h"
 
+#include "FontManager.h"
 #include "FrameworkSettings.h"
 #include "PanelRegistry.h"
 #include "RootMenuConfig.h"
@@ -652,9 +653,11 @@ namespace
 
 		const auto available = ImGui::GetContentRegionAvail();
 		const float navigationWidth = available.x * 0.3F;
-		constexpr float filterHeight = 50.0F;
-		constexpr float headerHeight = 41.0F;
-		constexpr float headerOffsetY = 5.0F;
+		const float uiScale =
+			SFSEMenuFramework::FontManager::GetActiveUIScale();
+		const float filterHeight = 50.0F * uiScale;
+		const float headerHeight = 41.0F * uiScale;
+		const float headerOffsetY = 5.0F * uiScale;
 
 		if (ImGui::BeginChild(
 				"TreeView2",
@@ -686,7 +689,7 @@ namespace
 				ImGuiChildFlags_Border)) {
 			ImGui::PushStyleVar(
 				ImGuiStyleVar_FramePadding,
-				ImVec2{ 0.0F, 5.0F });
+				ImVec2{ 0.0F, 5.0F * uiScale });
 
 			std::vector<RootMenuNode*> rootMenus;
 			rootMenus.reserve(menuTree.Roots.size());
