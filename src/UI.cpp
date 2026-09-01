@@ -725,6 +725,29 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 
 			ImGui::SeparatorText("Fonts");
+			ImGui::TextUnformatted("Font rendering");
+			constexpr std::array renderingNames{ "NATIVE", "LIGHT", "AUTO" };
+			int rendering = std::to_underlying(pending.Rendering);
+			if (ImGui::Combo("##FontRendering", &rendering, renderingNames.data(),
+					static_cast<int>(renderingNames.size()))) {
+				pending.Rendering = static_cast<FrameworkSettings::FontRendering>(rendering);
+				fontSettingsInvalid = !QueueLiveFontSettings(pending);
+			}
+			switch (pending.Rendering) {
+			case FrameworkSettings::FontRendering::Light:
+				ImGui::TextDisabled(
+					"Uses FreeType's light target; often smoother, sometimes softer.");
+				break;
+			case FrameworkSettings::FontRendering::Auto:
+				ImGui::TextDisabled("FreeType auto-hinting; useful for weakly hinted fonts.");
+				break;
+			case FrameworkSettings::FontRendering::Native:
+			default:
+				ImGui::TextDisabled(
+					"Prefers the font's built-in hinter; FreeType may fall back to auto.");
+				break;
+			}
+
 			ImGui::TextUnformatted("Primary font");
 			const auto pendingFontName = FrameworkSettings::GetFontFileNameView(pending.PrimaryFont);
 
@@ -804,6 +827,10 @@ namespace SFSEMenuFramework::SettingsWindow
 			const auto active = FontManager::GetActiveInfo();
 			const auto activeScalePercent =
 				static_cast<int>(std::lround(active.Settings.UIScale * 100.0F));
+			const auto activeRendering = FrameworkSettings::GetFontRenderingName(
+				active.Settings.Rendering);
+			ImGui::TextDisabled("Rendering: %.*s",
+				static_cast<int>(activeRendering.size()), activeRendering.data());
 			if (active.WeightAxis) {
 				ImGui::TextDisabled(
 					"Active: %.*s | weight %.0f | %.1f px | %d%% | %.1f raster px",
@@ -870,7 +897,8 @@ namespace SFSEMenuFramework::SettingsWindow
 					ImVec4{ 1.0F, 0.75F, 0.25F, 1.0F },
 					"Live preview applied; changes are not saved.");
 			} else {
-				ImGui::TextDisabled("Font, variable weight, and UI-scale changes apply live.");
+				ImGui::TextDisabled(
+					"Font rendering, face, variable weight, and UI-scale changes apply live.");
 			}
 		}
 

@@ -7,6 +7,7 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <misc/freetype/imgui_freetype.h>
 
 #include <algorithm>
 #include <charconv>
@@ -305,6 +306,18 @@ namespace SFSEMenuFramework::FontManager
 			ImFontConfig configuration{};
 			configuration.PixelSnapH = false;
 			configuration.FontBuilderFlags = 0;
+			switch (a_source.Settings.Rendering) {
+			case FrameworkSettings::FontRendering::Light:
+				a_atlas.FontBuilderFlags = ImGuiFreeTypeBuilderFlags_LightHinting;
+				break;
+			case FrameworkSettings::FontRendering::Auto:
+				a_atlas.FontBuilderFlags = ImGuiFreeTypeBuilderFlags_ForceAutoHint;
+				break;
+			case FrameworkSettings::FontRendering::Native:
+			default:
+				a_atlas.FontBuilderFlags = 0;
+				break;
+			}
 			configuration.RasterizerDensity = 1.0F;
 			if (a_source.Bytes.empty()) {
 				configuration.SizePixels = a_source.RasterSize();
@@ -420,20 +433,22 @@ namespace SFSEMenuFramework::FontManager
 			if (active.WeightAxis) {
 				logger::info(
 					"Loaded ImGui font '{}' at weight {:.0f}, {:.1f} logical px, "
-					"{:.0f}% UI scale, {:.1f} raster px (FreeType native hinting)",
+					"{:.0f}% UI scale, {:.1f} raster px (FreeType {} hinting)",
 					active.ActiveName,
 					active.Settings.FontWeight,
 					active.Settings.FontSizeMedium,
 					active.Settings.UIScale * 100.0F,
-					active.RasterSize());
+					active.RasterSize(),
+					FrameworkSettings::GetFontRenderingName(active.Settings.Rendering));
 			} else {
 				logger::info(
 					"Loaded ImGui font '{}' at {:.1f} logical px, {:.0f}% UI scale, "
-					"{:.1f} raster px (FreeType native hinting)",
+					"{:.1f} raster px (FreeType {} hinting)",
 					active.ActiveName,
 					active.Settings.FontSizeMedium,
 					active.Settings.UIScale * 100.0F,
-					active.RasterSize());
+					active.RasterSize(),
+					FrameworkSettings::GetFontRenderingName(active.Settings.Rendering));
 			}
 		}
 

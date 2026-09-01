@@ -17,6 +17,13 @@ namespace SFSEMenuFramework::FrameworkSettings
 		Off
 	};
 
+	enum class FontRendering : std::uint8_t
+	{
+		Native,
+		Light,
+		Auto
+	};
+
 	struct Binding final
 	{
 		std::string_view Name;
@@ -34,6 +41,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 		float        MinFontSize{};
 		float        MaxFontSize{};
 		float        UIScale{};
+		FontRendering Rendering{};
 	};
 
 	struct SettingsSnapshot final
@@ -66,6 +74,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 	[[nodiscard]] MenuStyleName GetMenuStyle() noexcept;
 	[[nodiscard]] FontSettings  GetFontSettings() noexcept;
 	[[nodiscard]] FontSettings  GetDefaultFontSettings() noexcept;
+	[[nodiscard]] std::string_view GetFontRenderingName(FontRendering a_rendering) noexcept;
 	[[nodiscard]] SettingsSnapshot CaptureSnapshot() noexcept;
 	void RestoreSnapshot(const SettingsSnapshot& a_snapshot) noexcept;
 	[[nodiscard]] std::string_view GetFontFileNameView(const FontFileName& a_name) noexcept;

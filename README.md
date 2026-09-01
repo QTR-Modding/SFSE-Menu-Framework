@@ -16,8 +16,8 @@ SFSE Menu Framework is a native Starfield Script Extender plugin for building Im
 - On a gamepad, double-press Start to open it; one press closes it.
 - Press `Escape` while the panel is open to return to the game.
 
-Menu style, bindings, toggle modes, pause, background blur, font face,
-variable font weight, logical font size, and manual UI scale are configurable through
+Menu style, bindings, toggle modes, pause, background blur, font rendering mode,
+font face, variable font weight, logical font size, and manual UI scale are configurable through
 `Options > Open Settings` and
 `Data/SFSE/Plugins/SFSEMenuFramework.ini`.
 The bundled `CLASSIC`, `MODERN`, `SKYRIMDEFAULT`, and `STARFIELD` themes live in
@@ -31,8 +31,8 @@ the intended starting point. At 4K, 32 logical px and UI scale 1.5 are the
 intended size and scale starting point.
 ASCII-named direct-child `.ttf` and `.otf` files placed in
 `Data/SFSE/Plugins/Fonts` appear in the selector after the next game restart.
-Font face, variable weight, font size, and UI-scale previews apply live;
-weight, size, and scale commit when their controls are released, and `Save`
+Font rendering mode, face, variable weight, font size, and UI-scale previews
+apply live; weight, size, and scale commit when their controls are released, and `Save`
 persists the current preview.
 If the selected font is missing or cannot build the framework tries the
 bundled Jost faces and then ImGui's embedded font. Custom font files are

@@ -82,6 +82,16 @@ namespace SFSEMenuFramework::FrameworkSettings
 			NamedToggleMode{ L"DOUBLEPRESS", ToggleMode::DoublePress },
 			NamedToggleMode{ L"OFF", ToggleMode::Off }
 		};
+		struct NamedFontRendering final
+		{
+			std::string_view Name;
+			FontRendering    Value;
+		};
+		constexpr std::array fontRenderingModes{
+			NamedFontRendering{ "NATIVE", FontRendering::Native },
+			NamedFontRendering{ "LIGHT", FontRendering::Light },
+			NamedFontRendering{ "AUTO", FontRendering::Auto }
+		};
 
 		constexpr wchar_t sectionName[]{ L"General" };
 		constexpr wchar_t fontSectionName[]{ L"Fonts" };
@@ -114,7 +124,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 			.MenuStyle = MakeName<MenuStyleName>("CLASSIC"),
 			.Fonts = {
 				MakeName<FontFileName>("Jost-400-Book.ttf"),
-				500.0F, 48.0F, 12.0F, 64.0F, 1.0F }
+				500.0F, 48.0F, 12.0F, 64.0F, 1.0F, FontRendering::Native }
 		};
 		constexpr const auto& defaultFontSettings = defaultValues.Fonts;
 		SRWLOCK stateLock = SRWLOCK_INIT;
@@ -324,6 +334,26 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return true;
 		}
 
+		[[nodiscard]] bool ParseFontRendering(
+			std::wstring_view a_text, FontRendering& a_result) noexcept
+		{
+			a_text = Trim(a_text);
+			for (const auto& rendering : fontRenderingModes) {
+				if (EqualsIgnoreCase(a_text, rendering.Name)) {
+					a_result = rendering.Value;
+					return true;
+				}
+			}
+
+			std::uint32_t numeric{};
+			if (!ParseNumber(a_text, numeric) ||
+				numeric > std::to_underlying(FontRendering::Auto)) {
+				return false;
+			}
+			a_result = static_cast<FontRendering>(numeric);
+			return true;
+		}
+
 		[[nodiscard]] bool ParseBool(std::wstring_view a_text, bool& a_result) noexcept
 		{
 			a_text = Trim(a_text);
@@ -450,6 +480,8 @@ namespace SFSEMenuFramework::FrameworkSettings
 			       a_settings.MinFontSize <= a_settings.MaxFontSize &&
 			       a_settings.FontSizeMedium >= a_settings.MinFontSize &&
 			       a_settings.FontSizeMedium <= a_settings.MaxFontSize &&
+			       std::to_underlying(a_settings.Rendering) <=
+				       std::to_underlying(FontRendering::Auto) &&
 			       a_settings.UIScale >= hardMinUIScale &&
 			       a_settings.UIScale <= hardMaxUIScale &&
 			       a_settings.FontSizeMedium * a_settings.UIScale <=
@@ -486,6 +518,11 @@ namespace SFSEMenuFramework::FrameworkSettings
 				unchanged = false;
 			}
 			a_settings.PrimaryFont = normalizedName;
+			if (std::to_underlying(a_settings.Rendering) >
+				std::to_underlying(FontRendering::Auto)) {
+				a_settings.Rendering = defaultFontSettings.Rendering;
+				unchanged = false;
+			}
 
 			auto normalizeScalar = [&unchanged](
 				float& a_value,
@@ -664,6 +701,15 @@ namespace SFSEMenuFramework::FrameworkSettings
 	{ return BindingName(keyboardBindings, a_key); }
 	std::string_view GetGamePadBindingName(std::uint32_t a_key) noexcept
 	{ return BindingName(gamePadBindings, a_key); }
+	std::string_view GetFontRenderingName(FontRendering a_rendering) noexcept
+	{
+		for (const auto& rendering : fontRenderingModes) {
+			if (rendering.Value == a_rendering) {
+				return rendering.Name;
+			}
+		}
+		return fontRenderingModes.front().Name;
+	}
 
 	bool Load() noexcept
 	{
@@ -710,6 +756,8 @@ namespace SFSEMenuFramework::FrameworkSettings
 			defaultFontSettings.PrimaryFont, [](std::wstring_view text, FontFileName& value) {
 				return ParseName(text, value, false, true);
 			});
+		profile.Read(fontSectionName, L"FontRendering", loaded.Fonts.Rendering,
+			defaultFontSettings.Rendering, ParseFontRendering);
 		for (const auto& setting : fontFloatSettings) {
 			profile.Read(
 				fontSectionName, setting.Name, loaded.Fonts.*setting.Value,
@@ -750,6 +798,8 @@ namespace SFSEMenuFramework::FrameworkSettings
 			saved.BlurBackgroundOnMenu ? L"1" : L"0");
 		profile.Write(sectionName, L"MenuStyle", saved.MenuStyle.data());
 		profile.Write(fontSectionName, L"PrimaryFont", NameView(saved.Fonts.PrimaryFont));
+		profile.Write(fontSectionName, L"FontRendering",
+			GetFontRenderingName(saved.Fonts.Rendering));
 		for (const auto& setting : fontFloatSettings) {
 			profile.Write(
 				fontSectionName, setting.Name, saved.Fonts.*setting.Value);
@@ -872,6 +922,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 				NameView(a_left.PrimaryFont), NameView(a_right.PrimaryFont)) :
 			a_left.PrimaryFont == a_right.PrimaryFont;
 		return sameFont &&
+		       a_left.Rendering == a_right.Rendering &&
 		       close(a_left.FontWeight, a_right.FontWeight) &&
 		       close(a_left.FontSizeMedium, a_right.FontSizeMedium) &&
 		       close(a_left.MinFontSize, a_right.MinFontSize) &&
