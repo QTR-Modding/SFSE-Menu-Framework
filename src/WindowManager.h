@@ -30,7 +30,6 @@ namespace SFSEMenuFramework
 		[[nodiscard]] static WindowInterface* GetMainWindow() noexcept;
 		static void SetMainWindowRenderEnabled(bool a_enabled) noexcept;
 		[[nodiscard]] static bool SetMainWindowOpen(bool a_open) noexcept;
-		[[nodiscard]] static bool ToggleMainWindow() noexcept;
 		[[nodiscard]] static bool IsAnyWindowOpen() noexcept;
 		[[nodiscard]] static bool IsAnyBlockingWindowOpened() noexcept;
 		[[nodiscard]] static bool ShouldPauseGame() noexcept;
@@ -40,9 +39,6 @@ namespace SFSEMenuFramework
 		[[nodiscard]] static bool IsHotkeyEnabled() noexcept;
 		[[nodiscard]] static std::uint64_t GetBlockingWindowOpenGeneration() noexcept;
 		[[nodiscard]] static bool IsBlockingWindowOpenGeneration(
-			std::uint64_t a_generation) noexcept;
-		[[nodiscard]] static std::uint64_t GetMainWindowOpenGeneration() noexcept;
-		[[nodiscard]] static bool IsMainWindowOpenGeneration(
 			std::uint64_t a_generation) noexcept;
 		[[nodiscard]] static std::uint64_t GetMainWindowSessionGeneration() noexcept;
 	};

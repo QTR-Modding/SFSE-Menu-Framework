@@ -1,15 +1,10 @@
 #include "WindowManager.h"
 
 #include "EventManager.h"
+#include "PanelRegistry.h"
 #include "Win32Platform.h"
 
-#include <imgui.h>
-#include <imgui_internal.h>
-
-#include <Windows.h>
-
 #include <atomic>
-#include <bit>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -50,7 +45,6 @@ namespace
 		bool                                            BlurBackground{ false };
 		bool                                            MainOpen{ false };
 		std::uint64_t                                   BlockingGeneration{ 0 };
-		std::uint64_t                                   MainGeneration{ 0 };
 		std::uint64_t                                   MainSessionGeneration{ 0 };
 		std::atomic<bool>                               HotkeyEnabled{ true };
 	};
@@ -66,7 +60,6 @@ namespace
 		bool          Changed{ false };
 		std::uint32_t BlockingOpenEdges{ 0 };
 		std::uint64_t BlockingGeneration{ 0 };
-		std::uint64_t MainGeneration{ 0 };
 		std::uint64_t MainSessionGeneration{ 0 };
 	};
 
@@ -143,7 +136,6 @@ namespace
 			IncrementGeneration(a_registry.BlockingGeneration);
 		}
 		if (current.MainOpen && !a_registry.MainOpen) {
-			IncrementGeneration(a_registry.MainGeneration);
 			IncrementGeneration(a_registry.MainSessionGeneration);
 		}
 		a_registry.AnyOpen = current.AnyOpen;
@@ -154,9 +146,6 @@ namespace
 		current.RenderEnabled = a_registry.RenderEnabled;
 		current.BlockingGeneration = current.AnyBlocking ?
 			a_registry.BlockingGeneration :
-			0;
-		current.MainGeneration = current.MainOpen ?
-			a_registry.MainGeneration :
 			0;
 		current.MainSessionGeneration = current.MainOpen ?
 			a_registry.MainSessionGeneration :
@@ -172,47 +161,46 @@ namespace
 		}
 	}
 
-	[[nodiscard]] bool HasMatchingImGuiLayout(
-		const SFSEMenuFramework::Model::ImGuiLayout& a_layout) noexcept
+	[[nodiscard]] AggregateState ReadState(Registry& a_registry) noexcept
 	{
-		using namespace SFSEMenuFramework;
-		return a_layout.StructureSize >= sizeof(Model::ImGuiLayout) &&
-		       a_layout.VersionNumber == IMGUI_VERSION_NUM &&
-		       a_layout.SourceRevision == Model::IMGUI_SOURCE_REVISION &&
-		       a_layout.ConfigurationFlags == 0 &&
-		       a_layout.IoSize == sizeof(ImGuiIO) &&
-		       a_layout.StyleSize == sizeof(ImGuiStyle) &&
-		       a_layout.ContextSize == sizeof(ImGuiContext) &&
-		       a_layout.Vec2Size == sizeof(ImVec2) &&
-		       a_layout.Vec4Size == sizeof(ImVec4) &&
-		       a_layout.DrawVertSize == sizeof(ImDrawVert) &&
-		       a_layout.DrawIdxSize == sizeof(ImDrawIdx) &&
-		       a_layout.DrawCmdSize == sizeof(ImDrawCmd) &&
-		       a_layout.TextureIdSize == sizeof(ImTextureID) &&
-		       a_layout.WcharSize == sizeof(ImWchar);
+		auto state = RefreshState(a_registry);
+		NotifyHostWindow(state.Changed);
+		return state;
 	}
 
-	[[nodiscard]] bool IsExecutableImageAddress(
-		SFSEMenuFramework::Model::WindowRenderFunction a_function) noexcept
+	[[nodiscard]] AggregateState ReadState() noexcept
 	{
-		static_assert(sizeof(a_function) == sizeof(const void*));
-		const auto address = std::bit_cast<const void*>(a_function);
+		auto* registry = GetRegistry();
+		return registry ? ReadState(*registry) : AggregateState{};
+	}
 
-		MEMORY_BASIC_INFORMATION information{};
-		if (::VirtualQuery(address, &information, sizeof(information)) !=
-				sizeof(information) ||
-			information.State != MEM_COMMIT ||
-			information.Type != MEM_IMAGE ||
-			(information.Protect & PAGE_GUARD) != 0 ||
-			!information.AllocationBase) {
+	template <class Transition>
+	[[nodiscard]] bool ApplyMainWindowTransition(
+		Transition a_transition,
+		bool&      a_result) noexcept
+	{
+		auto* registry = GetRegistry();
+		auto* window = registry ?
+			registry->MainWindow.load(std::memory_order_acquire) :
+			nullptr;
+		if (!registry || !window) {
 			return false;
 		}
 
-		const auto protection = information.Protect & 0xFF;
-		return protection == PAGE_EXECUTE ||
-		       protection == PAGE_EXECUTE_READ ||
-		       protection == PAGE_EXECUTE_READWRITE ||
-		       protection == PAGE_EXECUTE_WRITECOPY;
+		{
+			std::scoped_lock lock{ registry->MainTransitionMutex };
+			if (!a_transition(window->IsOpen, a_result)) {
+				return false;
+			}
+			// SKSE-MF's Close restores the main/config blocking defaults after
+			// Resume Game. Store only after IsOpen changed so a close cannot expose
+			// a transient blocking-open edge to aggregate-state observers.
+			window->BlockUserInput.store(true, std::memory_order_release);
+			static_cast<void>(RefreshState(*registry));
+		}
+		static_cast<void>(
+			SFSEMenuFramework::Win32Platform::PostHostWindowCallback());
+		return true;
 	}
 
 	[[nodiscard]] SFSEMenuFramework::WindowInterface* PublishWindow(
@@ -281,10 +269,12 @@ SFSEMenuFramework::Model::RegistrationResult
 	if (!a_registration->Render || a_registration->BlockUserInput > 1) {
 		return Model::RegistrationResult::InvalidArgument;
 	}
-	if (!HasMatchingImGuiLayout(a_registration->ImGui)) {
+	if (!SFSEMenuFramework::Detail::HasMatchingImGuiLayout(
+			a_registration->ImGui)) {
 		return Model::RegistrationResult::ImGuiMismatch;
 	}
-	if (!IsExecutableImageAddress(a_registration->Render)) {
+	if (!SFSEMenuFramework::Detail::IsExecutableImageFunction(
+			a_registration->Render)) {
 		return Model::RegistrationResult::InvalidArgument;
 	}
 
@@ -320,8 +310,7 @@ std::uint64_t SFSEMenuFramework::WindowManager::RenderOpenWindows(
 		return 0;
 	}
 
-	const auto before = RefreshState(*registry);
-	NotifyHostWindow(before.Changed);
+	const auto before = ReadState(*registry);
 	if (!before.RenderEnabled) {
 		return 0;
 	}
@@ -346,8 +335,7 @@ std::uint64_t SFSEMenuFramework::WindowManager::RenderOpenWindows(
 		}
 	}
 
-	const auto after = RefreshState(*registry);
-	NotifyHostWindow(after.Changed);
+	const auto after = ReadState(*registry);
 	return renderedBlockingWindow &&
 		before.BlockingGeneration != 0 &&
 		after.BlockingGeneration == before.BlockingGeneration ?
@@ -410,9 +398,6 @@ void SFSEMenuFramework::WindowManager::SetMainWindowRenderEnabled(
 				if (registry->AnyBlocking) {
 					IncrementGeneration(registry->BlockingGeneration);
 				}
-				if (registry->MainOpen) {
-					IncrementGeneration(registry->MainGeneration);
-				}
 			}
 			registry->RenderEnabled = a_enabled;
 			changed = true;
@@ -423,94 +408,32 @@ void SFSEMenuFramework::WindowManager::SetMainWindowRenderEnabled(
 
 bool SFSEMenuFramework::WindowManager::SetMainWindowOpen(bool a_open) noexcept
 {
-	auto* registry = GetRegistry();
-	auto* window = registry ?
-		registry->MainWindow.load(std::memory_order_acquire) :
-		nullptr;
-	if (!registry || !window) {
-		return false;
-	}
-
-	{
-		std::scoped_lock lock{ registry->MainTransitionMutex };
-		if (!EventManager::SetMainWindowState(window->IsOpen, a_open)) {
-			return false;
-		}
-		// SKSE-MF's Close restores the main/config blocking defaults after
-		// Resume Game. Store only after IsOpen changed so a close cannot expose
-		// a transient blocking-open edge to aggregate-state observers.
-		window->BlockUserInput.store(true, std::memory_order_release);
-		static_cast<void>(RefreshState(*registry));
-	}
-	static_cast<void>(Win32Platform::PostHostWindowCallback());
-	return true;
-}
-
-bool SFSEMenuFramework::WindowManager::ToggleMainWindow() noexcept
-{
-	auto* registry = GetRegistry();
-	auto* window = registry ?
-		registry->MainWindow.load(std::memory_order_acquire) :
-		nullptr;
-	if (!registry || !window) {
-		return false;
-	}
-
-	bool open{};
-	{
-		std::scoped_lock lock{ registry->MainTransitionMutex };
-		if (!EventManager::ToggleMainWindowState(window->IsOpen, &open)) {
-			return false;
-		}
-		window->BlockUserInput.store(true, std::memory_order_release);
-		static_cast<void>(RefreshState(*registry));
-	}
-	static_cast<void>(Win32Platform::PostHostWindowCallback());
-	return open;
+	bool ignored{};
+	return ApplyMainWindowTransition(
+		[a_open](std::atomic<bool>& a_state, bool&) {
+			return EventManager::SetMainWindowState(a_state, a_open);
+		},
+		ignored);
 }
 
 bool SFSEMenuFramework::WindowManager::IsAnyWindowOpen() noexcept
 {
-	auto* registry = GetRegistry();
-	if (!registry) {
-		return false;
-	}
-	const auto state = RefreshState(*registry);
-	NotifyHostWindow(state.Changed);
-	return state.AnyOpen;
+	return ReadState().AnyOpen;
 }
 
 bool SFSEMenuFramework::WindowManager::IsAnyBlockingWindowOpened() noexcept
 {
-	auto* registry = GetRegistry();
-	if (!registry) {
-		return false;
-	}
-	const auto state = RefreshState(*registry);
-	NotifyHostWindow(state.Changed);
-	return state.AnyBlocking;
+	return ReadState().AnyBlocking;
 }
 
 bool SFSEMenuFramework::WindowManager::ShouldPauseGame() noexcept
 {
-	auto* registry = GetRegistry();
-	if (!registry) {
-		return false;
-	}
-	const auto state = RefreshState(*registry);
-	NotifyHostWindow(state.Changed);
-	return state.PauseGame;
+	return ReadState().PauseGame;
 }
 
 bool SFSEMenuFramework::WindowManager::ShouldBlurBackground() noexcept
 {
-	auto* registry = GetRegistry();
-	if (!registry) {
-		return false;
-	}
-	const auto state = RefreshState(*registry);
-	NotifyHostWindow(state.Changed);
-	return state.BlurBackground;
+	return ReadState().BlurBackground;
 }
 
 void SFSEMenuFramework::WindowManager::CloseAllBlockingWindows() noexcept
@@ -573,65 +496,19 @@ bool SFSEMenuFramework::WindowManager::IsHotkeyEnabled() noexcept
 std::uint64_t
 	SFSEMenuFramework::WindowManager::GetBlockingWindowOpenGeneration() noexcept
 {
-	auto* registry = GetRegistry();
-	if (!registry) {
-		return 0;
-	}
-	const auto state = RefreshState(*registry);
-	NotifyHostWindow(state.Changed);
-	return state.BlockingGeneration;
+	return ReadState().BlockingGeneration;
 }
 
 bool SFSEMenuFramework::WindowManager::IsBlockingWindowOpenGeneration(
 	std::uint64_t a_generation) noexcept
 {
-	if (a_generation == 0) {
-		return false;
-	}
-	auto* registry = GetRegistry();
-	if (!registry) {
-		return false;
-	}
-	const auto state = RefreshState(*registry);
-	NotifyHostWindow(state.Changed);
-	return state.AnyBlocking && state.BlockingGeneration == a_generation;
-}
-
-std::uint64_t
-	SFSEMenuFramework::WindowManager::GetMainWindowOpenGeneration() noexcept
-{
-	auto* registry = GetRegistry();
-	if (!registry) {
-		return 0;
-	}
-	const auto state = RefreshState(*registry);
-	NotifyHostWindow(state.Changed);
-	return state.MainGeneration;
-}
-
-bool SFSEMenuFramework::WindowManager::IsMainWindowOpenGeneration(
-	std::uint64_t a_generation) noexcept
-{
-	if (a_generation == 0) {
-		return false;
-	}
-	auto* registry = GetRegistry();
-	if (!registry) {
-		return false;
-	}
-	const auto state = RefreshState(*registry);
-	NotifyHostWindow(state.Changed);
-	return state.MainOpen && state.MainGeneration == a_generation;
+	const auto state = ReadState();
+	return a_generation != 0 && state.AnyBlocking &&
+		state.BlockingGeneration == a_generation;
 }
 
 std::uint64_t
 	SFSEMenuFramework::WindowManager::GetMainWindowSessionGeneration() noexcept
 {
-	auto* registry = GetRegistry();
-	if (!registry) {
-		return 0;
-	}
-	const auto state = RefreshState(*registry);
-	NotifyHostWindow(state.Changed);
-	return state.MainSessionGeneration;
+	return ReadState().MainSessionGeneration;
 }

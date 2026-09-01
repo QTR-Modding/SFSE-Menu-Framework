@@ -60,9 +60,7 @@ namespace
 	MenuTreeCache menuTree;
 	ImGuiTextFilter rootFilter;
 	PanelHandle selectedPanelHandle{};
-	std::string selectedRootMenu;
 	std::string selectedPanelPath;
-	std::string selectedPanelTitle;
 	std::string pendingArchiveMenu;
 	bool archiveConfirmationRequested{};
 	bool resetMainWindowPlacement{};
@@ -196,49 +194,51 @@ namespace
 
 	[[nodiscard]] bool HasEnabledPanel(const MenuTreeNode& a_node)
 	{
-		if (IsPanelEnabled(a_node.Panel)) {
-			return true;
-		}
-		return std::ranges::any_of(
+		return IsPanelEnabled(a_node.Panel) || std::ranges::any_of(
 			a_node.Children,
-			[](const auto& a_child) {
-				return a_child && HasEnabledPanel(*a_child);
-			});
+			[](const auto& a_child) { return a_child && HasEnabledPanel(*a_child); });
 	}
 
-	[[nodiscard]] bool HasEnabledPanel(const RootMenuNode& a_root)
-	{
-		return std::ranges::any_of(
-			a_root.Children,
-			[](const auto& a_child) {
-				return a_child && HasEnabledPanel(*a_child);
-			});
-	}
-
-	[[nodiscard]] bool HasEnabledChild(const MenuTreeNode& a_node)
+	template <class Node>
+	[[nodiscard]] bool HasEnabledChild(const Node& a_node)
 	{
 		return std::ranges::any_of(
 			a_node.Children,
-			[](const auto& a_child) {
-				return a_child && HasEnabledPanel(*a_child);
-			});
+			[](const auto& a_child) { return a_child && HasEnabledPanel(*a_child); });
 	}
 
-	[[nodiscard]] PanelPointer FindPanelByHandle(
+	template <class Predicate>
+	[[nodiscard]] PanelPointer FindPanel(
 		const MenuTreeNode& a_node,
-		PanelHandle         a_handle)
+		const Predicate&    a_matches)
 	{
-		if (IsPanelEnabled(a_node.Panel) &&
-			a_node.Panel->Handle == a_handle) {
+		if (IsPanelEnabled(a_node.Panel) && a_matches(a_node)) {
 			return a_node.Panel;
 		}
 
 		for (const auto& child : a_node.Children) {
-			if (!child) {
+			if (child) {
+				if (auto panel = FindPanel(*child, a_matches)) {
+					return panel;
+				}
+			}
+		}
+		return {};
+	}
+
+	template <class Predicate>
+	[[nodiscard]] PanelPointer FindPanel(const Predicate& a_matches)
+	{
+		for (const auto& root : menuTree.Roots) {
+			if (!root) {
 				continue;
 			}
-			if (auto panel = FindPanelByHandle(*child, a_handle)) {
-				return panel;
+			for (const auto& child : root->Children) {
+				if (child) {
+					if (auto panel = FindPanel(*child, a_matches)) {
+						return panel;
+					}
+				}
 			}
 		}
 		return {};
@@ -249,71 +249,22 @@ namespace
 		if (selectedPanelHandle == 0) {
 			return {};
 		}
-
-		for (const auto& root : menuTree.Roots) {
-			if (!root) {
-				continue;
-			}
-			for (const auto& child : root->Children) {
-				if (!child) {
-					continue;
-				}
-				if (auto panel =
-						FindPanelByHandle(*child, selectedPanelHandle)) {
-					return panel;
-				}
-			}
-		}
-		return {};
-	}
-
-	[[nodiscard]] PanelPointer FindPanelByPath(
-		const MenuTreeNode& a_node,
-		std::string_view    a_path)
-	{
-		if (a_node.FullPath == a_path && IsPanelEnabled(a_node.Panel)) {
-			return a_node.Panel;
-		}
-
-		for (const auto& child : a_node.Children) {
-			if (!child) {
-				continue;
-			}
-			if (auto panel = FindPanelByPath(*child, a_path)) {
-				return panel;
-			}
-		}
-		return {};
+		return FindPanel([](const MenuTreeNode& a_node) {
+			return a_node.Panel->Handle == selectedPanelHandle;
+		});
 	}
 
 	[[nodiscard]] PanelPointer FindPanelByPath(std::string_view a_path)
 	{
-		if (a_path.empty()) {
-			return {};
-		}
-
-		for (const auto& root : menuTree.Roots) {
-			if (!root) {
-				continue;
-			}
-			for (const auto& child : root->Children) {
-				if (!child) {
-					continue;
-				}
-				if (auto panel = FindPanelByPath(*child, a_path)) {
-					return panel;
-				}
-			}
-		}
-		return {};
+		return FindPanel([a_path](const MenuTreeNode& a_node) {
+			return a_node.FullPath == a_path;
+		});
 	}
 
 	void ClearSelection()
 	{
 		selectedPanelHandle = 0;
-		selectedRootMenu.clear();
 		selectedPanelPath.clear();
-		selectedPanelTitle.clear();
 	}
 
 	void RenderTooltip(const char* a_text)
@@ -335,7 +286,9 @@ namespace
 				a_menuName,
 				a_archived);
 		menuConfigSaveFailed = !saved;
-		if (a_archived && selectedRootMenu == a_menuName) {
+		if (a_archived && selectedPanelPath.starts_with(a_menuName) &&
+			selectedPanelPath.size() > a_menuName.size() &&
+			selectedPanelPath[a_menuName.size()] == '/') {
 			ClearSelection();
 		}
 		return saved;
@@ -403,9 +356,7 @@ namespace
 	}
 
 
-	void RenderNode(
-		MenuTreeNode&   a_node,
-		std::string_view a_rootMenu)
+	void RenderNode(MenuTreeNode& a_node)
 	{
 		if (!HasEnabledPanel(a_node)) {
 			return;
@@ -439,15 +390,13 @@ namespace
 			!itemToggledOpen &&
 			IsPanelEnabled(a_node.Panel)) {
 			selectedPanelHandle = a_node.Panel->Handle;
-			selectedRootMenu = a_rootMenu;
 			selectedPanelPath = a_node.FullPath;
-			selectedPanelTitle = a_node.Name;
 		}
 
 		if (nodeOpen && hasEnabledChild) {
 			for (const auto& child : a_node.Children) {
 				if (child) {
-					RenderNode(*child, a_rootMenu);
+					RenderNode(*child);
 				}
 			}
 			ImGui::TreePop();
@@ -673,12 +622,14 @@ namespace
 				ImVec2{ 0.0F, headerHeight },
 				ImGuiChildFlags_None)) {
 			if (selectedPanel) {
+				const auto title = std::string_view{ selectedPanelPath }.substr(
+					selectedPanelPath.find_last_of('/') + 1);
 				const float windowWidth = ImGui::GetWindowSize().x;
 				const float textWidth =
-					ImGui::CalcTextSize(selectedPanelTitle.c_str()).x;
+					ImGui::CalcTextSize(title.data(), title.data() + title.size()).x;
 				ImGui::SetCursorPosX((windowWidth - textWidth) * 0.5F);
 				ImGui::SetCursorPosY(headerOffsetY);
-				ImGui::TextUnformatted(selectedPanelTitle.c_str());
+				ImGui::TextUnformatted(title.data(), title.data() + title.size());
 			}
 		}
 		ImGui::EndChild();
@@ -694,7 +645,7 @@ namespace
 			std::vector<RootMenuNode*> rootMenus;
 			rootMenus.reserve(menuTree.Roots.size());
 			for (const auto& root : menuTree.Roots) {
-				if (root && HasEnabledPanel(*root)) {
+				if (root && HasEnabledChild(*root)) {
 					rootMenus.push_back(root.get());
 				}
 			}
@@ -744,7 +695,7 @@ namespace
 				if (headerOpen) {
 					for (const auto& child : root->Children) {
 						if (child) {
-							RenderNode(*child, root->Name);
+							RenderNode(*child);
 						}
 					}
 				}

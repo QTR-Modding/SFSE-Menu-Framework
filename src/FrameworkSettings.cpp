@@ -4,14 +4,13 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <charconv>
 #include <cmath>
 #include <cwchar>
 #include <iterator>
-#include <limits>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 
 namespace SFSEMenuFramework::FrameworkSettings
@@ -171,6 +170,17 @@ namespace SFSEMenuFramework::FrameworkSettings
 		constexpr float hardMinFontWeight = 1.0F;
 		constexpr float hardMaxFontWeight = 1000.0F;
 		constexpr float maximumRasterSize = 96.0F;
+		struct NamedToggleMode final
+		{
+			const wchar_t* Name;
+			ToggleMode     Value;
+		};
+		constexpr std::array toggleModes{
+			NamedToggleMode{ L"SINGLEPRESS", ToggleMode::SinglePress },
+			NamedToggleMode{ L"HOLD", ToggleMode::Hold },
+			NamedToggleMode{ L"DOUBLEPRESS", ToggleMode::DoublePress },
+			NamedToggleMode{ L"OFF", ToggleMode::Off }
+		};
 
 		constexpr wchar_t sectionName[]{ L"General" };
 		constexpr wchar_t fontSectionName[]{ L"Fonts" };
@@ -182,10 +192,10 @@ namespace SFSEMenuFramework::FrameworkSettings
 		constexpr std::size_t pathCapacity = 32768;
 		constexpr std::size_t valueCapacity = FontFileName{}.size() + 1;
 
-		[[nodiscard]] constexpr MenuStyleName MakeMenuStyleName(
-			std::string_view a_name) noexcept
+		template <class Name>
+		[[nodiscard]] constexpr Name MakeName(std::string_view a_name) noexcept
 		{
-			MenuStyleName result{};
+			Name result{};
 			for (std::size_t index = 0;
 			     index < a_name.size() && index + 1 < result.size();
 			     ++index) {
@@ -194,22 +204,11 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return result;
 		}
 
-		constexpr auto defaultMenuStyle = MakeMenuStyleName(defaultMenuStyleName);
-
-		[[nodiscard]] constexpr FontFileName MakeFontFileName(
-			std::string_view a_name) noexcept
-		{
-			FontFileName result{};
-			for (std::size_t index = 0;
-			     index < a_name.size() && index + 1 < result.size();
-			     ++index) {
-				result[index] = a_name[index];
-			}
-			return result;
-		}
+		constexpr auto defaultMenuStyle =
+			MakeName<MenuStyleName>(defaultMenuStyleName);
 
 		constexpr FontSettings defaultFontSettings{
-			MakeFontFileName(defaultPrimaryFontName),
+			MakeName<FontFileName>(defaultPrimaryFontName),
 			defaultFontWeight,
 			defaultFontSizeMedium,
 			defaultMinFontSize,
@@ -217,52 +216,29 @@ namespace SFSEMenuFramework::FrameworkSettings
 			defaultUIScale
 		};
 
-		struct Values final
-		{
-			std::uint32_t ToggleKey{ defaultToggleKey };
-			ToggleMode    Mode{ defaultToggleMode };
-			std::uint32_t ToggleKeyGamePad{ defaultToggleKeyGamePad };
-			ToggleMode    ModeGamePad{ defaultToggleModeGamePad };
-			bool          FreezeTimeOnMenu{ defaultFreezeTimeOnMenu };
-			bool          BlurBackgroundOnMenu{ defaultBlurBackgroundOnMenu };
-			MenuStyleName MenuStyle{ defaultMenuStyle };
-			FontSettings  Fonts{ defaultFontSettings };
+		using Values = SettingsSnapshot;
+		constexpr Values defaultValues{
+			defaultToggleKey,
+			defaultToggleMode,
+			defaultToggleKeyGamePad,
+			defaultToggleModeGamePad,
+			defaultFreezeTimeOnMenu,
+			defaultBlurBackgroundOnMenu,
+			defaultMenuStyle,
+			defaultFontSettings
 		};
+		SRWLOCK stateLock = SRWLOCK_INIT;
 
 		class StateLockGuard final
 		{
 		public:
-			StateLockGuard() noexcept;
-			~StateLockGuard();
-
+			StateLockGuard() noexcept { ::AcquireSRWLockExclusive(&stateLock); }
+			~StateLockGuard() { ::ReleaseSRWLockExclusive(&stateLock); }
 			StateLockGuard(const StateLockGuard&) = delete;
-			StateLockGuard(StateLockGuard&&) = delete;
 			StateLockGuard& operator=(const StateLockGuard&) = delete;
-			StateLockGuard& operator=(StateLockGuard&&) = delete;
 		};
 
-		enum class ReadResult : std::uint8_t
-		{
-			Missing,
-			Present,
-			Invalid
-		};
-
-		std::atomic_flag stateLock{};
-		Values           values{};
-
-		StateLockGuard::StateLockGuard() noexcept
-		{
-			while (stateLock.test_and_set(std::memory_order_acquire)) {
-				stateLock.wait(true, std::memory_order_relaxed);
-			}
-		}
-
-		StateLockGuard::~StateLockGuard()
-		{
-			stateLock.clear(std::memory_order_release);
-			stateLock.notify_one();
-		}
+		Values           values{ defaultValues };
 
 		[[nodiscard]] bool IsAsciiSpace(wchar_t a_character) noexcept
 		{
@@ -281,44 +257,48 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return a_value;
 		}
 
-		[[nodiscard]] wchar_t ToUpperAscii(wchar_t a_character) noexcept
+		template <class Character>
+		[[nodiscard]] std::uint32_t FoldAscii(Character a_character) noexcept
 		{
-			return a_character >= L'a' && a_character <= L'z' ?
-				a_character - (L'a' - L'A') :
-				a_character;
+			const auto value = static_cast<std::uint32_t>(a_character);
+			return value >= 'a' && value <= 'z' ? value - ('a' - 'A') : value;
+		}
+
+		template <class LeftCharacter, class RightCharacter>
+		[[nodiscard]] bool EqualsIgnoreCaseBasic(
+			std::basic_string_view<LeftCharacter>  a_left,
+			std::basic_string_view<RightCharacter> a_right) noexcept
+		{
+			if (a_left.size() != a_right.size()) {
+				return false;
+			}
+			for (std::size_t index = 0; index < a_left.size(); ++index) {
+				if (FoldAscii(a_left[index]) != FoldAscii(a_right[index])) {
+					return false;
+				}
+			}
+			return true;
 		}
 
 		[[nodiscard]] bool EqualsIgnoreCase(
 			std::wstring_view a_left,
 			std::wstring_view a_right) noexcept
 		{
-			if (a_left.size() != a_right.size()) {
-				return false;
-			}
-			for (std::size_t index = 0; index < a_left.size(); ++index) {
-				if (ToUpperAscii(a_left[index]) != ToUpperAscii(a_right[index])) {
-					return false;
-				}
-			}
-			return true;
+			return EqualsIgnoreCaseBasic(a_left, a_right);
 		}
 
 		[[nodiscard]] bool EqualsIgnoreCase(
 			std::wstring_view a_left,
 			std::string_view  a_right) noexcept
 		{
-			if (a_left.size() != a_right.size()) {
-				return false;
-			}
-			for (std::size_t index = 0; index < a_left.size(); ++index) {
-				const auto right = static_cast<unsigned char>(a_right[index]);
-				if (right > 0x7F ||
-					ToUpperAscii(a_left[index]) !=
-						ToUpperAscii(static_cast<wchar_t>(right))) {
-					return false;
-				}
-			}
-			return true;
+			return EqualsIgnoreCaseBasic(a_left, a_right);
+		}
+
+		[[nodiscard]] bool EqualsIgnoreCase(
+			std::string_view a_left,
+			std::string_view a_right) noexcept
+		{
+			return EqualsIgnoreCaseBasic(a_left, a_right);
 		}
 
 		[[nodiscard]] bool BuildSettingsPath(
@@ -404,63 +384,10 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return ::CloseHandle(file) != FALSE;
 		}
 
-		[[nodiscard]] ReadResult ReadSetting(
-			const wchar_t*                        a_section,
-			const wchar_t*                        a_path,
-			const wchar_t*                        a_key,
-			std::array<wchar_t, valueCapacity>& a_value) noexcept
-		{
-			const auto length = ::GetPrivateProfileStringW(
-				a_section,
-				a_key,
-				missingValueSentinel,
-				a_value.data(),
-				static_cast<DWORD>(a_value.size()),
-				a_path);
-			if (length >= a_value.size() - 1) {
-				return ReadResult::Invalid;
-			}
-			if (length == 1 && a_value[0] == missingValueSentinel[0]) {
-				return ReadResult::Missing;
-			}
-			return length == 0 ? ReadResult::Invalid : ReadResult::Present;
-		}
-
-		[[nodiscard]] ReadResult ReadSetting(
-			const wchar_t*                        a_path,
-			const wchar_t*                        a_key,
-			std::array<wchar_t, valueCapacity>& a_value) noexcept
-		{
-			return ReadSetting(sectionName, a_path, a_key, a_value);
-		}
-
-		[[nodiscard]] bool ParseUnsigned(
+		template <class Value>
+		[[nodiscard]] bool ParseNumber(
 			std::wstring_view a_text,
-			std::uint32_t&    a_result) noexcept
-		{
-			a_text = Trim(a_text);
-			if (a_text.empty()) {
-				return false;
-			}
-
-			std::uint64_t value{};
-			for (const auto character : a_text) {
-				if (character < L'0' || character > L'9') {
-					return false;
-				}
-				value = value * 10 + static_cast<std::uint64_t>(character - L'0');
-				if (value > (std::numeric_limits<std::uint32_t>::max)()) {
-					return false;
-				}
-			}
-
-			a_result = static_cast<std::uint32_t>(value);
-			return true;
-		}
-
-		[[nodiscard]] bool ParseFloat(
-			std::wstring_view a_text,
-			float&            a_result) noexcept
+			Value&            a_result) noexcept
 		{
 			a_text = Trim(a_text);
 			if (a_text.empty() || a_text.size() >= valueCapacity) {
@@ -469,22 +396,19 @@ namespace SFSEMenuFramework::FrameworkSettings
 
 			std::array<char, valueCapacity> narrow{};
 			for (std::size_t index = 0; index < a_text.size(); ++index) {
-				const auto character = static_cast<std::uint32_t>(a_text[index]);
-				if (character > 0x7F) {
+				if (static_cast<std::uint32_t>(a_text[index]) > 0x7F) {
 					return false;
 				}
-				narrow[index] = static_cast<char>(character);
+				narrow[index] = static_cast<char>(a_text[index]);
 			}
 
-			float parsed{};
+			Value parsed{};
 			const auto result = std::from_chars(
 				narrow.data(),
-				narrow.data() + a_text.size(),
-				parsed,
-				std::chars_format::general);
+				narrow.data() + a_text.size(), parsed);
 			if (result.ec != std::errc{} ||
 				result.ptr != narrow.data() + a_text.size() ||
-				!std::isfinite(parsed)) {
+				(std::is_floating_point_v<Value> && !std::isfinite(parsed))) {
 				return false;
 			}
 			a_result = parsed;
@@ -519,7 +443,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 			}
 
 			std::uint32_t numeric{};
-			if (ParseUnsigned(a_text, numeric) &&
+			if (ParseNumber(a_text, numeric) &&
 				FindBinding(a_bindings, numeric)) {
 				a_result = numeric;
 				return true;
@@ -541,25 +465,15 @@ namespace SFSEMenuFramework::FrameworkSettings
 			ToggleMode&       a_result) noexcept
 		{
 			a_text = Trim(a_text);
-			if (EqualsIgnoreCase(a_text, L"SINGLEPRESS")) {
-				a_result = ToggleMode::SinglePress;
-				return true;
-			}
-			if (EqualsIgnoreCase(a_text, L"HOLD")) {
-				a_result = ToggleMode::Hold;
-				return true;
-			}
-			if (EqualsIgnoreCase(a_text, L"DOUBLEPRESS")) {
-				a_result = ToggleMode::DoublePress;
-				return true;
-			}
-			if (EqualsIgnoreCase(a_text, L"OFF")) {
-				a_result = ToggleMode::Off;
-				return true;
+			for (const auto& mode : toggleModes) {
+				if (EqualsIgnoreCase(a_text, mode.Name)) {
+					a_result = mode.Value;
+					return true;
+				}
 			}
 
 			std::uint32_t numeric{};
-			if (!ParseUnsigned(a_text, numeric) ||
+			if (!ParseNumber(a_text, numeric) ||
 				numeric > std::to_underlying(ToggleMode::Off)) {
 				return false;
 			}
@@ -585,10 +499,11 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return false;
 		}
 
-		[[nodiscard]] bool IsValidMenuStyleName(
-			std::string_view a_name) noexcept
+		[[nodiscard]] bool IsValidLeafName(
+			std::string_view a_name,
+			std::size_t      a_capacity) noexcept
 		{
-			if (a_name.empty() || a_name.size() >= MenuStyleName{}.size() ||
+			if (a_name.empty() || a_name.size() >= a_capacity ||
 				a_name == "." || a_name == ".." || a_name.front() == ' ' ||
 				a_name.back() == '.' || a_name.back() == ' ') {
 				return false;
@@ -604,143 +519,99 @@ namespace SFSEMenuFramework::FrameworkSettings
 				}
 			}
 			return true;
+		}
+
+		[[nodiscard]] bool IsValidMenuStyleName(std::string_view a_name) noexcept
+		{
+			return IsValidLeafName(a_name, MenuStyleName{}.size());
+		}
+
+		[[nodiscard]] bool IsValidFontFileName(std::string_view a_name) noexcept
+		{
+			if (!IsValidLeafName(a_name, FontFileName{}.size()) ||
+				a_name.size() < 5) {
+				return false;
+			}
+			const auto extension = a_name.substr(a_name.size() - 4);
+			return EqualsIgnoreCase(extension, ".ttf") ||
+			       EqualsIgnoreCase(extension, ".otf");
+		}
+
+		template <class Name>
+		[[nodiscard]] std::string_view NameView(const Name& a_name) noexcept
+		{
+			const auto end = std::ranges::find(a_name, '\0');
+			return end == a_name.end() ?
+				std::string_view{} :
+				std::string_view{ a_name.data(), static_cast<std::size_t>(end - a_name.begin()) };
+		}
+
+		template <class Name>
+		[[nodiscard]] bool CopyName(
+			std::string_view a_name,
+			Name&            a_result,
+			bool             a_uppercase,
+			bool             a_fontName) noexcept
+		{
+			if (!(a_fontName ? IsValidFontFileName(a_name) :
+				IsValidMenuStyleName(a_name))) {
+				return false;
+			}
+			a_result.fill('\0');
+			for (std::size_t index = 0; index < a_name.size(); ++index) {
+				a_result[index] = static_cast<char>(
+					a_uppercase ? FoldAscii(a_name[index]) :
+					static_cast<unsigned char>(a_name[index]));
+			}
+			return true;
+		}
+
+		template <class Name>
+		[[nodiscard]] bool ParseName(
+			std::wstring_view a_text,
+			Name&             a_result,
+			bool              a_uppercase,
+			bool              a_fontName) noexcept
+		{
+			a_text = Trim(a_text);
+			if (a_text.empty() || a_text.size() >= a_result.size()) {
+				return false;
+			}
+			Name parsed{};
+			for (std::size_t index = 0; index < a_text.size(); ++index) {
+				if (static_cast<std::uint32_t>(a_text[index]) > 0x7F) {
+					return false;
+				}
+				parsed[index] = static_cast<char>(a_text[index]);
+			}
+			return CopyName(NameView(parsed), a_result, a_uppercase, a_fontName);
 		}
 
 		[[nodiscard]] bool CopyMenuStyleName(
 			std::string_view a_name,
 			MenuStyleName&   a_result) noexcept
 		{
-			if (!IsValidMenuStyleName(a_name)) {
-				return false;
-			}
-
-			a_result.fill('\0');
-			for (std::size_t index = 0; index < a_name.size(); ++index) {
-				const auto character = static_cast<unsigned char>(a_name[index]);
-				a_result[index] = character >= 'a' && character <= 'z' ?
-					static_cast<char>(character - ('a' - 'A')) :
-					static_cast<char>(character);
-			}
-			return true;
+			return CopyName(a_name, a_result, true, false);
 		}
 
 		[[nodiscard]] bool ParseMenuStyleName(
 			std::wstring_view a_text,
 			MenuStyleName&    a_result) noexcept
 		{
-			a_text = Trim(a_text);
-			if (a_text.empty() || a_text.size() >= a_result.size()) {
-				return false;
-			}
-
-			MenuStyleName parsed{};
-			for (std::size_t index = 0; index < a_text.size(); ++index) {
-				if (static_cast<std::uint32_t>(a_text[index]) > 0x7F) {
-					return false;
-				}
-				parsed[index] = static_cast<char>(a_text[index]);
-			}
-			return CopyMenuStyleName(parsed.data(), a_result);
-		}
-
-		[[nodiscard]] std::string_view FontFileNameView(
-			const FontFileName& a_name) noexcept
-		{
-			for (std::size_t index = 0; index < a_name.size(); ++index) {
-				if (a_name[index] == '\0') {
-					return { a_name.data(), index };
-				}
-			}
-			return {};
-		}
-
-		[[nodiscard]] bool EqualsIgnoreCaseAscii(
-			std::string_view a_left,
-			std::string_view a_right) noexcept
-		{
-			if (a_left.size() != a_right.size()) {
-				return false;
-			}
-			for (std::size_t index = 0; index < a_left.size(); ++index) {
-				auto left = static_cast<unsigned char>(a_left[index]);
-				auto right = static_cast<unsigned char>(a_right[index]);
-				if (left >= 'a' && left <= 'z') {
-					left = static_cast<unsigned char>(left - ('a' - 'A'));
-				}
-				if (right >= 'a' && right <= 'z') {
-					right = static_cast<unsigned char>(right - ('a' - 'A'));
-				}
-				if (left != right) {
-					return false;
-				}
-			}
-			return true;
-		}
-
-		[[nodiscard]] bool IsValidFontFileName(
-			std::string_view a_name) noexcept
-		{
-			if (a_name.empty() || a_name.size() >= FontFileName{}.size() ||
-				a_name == "." || a_name == ".." || a_name.front() == ' ' ||
-				a_name.back() == '.' || a_name.back() == ' ') {
-				return false;
-			}
-
-			for (const auto character : a_name) {
-				const auto value = static_cast<unsigned char>(character);
-				if (value < 0x20 || value > 0x7E || character == '<' ||
-					character == '>' || character == ':' || character == '"' ||
-					character == '/' || character == '\\' || character == '|' ||
-					character == '?' || character == '*') {
-					return false;
-				}
-			}
-
-			if (a_name.size() < 5) {
-				return false;
-			}
-			const auto extension = a_name.substr(a_name.size() - 4);
-			return EqualsIgnoreCaseAscii(extension, ".ttf") ||
-			       EqualsIgnoreCaseAscii(extension, ".otf");
-		}
-
-		[[nodiscard]] bool CopyFontFileName(
-			std::string_view a_name,
-			FontFileName&    a_result) noexcept
-		{
-			if (!IsValidFontFileName(a_name)) {
-				return false;
-			}
-			a_result.fill('\0');
-			for (std::size_t index = 0; index < a_name.size(); ++index) {
-				a_result[index] = a_name[index];
-			}
-			return true;
+			return ParseName(a_text, a_result, true, false);
 		}
 
 		[[nodiscard]] bool ParseFontFileName(
 			std::wstring_view a_text,
 			FontFileName&    a_result) noexcept
 		{
-			a_text = Trim(a_text);
-			if (a_text.empty() || a_text.size() >= a_result.size()) {
-				return false;
-			}
-
-			FontFileName parsed{};
-			for (std::size_t index = 0; index < a_text.size(); ++index) {
-				if (static_cast<std::uint32_t>(a_text[index]) > 0x7F) {
-					return false;
-				}
-				parsed[index] = static_cast<char>(a_text[index]);
-			}
-			return CopyFontFileName(parsed.data(), a_result);
+			return ParseName(a_text, a_result, false, true);
 		}
 
 		[[nodiscard]] bool IsValidFontSettings(
 			const FontSettings& a_settings) noexcept
 		{
-			const auto primaryFont = FontFileNameView(a_settings.PrimaryFont);
+			const auto primaryFont = NameView(a_settings.PrimaryFont);
 			return IsValidFontFileName(primaryFont) &&
 			       std::isfinite(a_settings.FontWeight) &&
 			       std::isfinite(a_settings.FontSizeMedium) &&
@@ -760,13 +631,29 @@ namespace SFSEMenuFramework::FrameworkSettings
 				       maximumRasterSize;
 		}
 
+		struct FloatSetting final
+		{
+			const wchar_t* Name;
+			float FontSettings::* Value;
+			float Default;
+			float Minimum;
+			float Maximum;
+		};
+		constexpr std::array fontFloatSettings{
+			FloatSetting{ L"FontWeight", &FontSettings::FontWeight, defaultFontWeight, hardMinFontWeight, hardMaxFontWeight },
+			FloatSetting{ L"FontSizeMedium", &FontSettings::FontSizeMedium, defaultFontSizeMedium, hardMinFontSize, hardMaxFontSize },
+			FloatSetting{ L"MinFontSize", &FontSettings::MinFontSize, defaultMinFontSize, hardMinFontSize, hardMaxFontSize },
+			FloatSetting{ L"MaxFontSize", &FontSettings::MaxFontSize, defaultMaxFontSize, hardMinFontSize, hardMaxFontSize },
+			FloatSetting{ L"UIScale", &FontSettings::UIScale, defaultUIScale, hardMinUIScale, hardMaxUIScale }
+		};
+
 		[[nodiscard]] bool NormalizeFontSettings(
 			FontSettings& a_settings) noexcept
 		{
 			bool unchanged = true;
 			FontFileName normalizedName{};
 			if (!CopyFontFileName(
-					FontFileNameView(a_settings.PrimaryFont),
+					NameView(a_settings.PrimaryFont),
 					normalizedName)) {
 				normalizedName = defaultFontSettings.PrimaryFont;
 				unchanged = false;
@@ -789,22 +676,13 @@ namespace SFSEMenuFramework::FrameworkSettings
 				}
 			};
 
-			normalizeScalar(
-				a_settings.FontWeight,
-				defaultFontWeight,
-				hardMinFontWeight,
-				hardMaxFontWeight);
-
-			normalizeScalar(
-				a_settings.MinFontSize,
-				defaultMinFontSize,
-				hardMinFontSize,
-				hardMaxFontSize);
-			normalizeScalar(
-				a_settings.MaxFontSize,
-				defaultMaxFontSize,
-				hardMinFontSize,
-				hardMaxFontSize);
+			for (const auto& setting : fontFloatSettings) {
+				if (setting.Value != &FontSettings::FontSizeMedium) {
+					normalizeScalar(
+						a_settings.*setting.Value, setting.Default,
+						setting.Minimum, setting.Maximum);
+				}
+			}
 			if (a_settings.MinFontSize > a_settings.MaxFontSize) {
 				std::swap(a_settings.MinFontSize, a_settings.MaxFontSize);
 				unchanged = false;
@@ -814,12 +692,6 @@ namespace SFSEMenuFramework::FrameworkSettings
 				defaultFontSizeMedium,
 				a_settings.MinFontSize,
 				a_settings.MaxFontSize);
-			normalizeScalar(
-				a_settings.UIScale,
-				defaultUIScale,
-				hardMinUIScale,
-				hardMaxUIScale);
-
 			if (a_settings.FontSizeMedium * a_settings.UIScale >
 				maximumRasterSize) {
 				const auto largestFont = maximumRasterSize / a_settings.UIScale;
@@ -852,18 +724,12 @@ namespace SFSEMenuFramework::FrameworkSettings
 
 		[[nodiscard]] const wchar_t* ToggleModeName(ToggleMode a_mode) noexcept
 		{
-			switch (a_mode) {
-			case ToggleMode::SinglePress:
-				return L"SINGLEPRESS";
-			case ToggleMode::Hold:
-				return L"HOLD";
-			case ToggleMode::DoublePress:
-				return L"DOUBLEPRESS";
-			case ToggleMode::Off:
-				return L"OFF";
-			default:
-				return L"SINGLEPRESS";
+			for (const auto& mode : toggleModes) {
+				if (mode.Value == a_mode) {
+					return mode.Name;
+				}
 			}
+			return toggleModes.front().Name;
 		}
 
 		[[nodiscard]] Values GetValues() noexcept
@@ -892,86 +758,123 @@ namespace SFSEMenuFramework::FrameworkSettings
 			if (!IsValidToggleMode(a_values.ModeGamePad)) {
 				a_values.ModeGamePad = defaultToggleModeGamePad;
 			}
-			if (!IsValidMenuStyleName(a_values.MenuStyle.data())) {
+			if (!IsValidMenuStyleName(NameView(a_values.MenuStyle))) {
 				a_values.MenuStyle = defaultMenuStyle;
 			}
 			static_cast<void>(NormalizeFontSettings(a_values.Fonts));
 		}
 
-		[[nodiscard]] bool WriteText(
-			const wchar_t* a_section,
-			const wchar_t* a_path,
-			const wchar_t* a_key,
-			const wchar_t* a_value) noexcept
+		class Profile final
 		{
-			return ::WritePrivateProfileStringW(
-				a_section,
-				a_key,
-				a_value,
-				a_path) != FALSE;
-		}
+		public:
+			explicit Profile(const wchar_t* a_path) noexcept : path(a_path) {}
 
-		[[nodiscard]] bool WriteText(
-			const wchar_t* a_path,
-			const wchar_t* a_key,
-			const wchar_t* a_value) noexcept
-		{
-			return WriteText(sectionName, a_path, a_key, a_value);
-		}
-
-		[[nodiscard]] bool WriteAsciiText(
-			const wchar_t*   a_section,
-			const wchar_t*   a_path,
-			const wchar_t*   a_key,
-			std::string_view a_value) noexcept
-		{
-			std::array<wchar_t, valueCapacity> text{};
-			if (a_value.empty() || a_value.size() >= text.size()) {
-				return false;
-			}
-			for (std::size_t index = 0; index < a_value.size(); ++index) {
-				const auto character = static_cast<unsigned char>(a_value[index]);
-				if (character > 0x7F) {
-					return false;
+			template <class Value, class Parser>
+			void Read(
+				const wchar_t* a_section,
+				const wchar_t* a_key,
+				Value&         a_value,
+				const Value&   a_default,
+				Parser         a_parser) noexcept
+			{
+				std::array<wchar_t, valueCapacity> text{};
+				const auto length = ::GetPrivateProfileStringW(
+					a_section, a_key, missingValueSentinel, text.data(),
+					static_cast<DWORD>(text.size()), path);
+				if (length == 1 && text[0] == missingValueSentinel[0]) {
+					return;
 				}
-				text[index] = static_cast<wchar_t>(character);
+
+				Value parsed = a_default;
+				if (length == 0 || length >= text.size() - 1 ||
+					!a_parser(text.data(), parsed)) {
+					a_value = a_default;
+					success = false;
+					return;
+				}
+				a_value = parsed;
 			}
-			return WriteText(a_section, a_path, a_key, text.data());
+
+			void Write(
+				const wchar_t* a_section,
+				const wchar_t* a_key,
+				const wchar_t* a_value) noexcept
+			{
+				success = ::WritePrivateProfileStringW(
+					a_section, a_key, a_value, path) != FALSE && success;
+			}
+
+			void Write(
+				const wchar_t*   a_section,
+				const wchar_t*   a_key,
+				std::string_view a_value) noexcept
+			{
+				std::array<wchar_t, valueCapacity> text{};
+				if (a_value.empty() || a_value.size() >= text.size()) {
+					success = false;
+					return;
+				}
+				for (std::size_t index = 0; index < a_value.size(); ++index) {
+					const auto character = static_cast<unsigned char>(a_value[index]);
+					if (character > 0x7F) {
+						success = false;
+						return;
+					}
+					text[index] = static_cast<wchar_t>(character);
+				}
+				Write(a_section, a_key, text.data());
+			}
+
+			void Write(
+				const wchar_t* a_section,
+				const wchar_t* a_key,
+				float          a_value) noexcept
+			{
+				std::array<char, valueCapacity> text{};
+				const auto result = std::to_chars(
+					text.data(), text.data() + text.size() - 1, a_value,
+					std::chars_format::general, 6);
+				if (result.ec != std::errc{}) {
+					success = false;
+					return;
+				}
+				Write(a_section, a_key, std::string_view{
+					text.data(), static_cast<std::size_t>(result.ptr - text.data()) });
+			}
+
+			[[nodiscard]] explicit operator bool() const noexcept { return success; }
+
+		private:
+			const wchar_t* path;
+			bool           success{ true };
+		};
+
+		template <class Value>
+		[[nodiscard]] Value ReadMember(Value Values::* a_member) noexcept
+		{
+			const StateLockGuard lock;
+			return values.*a_member;
 		}
 
-		[[nodiscard]] bool WriteAsciiText(
-			const wchar_t*   a_path,
-			const wchar_t*   a_key,
-			std::string_view a_value) noexcept
+		template <class Value>
+		void WriteMember(Value Values::* a_member, const Value& a_value) noexcept
 		{
-			return WriteAsciiText(sectionName, a_path, a_key, a_value);
+			const StateLockGuard lock;
+			values.*a_member = a_value;
 		}
 
-		[[nodiscard]] bool WriteFloat(
-			const wchar_t* a_section,
-			const wchar_t* a_path,
-			const wchar_t* a_key,
-			float          a_value) noexcept
+		template <class Value, class Validator>
+		[[nodiscard]] bool WriteValidatedMember(
+			Value Values::* a_member,
+			Value           a_value,
+			const Value&    a_default,
+			Validator       a_validator) noexcept
 		{
-			std::array<char, valueCapacity> text{};
-			const auto result = std::to_chars(
-				text.data(),
-				text.data() + text.size() - 1,
-				a_value,
-				std::chars_format::general,
-				6);
-			if (result.ec != std::errc{}) {
-				return false;
-			}
-			return WriteAsciiText(
-				a_section,
-				a_path,
-				a_key,
-				std::string_view{
-					text.data(),
-					static_cast<std::size_t>(result.ptr - text.data())
-				});
+			const bool valid = a_validator(a_value);
+			WriteMember(a_member, valid ? a_value : a_default);
+			return valid;
 		}
+
 	}
 
 	std::span<const Binding> GetKeyboardBindings() noexcept
@@ -996,7 +899,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 
 	bool Load() noexcept
 	{
-		Values loaded{};
+		auto loaded = defaultValues;
 		std::array<wchar_t, pathCapacity> path{};
 		if (!BuildSettingsPath(path)) {
 			SetValues(loaded);
@@ -1014,168 +917,44 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return false;
 		}
 
-		bool valid = true;
-		std::array<wchar_t, valueCapacity> text{};
-		auto result = ReadSetting(path.data(), L"ToggleKey", text);
-		if (result == ReadResult::Present) {
-			std::uint32_t key{};
-			if (ParseBinding(text.data(), keyboardBindings, key)) {
-				loaded.ToggleKey = key;
-			} else {
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
+		Profile profile{ path.data() };
+		profile.Read(
+			sectionName, L"ToggleKey", loaded.ToggleKey,
+			defaultToggleKey, [](std::wstring_view a_text, std::uint32_t& a_value) {
+				return ParseBinding(a_text, keyboardBindings, a_value);
+			});
+		profile.Read(
+			sectionName, L"ToggleMode", loaded.Mode,
+			defaultToggleMode, ParseToggleMode);
+		profile.Read(
+			sectionName, L"ToggleKeyGamePad", loaded.ToggleKeyGamePad,
+			defaultToggleKeyGamePad,
+			[](std::wstring_view a_text, std::uint32_t& a_value) {
+				return ParseBinding(a_text, gamePadBindings, a_value);
+			});
+		profile.Read(
+			sectionName, L"ToggleModeGamePad", loaded.ModeGamePad,
+			defaultToggleModeGamePad, ParseToggleMode);
+		profile.Read(
+			sectionName, L"FreezeTimeOnMenu", loaded.FreezeTimeOnMenu,
+			defaultFreezeTimeOnMenu, ParseBool);
+		profile.Read(
+			sectionName, L"BlurBackgroundOnMenu", loaded.BlurBackgroundOnMenu,
+			defaultBlurBackgroundOnMenu, ParseBool);
+		profile.Read(
+			sectionName, L"MenuStyle", loaded.MenuStyle,
+			defaultMenuStyle, ParseMenuStyleName);
+		profile.Read(
+			fontSectionName, L"PrimaryFont", loaded.Fonts.PrimaryFont,
+			defaultFontSettings.PrimaryFont, ParseFontFileName);
+		for (const auto& setting : fontFloatSettings) {
+			profile.Read(
+				fontSectionName, setting.Name, loaded.Fonts.*setting.Value,
+				setting.Default, ParseNumber<float>);
 		}
 
-		result = ReadSetting(path.data(), L"ToggleMode", text);
-		if (result == ReadResult::Present) {
-			if (!ParseToggleMode(text.data(), loaded.Mode)) {
-				loaded.Mode = defaultToggleMode;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(path.data(), L"ToggleKeyGamePad", text);
-		if (result == ReadResult::Present) {
-			std::uint32_t key{};
-			if (ParseBinding(text.data(), gamePadBindings, key)) {
-				loaded.ToggleKeyGamePad = key;
-			} else {
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(path.data(), L"ToggleModeGamePad", text);
-		if (result == ReadResult::Present) {
-			if (!ParseToggleMode(text.data(), loaded.ModeGamePad)) {
-				loaded.ModeGamePad = defaultToggleModeGamePad;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(path.data(), L"FreezeTimeOnMenu", text);
-		if (result == ReadResult::Present) {
-			if (!ParseBool(text.data(), loaded.FreezeTimeOnMenu)) {
-				loaded.FreezeTimeOnMenu = defaultFreezeTimeOnMenu;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(path.data(), L"BlurBackgroundOnMenu", text);
-		if (result == ReadResult::Present) {
-			if (!ParseBool(text.data(), loaded.BlurBackgroundOnMenu)) {
-				loaded.BlurBackgroundOnMenu = defaultBlurBackgroundOnMenu;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(path.data(), L"MenuStyle", text);
-		if (result == ReadResult::Present) {
-			if (!ParseMenuStyleName(text.data(), loaded.MenuStyle)) {
-				loaded.MenuStyle = defaultMenuStyle;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(
-			fontSectionName,
-			path.data(),
-			L"FontWeight",
-			text);
-		if (result == ReadResult::Present) {
-			if (!ParseFloat(text.data(), loaded.Fonts.FontWeight)) {
-				loaded.Fonts.FontWeight = defaultFontWeight;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(
-			fontSectionName,
-			path.data(),
-			L"PrimaryFont",
-			text);
-		if (result == ReadResult::Present) {
-			if (!ParseFontFileName(text.data(), loaded.Fonts.PrimaryFont)) {
-				loaded.Fonts.PrimaryFont = defaultFontSettings.PrimaryFont;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(
-			fontSectionName,
-			path.data(),
-			L"FontSizeMedium",
-			text);
-		if (result == ReadResult::Present) {
-			if (!ParseFloat(text.data(), loaded.Fonts.FontSizeMedium)) {
-				loaded.Fonts.FontSizeMedium = defaultFontSizeMedium;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(
-			fontSectionName,
-			path.data(),
-			L"MinFontSize",
-			text);
-		if (result == ReadResult::Present) {
-			if (!ParseFloat(text.data(), loaded.Fonts.MinFontSize)) {
-				loaded.Fonts.MinFontSize = defaultMinFontSize;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(
-			fontSectionName,
-			path.data(),
-			L"MaxFontSize",
-			text);
-		if (result == ReadResult::Present) {
-			if (!ParseFloat(text.data(), loaded.Fonts.MaxFontSize)) {
-				loaded.Fonts.MaxFontSize = defaultMaxFontSize;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		result = ReadSetting(
-			fontSectionName,
-			path.data(),
-			L"UIScale",
-			text);
-		if (result == ReadResult::Present) {
-			if (!ParseFloat(text.data(), loaded.Fonts.UIScale)) {
-				loaded.Fonts.UIScale = defaultUIScale;
-				valid = false;
-			}
-		} else if (result == ReadResult::Invalid) {
-			valid = false;
-		}
-
-		valid = NormalizeFontSettings(loaded.Fonts) && valid;
-
+		const bool valid = NormalizeFontSettings(loaded.Fonts) &&
+			static_cast<bool>(profile);
 		Normalize(loaded);
 		SetValues(loaded);
 		return valid;
@@ -1196,65 +975,28 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return false;
 		}
 
-		bool success = true;
-		success = WriteAsciiText(
-			temporaryPath.data(),
-			L"ToggleKey",
-			GetKeyboardBindingName(saved.ToggleKey)) && success;
-		success = WriteText(
-			temporaryPath.data(),
-			L"ToggleMode",
-			ToggleModeName(saved.Mode)) && success;
-		success = WriteAsciiText(
-			temporaryPath.data(),
-			L"ToggleKeyGamePad",
-			GetGamePadBindingName(saved.ToggleKeyGamePad)) && success;
-		success = WriteText(
-			temporaryPath.data(),
-			L"ToggleModeGamePad",
-			ToggleModeName(saved.ModeGamePad)) && success;
-		success = WriteText(
-			temporaryPath.data(),
-			L"FreezeTimeOnMenu",
-			saved.FreezeTimeOnMenu ? L"1" : L"0") && success;
-		success = WriteText(
-			temporaryPath.data(),
-			L"BlurBackgroundOnMenu",
-			saved.BlurBackgroundOnMenu ? L"1" : L"0") && success;
-		success = WriteAsciiText(
-			temporaryPath.data(),
-			L"MenuStyle",
-			saved.MenuStyle.data()) && success;
-		success = WriteAsciiText(
-			fontSectionName,
-			temporaryPath.data(),
-			L"PrimaryFont",
-			FontFileNameView(saved.Fonts.PrimaryFont)) && success;
-		success = WriteFloat(
-			fontSectionName,
-			temporaryPath.data(),
-			L"FontWeight",
-			saved.Fonts.FontWeight) && success;
-		success = WriteFloat(
-			fontSectionName,
-			temporaryPath.data(),
-			L"FontSizeMedium",
-			saved.Fonts.FontSizeMedium) && success;
-		success = WriteFloat(
-			fontSectionName,
-			temporaryPath.data(),
-			L"MinFontSize",
-			saved.Fonts.MinFontSize) && success;
-		success = WriteFloat(
-			fontSectionName,
-			temporaryPath.data(),
-			L"MaxFontSize",
-			saved.Fonts.MaxFontSize) && success;
-		success = WriteFloat(
-			fontSectionName,
-			temporaryPath.data(),
-			L"UIScale",
-			saved.Fonts.UIScale) && success;
+		Profile profile{ temporaryPath.data() };
+		profile.Write(
+			sectionName, L"ToggleKey", GetKeyboardBindingName(saved.ToggleKey));
+		profile.Write(sectionName, L"ToggleMode", ToggleModeName(saved.Mode));
+		profile.Write(
+			sectionName, L"ToggleKeyGamePad",
+			GetGamePadBindingName(saved.ToggleKeyGamePad));
+		profile.Write(
+			sectionName, L"ToggleModeGamePad", ToggleModeName(saved.ModeGamePad));
+		profile.Write(
+			sectionName, L"FreezeTimeOnMenu",
+			saved.FreezeTimeOnMenu ? L"1" : L"0");
+		profile.Write(
+			sectionName, L"BlurBackgroundOnMenu",
+			saved.BlurBackgroundOnMenu ? L"1" : L"0");
+		profile.Write(sectionName, L"MenuStyle", saved.MenuStyle.data());
+		profile.Write(
+			fontSectionName, L"PrimaryFont", NameView(saved.Fonts.PrimaryFont));
+		for (const auto& setting : fontFloatSettings) {
+			profile.Write(
+				fontSectionName, setting.Name, saved.Fonts.*setting.Value);
+		}
 
 		// The documented cache-flush form returns zero even when it only
 		// flushes successfully, so its return value is not a failure signal.
@@ -1263,6 +1005,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 			nullptr,
 			nullptr,
 			temporaryPath.data()));
+		bool success = static_cast<bool>(profile);
 		if (success) {
 			success = ::MoveFileExW(
 				temporaryPath.data(),
@@ -1280,104 +1023,98 @@ namespace SFSEMenuFramework::FrameworkSettings
 		return true;
 	}
 
-	void ResetDefaults() noexcept
+	void ResetDefaults() noexcept { SetValues(defaultValues); }
+
+	std::uint32_t GetToggleKey() noexcept { return ReadMember(&Values::ToggleKey); }
+	ToggleMode GetToggleMode() noexcept { return ReadMember(&Values::Mode); }
+	std::uint32_t GetToggleKeyGamePad() noexcept { return ReadMember(&Values::ToggleKeyGamePad); }
+	ToggleMode GetToggleModeGamePad() noexcept { return ReadMember(&Values::ModeGamePad); }
+	bool GetFreezeTimeOnMenu() noexcept { return ReadMember(&Values::FreezeTimeOnMenu); }
+	bool GetBlurBackgroundOnMenu() noexcept { return ReadMember(&Values::BlurBackgroundOnMenu); }
+	MenuStyleName GetMenuStyle() noexcept { return ReadMember(&Values::MenuStyle); }
+	FontSettings GetFontSettings() noexcept { return ReadMember(&Values::Fonts); }
+	FontSettings GetDefaultFontSettings() noexcept { return defaultFontSettings; }
+	SettingsSnapshot CaptureSnapshot() noexcept { return GetValues(); }
+	void RestoreSnapshot(const SettingsSnapshot& a_snapshot) noexcept
 	{
-		SetValues(Values{});
+		auto restored = a_snapshot;
+		Normalize(restored);
+		SetValues(restored);
+	}
+	std::string_view GetFontFileNameView(const FontFileName& a_name) noexcept { return NameView(a_name); }
+
+	bool EqualsIgnoreCaseAscii(
+		std::string_view a_left,
+		std::string_view a_right) noexcept
+	{ return EqualsIgnoreCase(a_left, a_right); }
+
+	bool CopyFontFileName(
+		std::string_view a_name,
+		FontFileName&    a_result,
+		bool             a_validate) noexcept
+	{
+		if (a_validate) {
+			return CopyName(a_name, a_result, false, true);
+		}
+		if (a_name.empty() || a_name.size() >= a_result.size()) {
+			return false;
+		}
+		a_result.fill('\0');
+		std::ranges::copy(a_name, a_result.begin());
+		return true;
 	}
 
-	std::uint32_t GetToggleKey() noexcept
+	bool FontSettingsEqual(
+		const FontSettings& a_left,
+		const FontSettings& a_right,
+		float               a_tolerance,
+		bool                a_ignoreNameCase) noexcept
 	{
-		return GetValues().ToggleKey;
+		const auto close = [a_tolerance](float a_first, float a_second) {
+			return std::fabs(a_first - a_second) <= a_tolerance;
+		};
+		const bool sameFont = a_ignoreNameCase ?
+			EqualsIgnoreCase(
+				NameView(a_left.PrimaryFont), NameView(a_right.PrimaryFont)) :
+			a_left.PrimaryFont == a_right.PrimaryFont;
+		return sameFont &&
+		       close(a_left.FontWeight, a_right.FontWeight) &&
+		       close(a_left.FontSizeMedium, a_right.FontSizeMedium) &&
+		       close(a_left.MinFontSize, a_right.MinFontSize) &&
+		       close(a_left.MaxFontSize, a_right.MaxFontSize) &&
+		       close(a_left.UIScale, a_right.UIScale);
 	}
 
-	ToggleMode GetToggleMode() noexcept
-	{
-		return GetValues().Mode;
-	}
-
-	std::uint32_t GetToggleKeyGamePad() noexcept
-	{
-		return GetValues().ToggleKeyGamePad;
-	}
-
-	ToggleMode GetToggleModeGamePad() noexcept
-	{
-		return GetValues().ModeGamePad;
-	}
-
-	bool GetFreezeTimeOnMenu() noexcept
-	{
-		return GetValues().FreezeTimeOnMenu;
-	}
-
-	bool GetBlurBackgroundOnMenu() noexcept
-	{
-		return GetValues().BlurBackgroundOnMenu;
-	}
-
-	MenuStyleName GetMenuStyle() noexcept
-	{
-		return GetValues().MenuStyle;
-	}
-
-	FontSettings GetFontSettings() noexcept
-	{
-		return GetValues().Fonts;
-	}
-
-	FontSettings GetDefaultFontSettings() noexcept
-	{
-		return defaultFontSettings;
-	}
-
-	bool ValidateFontSettings(const FontSettings& a_settings) noexcept
-	{
-		return IsValidFontSettings(a_settings);
-	}
+	bool ValidateFontSettings(const FontSettings& a_settings) noexcept { return IsValidFontSettings(a_settings); }
 
 	bool SetToggleKey(std::uint32_t a_key) noexcept
 	{
-		const bool valid = IsValidToggleKey(a_key);
-		const StateLockGuard lock;
-		values.ToggleKey = valid ? a_key : defaultToggleKey;
-		return valid;
+		return WriteValidatedMember(
+			&Values::ToggleKey, a_key, defaultToggleKey, IsValidToggleKey);
 	}
 
 	bool SetToggleMode(ToggleMode a_mode) noexcept
 	{
-		const bool valid = IsValidToggleMode(a_mode);
-		const StateLockGuard lock;
-		values.Mode = valid ? a_mode : defaultToggleMode;
-		return valid;
+		return WriteValidatedMember(
+			&Values::Mode, a_mode, defaultToggleMode, IsValidToggleMode);
 	}
 
 	bool SetToggleKeyGamePad(std::uint32_t a_key) noexcept
 	{
-		const bool valid = IsValidGamePadToggleKey(a_key);
-		const StateLockGuard lock;
-		values.ToggleKeyGamePad = valid ? a_key : defaultToggleKeyGamePad;
-		return valid;
+		return WriteValidatedMember(
+			&Values::ToggleKeyGamePad, a_key, defaultToggleKeyGamePad,
+			IsValidGamePadToggleKey);
 	}
 
 	bool SetToggleModeGamePad(ToggleMode a_mode) noexcept
 	{
-		const bool valid = IsValidToggleMode(a_mode);
-		const StateLockGuard lock;
-		values.ModeGamePad = valid ? a_mode : defaultToggleModeGamePad;
-		return valid;
+		return WriteValidatedMember(
+			&Values::ModeGamePad, a_mode, defaultToggleModeGamePad,
+			IsValidToggleMode);
 	}
 
-	void SetFreezeTimeOnMenu(bool a_enabled) noexcept
-	{
-		const StateLockGuard lock;
-		values.FreezeTimeOnMenu = a_enabled;
-	}
-
-	void SetBlurBackgroundOnMenu(bool a_enabled) noexcept
-	{
-		const StateLockGuard lock;
-		values.BlurBackgroundOnMenu = a_enabled;
-	}
+	void SetFreezeTimeOnMenu(bool a_enabled) noexcept { WriteMember(&Values::FreezeTimeOnMenu, a_enabled); }
+	void SetBlurBackgroundOnMenu(bool a_enabled) noexcept { WriteMember(&Values::BlurBackgroundOnMenu, a_enabled); }
 
 	bool SetMenuStyle(std::string_view a_name) noexcept
 	{
@@ -1386,8 +1123,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 			return false;
 		}
 
-		const StateLockGuard lock;
-		values.MenuStyle = normalized;
+		WriteMember(&Values::MenuStyle, normalized);
 		return true;
 	}
 
@@ -1399,19 +1135,12 @@ namespace SFSEMenuFramework::FrameworkSettings
 
 		FontSettings normalized = a_settings;
 		if (!CopyFontFileName(
-				FontFileNameView(a_settings.PrimaryFont),
+				NameView(a_settings.PrimaryFont),
 				normalized.PrimaryFont)) {
 			return false;
 		}
 
-		const StateLockGuard lock;
-		values.Fonts = normalized;
+		WriteMember(&Values::Fonts, normalized);
 		return true;
-	}
-
-	void ResetFontSettings() noexcept
-	{
-		const StateLockGuard lock;
-		values.Fonts = defaultFontSettings;
 	}
 }

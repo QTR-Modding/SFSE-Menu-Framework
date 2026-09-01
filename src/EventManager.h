@@ -26,9 +26,6 @@ namespace SFSEMenuFramework
 			std::atomic<bool>& a_state,
 			bool               a_open,
 			bool               a_emergencyClose = false) noexcept;
-		[[nodiscard]] static bool ToggleMainWindowState(
-			std::atomic<bool>& a_state,
-			bool*              a_open) noexcept;
 
 		[[nodiscard]] static Snapshot CaptureSnapshot() noexcept;
 		[[nodiscard]] static bool BeginFrame(Snapshot& a_snapshot) noexcept;

@@ -165,7 +165,7 @@ an ImGui platform or renderer backend. The pinned `imconfig.h` must remain
 unmodified. Registration validates the public and internal ImGui layouts and
 rejects known non-default configuration families; the source-revision token is
 the consumer's declaration that it compiled the pinned core sources. The SDK
-	header binds the consumer's ImGui copy to the framework context and allocator
+header binds the consumer's ImGui copy to the framework context and allocator
 	for each callback. Render callbacks must be `noexcept` and must balance every
 	ImGui `Begin`/`End` and `Push`/`Pop` operation.
 The ImGui context and `ImGui::GetIO().Fonts` atlas address remain stable across
@@ -201,64 +201,14 @@ SKSE Menu Framework-derived portions remain GPL-3.0-only as detailed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Dear ImGui remains
 available under its [MIT license](extern/imgui/LICENSE.txt).
 
-This project is a Starfield port of [SKSE Menu Framework 3 by SkyrimThiago at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775). Its early framework-registration and lazy-backend ordering, `AddWindow`/`WindowInterface`/`GetMainWindow` API, aggregate blocking-window behavior, hotkey enable control, software-cursor behavior, preserve-PrintScreen modal policy, toggle and close behavior, and fresh `LB` + double-press gamepad default are directly adapted under GPL-3.0.
+This project is a Starfield port of
+[SKSE Menu Framework 3 by SkyrimThiago at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775).
+Its MCP shell, window and event APIs, settings presentation, theme schema and
+assets, font discovery and fallback flow, and modal-menu behavior are directly
+adapted under GPL-3.0-only.
 
-The MCP shell is directly adapted from that revision's `include/UI.h`,
-`src/UI.cpp`, `include/RootMenuConfig.h`, and
-`src/RootMenuConfig.cpp`: slash-path navigation, recursive tree selection,
-root-only text filtering, favorites-first ordering, archive confirmation and
-recovery, the Options menu, the separate Settings-window presentation, and
-the visible-but-nonmodal Resume Game behavior. The port rebuilds a
-render-thread view from immutable `PanelRegistry` snapshots and stable panel
-handles instead of copying the source's unsynchronized raw-pointer tree. Its
-favorite/archive controls use ASCII labels because the SFSE font atlas does
-not yet include SKSE Menu Framework's Font Awesome assets. English UI labels
-are embedded rather than copied into translation sidecars. Unlike the pinned
-source's process-only placement state, the Starfield port retains built-in
-window placement through its ImGui ini file.
-
-Theme discovery, the dark-style baseline, the JSON style schema, the
-`#RRGGBBAA` color behavior, the Settings selector, and the bundled
-`classic.json`, `modern.json`, and `skyrimDefault.json` assets are directly
-adapted from that pinned revision's `include/Theme.h`, `src/Theme.cpp`,
-`src/Config.cpp`, and `src/UI.cpp`. The port validates a complete temporary
-style and commits it at the next Starfield ImGui frame boundary, so a malformed
-theme cannot partially alter the live style.
-
-Font discovery, configured-primary selection, the 32 px default, fallback
-behavior, rebuild request/consume flow, and render-boundary atlas replacement
-are directly adapted from that pinned revision's `src/FontManager.cpp`,
-`src/Hooks.cpp`, and `src/Config.cpp`. The Starfield port substitutes the freely
-redistributable Jost 500 Medium and Jost 400 Book faces for SKSE Menu
-Framework's Skyrim font assets and uses FreeType native hinting without
-horizontal pixel snapping. Static Space Grotesk Medium and the Space Grotesk
-300-700 variable-weight face are bundled independently as redistributable
-Starfield-inspired options; Starfield's proprietary NB Architekt and NB
-Grotesk font data are not redistributed. Variable-axis selection,
-candidate-atlas validation, manual UI scale, and per-generation DirectX 12
-descriptor/texture retirement are Starfield-specific.
-
-The lifecycle event enum, RAII listener API, priority-order intent, main-menu
-open/close intent, and before/after-render boundaries are also directly adapted
-from that pinned source. The pinned implementation does not store the supplied
-priority and leaves its RAII handle uninitialized; this port deliberately
-corrects both defects, validates listener handles, and uses quiescent,
-snapshot-based render-thread dispatch. Its Open/Close delivery is deferred to a
-safe Starfield render boundary instead of running synchronously inside the state
-mutation.
-
-The pinned SKSE Menu Framework source centers the cursor whenever a blocking
-window opens; the current port retains that one-time behavior.
-Starfield's pre-`kPostDataLoad` relative-mouse bridge is an independent Windows
-Raw Input implementation; SKSE Menu Framework has no equivalent relative-motion
-path. Its only physical cursor placement transfers the already-visible virtual
-position into Starfield's normal cursor route at that lifecycle handoff.
-
-The verified vtable-hook installation and guarded rollback pattern is adapted from [Toggle Dialogue Camera SF at commit `8021fa9`](https://github.com/QTR-Modding/ToggleDialogueCameraSF/tree/8021fa934591aac1c71266cc4abc5cb1c24e28d7), under GPL-3.0-or-later with its Modding and GPL-3.0 Linking Exceptions.
-
-The Starfield cursor, control-layer, simulation-pause, and native-main-thread queue ownership-transfer protocols are adapted from [OSF UI at commit `14b7565`](https://github.com/ozooma10/osf-ui/tree/14b7565bbc7689b07fdccdb74525b9505f9f0dd6) by ozooma10, under GPL-3.0 with its Modding and GPL-3.0 Linking Exceptions.
-
-Favorites and archive persistence uses
-[JSON for Modern C++ 3.11.3](https://github.com/nlohmann/json/tree/v3.11.3),
-which remains available under the MIT license included in
+The DirectX 12 renderer, pre-`kPostDataLoad` Raw Input bridge, stable
+registration snapshots, live atlas transaction, and variable-font controls are
+Starfield-specific. Exact source revisions, borrowed implementation boundaries,
+licenses, exceptions, and bundled-asset notices are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -19,12 +19,15 @@ end
 
 includes(path.join(os.projectdir(), "lib", "commonlibsf"))
 
-add_repositories("sfsemenu-framework xmake-packages")
-
 add_requires("nlohmann_json 3.11.3")
-add_requires("freetype 2.14.3", {
+add_requires("freetype 2.14.1", {
     configs = {
-        shared = false
+        bzip2 = false,
+        harfbuzz = false,
+        png = false,
+        shared = false,
+        woff2 = false,
+        zlib = false
     }
 })
 

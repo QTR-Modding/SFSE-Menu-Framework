@@ -34,56 +34,6 @@ namespace SFSEMenuFramework::SettingsWindow
 		bool fontSettingsRefreshRequested{ true };
 		bool fontSettingsInvalid{};
 
-		struct SettingsSnapshot final
-		{
-			std::uint32_t                   ToggleKey{};
-			FrameworkSettings::ToggleMode   KeyboardMode{};
-			std::uint32_t                   ToggleKeyGamePad{};
-			FrameworkSettings::ToggleMode   GamePadMode{};
-			bool                            FreezeTimeOnMenu{};
-			bool                            BlurBackgroundOnMenu{};
-			FrameworkSettings::MenuStyleName MenuStyle{};
-			FrameworkSettings::FontSettings  Fonts{};
-		};
-
-		[[nodiscard]] SettingsSnapshot CaptureSettings() noexcept
-		{
-			return SettingsSnapshot{
-				.ToggleKey = FrameworkSettings::GetToggleKey(),
-				.KeyboardMode = FrameworkSettings::GetToggleMode(),
-				.ToggleKeyGamePad = FrameworkSettings::GetToggleKeyGamePad(),
-				.GamePadMode = FrameworkSettings::GetToggleModeGamePad(),
-				.FreezeTimeOnMenu =
-					FrameworkSettings::GetFreezeTimeOnMenu(),
-				.BlurBackgroundOnMenu =
-					FrameworkSettings::GetBlurBackgroundOnMenu(),
-				.MenuStyle = FrameworkSettings::GetMenuStyle(),
-				.Fonts = FrameworkSettings::GetFontSettings()
-			};
-		}
-
-		void RestoreSettings(const SettingsSnapshot& a_snapshot) noexcept
-		{
-			static_cast<void>(
-				FrameworkSettings::SetToggleKey(a_snapshot.ToggleKey));
-			static_cast<void>(
-				FrameworkSettings::SetToggleMode(a_snapshot.KeyboardMode));
-			static_cast<void>(
-				FrameworkSettings::SetToggleKeyGamePad(
-					a_snapshot.ToggleKeyGamePad));
-			static_cast<void>(
-				FrameworkSettings::SetToggleModeGamePad(
-					a_snapshot.GamePadMode));
-			FrameworkSettings::SetFreezeTimeOnMenu(
-				a_snapshot.FreezeTimeOnMenu);
-			FrameworkSettings::SetBlurBackgroundOnMenu(
-				a_snapshot.BlurBackgroundOnMenu);
-			static_cast<void>(
-				FrameworkSettings::SetMenuStyle(a_snapshot.MenuStyle.data()));
-			static_cast<void>(
-				FrameworkSettings::SetFontSettings(a_snapshot.Fonts));
-		}
-
 		void ApplyRuntimeSettings()
 		{
 			auto* mainWindow = WindowManager::GetMainWindow();
@@ -100,10 +50,30 @@ namespace SFSEMenuFramework::SettingsWindow
 			static_cast<void>(Win32Platform::PostHostWindowCallback());
 		}
 
+		[[nodiscard]] bool SaveOrRestore(
+			const FrameworkSettings::SettingsSnapshot& a_previous,
+			bool                                       a_rebuildFonts,
+			bool&                                      a_themeLoadFailed)
+		{
+			if (FrameworkSettings::Save()) {
+				return true;
+			}
+			FrameworkSettings::RestoreSnapshot(a_previous);
+			if (a_rebuildFonts) {
+				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(a_previous.Fonts);
+				fontSettingsRefreshRequested = true;
+			}
+			a_themeLoadFailed = !ThemeManager::QueueConfiguredTheme();
+			ApplyRuntimeSettings();
+			return false;
+		}
+
+		template <class Setter>
 		[[nodiscard]] bool RenderToggleMode(
 			const char*                   a_label,
+			const char*                   a_id,
 			FrameworkSettings::ToggleMode a_current,
-			bool                          a_gamePad)
+			Setter                        a_set)
 		{
 			using ToggleMode = FrameworkSettings::ToggleMode;
 			int selected = std::to_underlying(a_current);
@@ -115,60 +85,36 @@ namespace SFSEMenuFramework::SettingsWindow
 			};
 			ImGui::TextUnformatted(a_label);
 			if (!ImGui::Combo(
-					(a_gamePad ? "##GamePadToggleMode" : "##KeyboardToggleMode"),
+					a_id,
 					&selected,
 					names.data(),
 					static_cast<int>(names.size()))) {
 				return false;
 			}
 
-			const auto mode = static_cast<ToggleMode>(selected);
-			return a_gamePad ?
-				FrameworkSettings::SetToggleModeGamePad(mode) :
-				FrameworkSettings::SetToggleMode(mode);
+			return a_set(static_cast<ToggleMode>(selected));
 		}
 
-		[[nodiscard]] bool RenderKeyboardBinding()
+		template <class Setter>
+		[[nodiscard]] bool RenderBinding(
+			const char*                                a_label,
+			const char*                                a_id,
+			std::span<const FrameworkSettings::Binding> a_bindings,
+			std::uint32_t                              a_current,
+			Setter                                     a_set)
 		{
-			const auto current = FrameworkSettings::GetToggleKey();
-			const auto currentName =
-				FrameworkSettings::GetKeyboardBindingName(current);
+			const auto current = std::ranges::find(
+				a_bindings, a_current, &FrameworkSettings::Binding::Code);
 			bool changed{};
-			ImGui::TextUnformatted("Toggle key (keyboard)");
+			ImGui::TextUnformatted(a_label);
 			if (ImGui::BeginCombo(
-					"##KeyboardToggleKey",
-					currentName.empty() ? "UNKNOWN" : currentName.data())) {
-				for (const auto& binding : FrameworkSettings::GetKeyboardBindings()) {
-					const bool selected = binding.Code == current;
+					a_id,
+					current == a_bindings.end() ? "UNKNOWN" : current->Name.data())) {
+				for (const auto& binding : a_bindings) {
+					const bool selected = binding.Code == a_current;
 					ImGui::PushID(static_cast<int>(binding.Code));
 					if (ImGui::Selectable(binding.Name.data(), selected)) {
-						changed = FrameworkSettings::SetToggleKey(binding.Code);
-					}
-					if (selected) {
-						ImGui::SetItemDefaultFocus();
-					}
-					ImGui::PopID();
-				}
-				ImGui::EndCombo();
-			}
-			return changed;
-		}
-
-		[[nodiscard]] bool RenderGamePadBinding()
-		{
-			const auto current = FrameworkSettings::GetToggleKeyGamePad();
-			const auto currentName =
-				FrameworkSettings::GetGamePadBindingName(current);
-			bool changed{};
-			ImGui::TextUnformatted("Toggle key (gamepad)");
-			if (ImGui::BeginCombo(
-					"##GamePadToggleKey",
-					currentName.empty() ? "UNKNOWN" : currentName.data())) {
-				for (const auto& binding : FrameworkSettings::GetGamePadBindings()) {
-					const bool selected = binding.Code == current;
-					ImGui::PushID(static_cast<int>(binding.Code));
-					if (ImGui::Selectable(binding.Name.data(), selected)) {
-						changed = FrameworkSettings::SetToggleKeyGamePad(binding.Code);
+						changed = a_set(binding.Code);
 					}
 					if (selected) {
 						ImGui::SetItemDefaultFocus();
@@ -227,77 +173,11 @@ namespace SFSEMenuFramework::SettingsWindow
 			return clicked;
 		}
 
-		[[nodiscard]] std::string_view FontNameView(
-			const FrameworkSettings::FontFileName& a_name) noexcept
-		{
-			for (std::size_t index = 0; index < a_name.size(); ++index) {
-				if (a_name[index] == '\0') {
-					return { a_name.data(), index };
-				}
-			}
-			return {};
-		}
-
-		[[nodiscard]] unsigned char ToUpperAscii(unsigned char a_value) noexcept
-		{
-			return a_value >= 'a' && a_value <= 'z' ?
-				static_cast<unsigned char>(a_value - ('a' - 'A')) :
-				a_value;
-		}
-
-		[[nodiscard]] bool EqualsIgnoreCaseAscii(
-			std::string_view a_left,
-			std::string_view a_right) noexcept
-		{
-			if (a_left.size() != a_right.size()) {
-				return false;
-			}
-			for (std::size_t index = 0; index < a_left.size(); ++index) {
-				if (ToUpperAscii(static_cast<unsigned char>(a_left[index])) !=
-					ToUpperAscii(static_cast<unsigned char>(a_right[index]))) {
-					return false;
-				}
-			}
-			return true;
-		}
-
-		[[nodiscard]] bool CopyFontName(
-			std::string_view                    a_name,
-			FrameworkSettings::FontFileName& a_result) noexcept
-		{
-			if (a_name.empty() || a_name.size() >= a_result.size()) {
-				return false;
-			}
-			a_result.fill('\0');
-			for (std::size_t index = 0; index < a_name.size(); ++index) {
-				a_result[index] = a_name[index];
-			}
-			return true;
-		}
-
-		[[nodiscard]] bool NearlyEqual(float a_left, float a_right) noexcept
-		{
-			return std::fabs(a_left - a_right) <= 0.0001F;
-		}
-
-		[[nodiscard]] bool FontSettingsEqual(
-			const FrameworkSettings::FontSettings& a_left,
-			const FrameworkSettings::FontSettings& a_right) noexcept
-		{
-			return EqualsIgnoreCaseAscii(
-					FontNameView(a_left.PrimaryFont),
-					FontNameView(a_right.PrimaryFont)) &&
-			       NearlyEqual(a_left.FontWeight, a_right.FontWeight) &&
-			       NearlyEqual(a_left.FontSizeMedium, a_right.FontSizeMedium) &&
-			       NearlyEqual(a_left.MinFontSize, a_right.MinFontSize) &&
-			       NearlyEqual(a_left.MaxFontSize, a_right.MaxFontSize) &&
-			       NearlyEqual(a_left.UIScale, a_right.UIScale);
-		}
-
 		[[nodiscard]] bool MatchesLiveSettings(
 			const FrameworkSettings::FontSettings& a_settings) noexcept
 		{
-			return FontSettingsEqual(a_settings, FontManager::GetActiveSettings());
+			return FrameworkSettings::FontSettingsEqual(
+				a_settings, FontManager::GetActiveSettings(), 0.0001F, true);
 		}
 
 		[[nodiscard]] bool QueueLiveFontSettings(
@@ -305,6 +185,29 @@ namespace SFSEMenuFramework::SettingsWindow
 		{
 			return FrameworkSettings::ValidateFontSettings(a_settings) &&
 			       FontManager::RequestAtlasRebuild(a_settings);
+		}
+
+		[[nodiscard]] const FontManager::FontEntry* FindFont(
+			std::span<const FontManager::FontEntry> a_fonts,
+			std::string_view                        a_name) noexcept
+		{
+			const auto found = std::ranges::find_if(a_fonts, [a_name](const auto& a_font) {
+				return FrameworkSettings::EqualsIgnoreCaseAscii(a_name, a_font.Name);
+			});
+			return found == a_fonts.end() ? nullptr : &*found;
+		}
+
+		void FinishFontEdit(
+			const FrameworkSettings::FontSettings& a_settings,
+			bool                                   a_changed)
+		{
+			if (a_changed) {
+				fontSettingsInvalid =
+					!FrameworkSettings::ValidateFontSettings(a_settings);
+			}
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				fontSettingsInvalid = !QueueLiveFontSettings(a_settings);
+			}
 		}
 
 		void RenderFontSettings(bool& a_saveFailed)
@@ -318,16 +221,12 @@ namespace SFSEMenuFramework::SettingsWindow
 
 			ImGui::SeparatorText("Fonts");
 			ImGui::TextUnformatted("Primary font");
-			const auto pendingFontName = FontNameView(pending.PrimaryFont);
+			const auto pendingFontName =
+				FrameworkSettings::GetFontFileNameView(pending.PrimaryFont);
 
 			const auto fonts = FontManager::GetFonts();
-			const FontManager::FontEntry* pendingFont{};
-			for (const auto& font : fonts) {
-				if (EqualsIgnoreCaseAscii(pendingFontName, font.Name)) {
-					pendingFont = &font;
-					break;
-				}
-			}
+			const FontManager::FontEntry* pendingFont =
+				FindFont(fonts, pendingFontName);
 			std::string missingFontPreview;
 			const char* fontPreview = pending.PrimaryFont.data();
 			if (pendingFontName.empty()) {
@@ -346,11 +245,12 @@ namespace SFSEMenuFramework::SettingsWindow
 			} else if (ImGui::BeginCombo("##PrimaryFont", fontPreview)) {
 				for (std::size_t index = 0; index < fonts.size(); ++index) {
 					const auto& name = fonts[index].Name;
-					const bool selected =
-						EqualsIgnoreCaseAscii(pendingFontName, name);
+					const bool selected = FrameworkSettings::EqualsIgnoreCaseAscii(
+						pendingFontName, name);
 					ImGui::PushID(static_cast<int>(index));
 					if (ImGui::Selectable(name.c_str(), selected)) {
-						if (!CopyFontName(name, pending.PrimaryFont)) {
+						if (!FrameworkSettings::CopyFontFileName(
+								name, pending.PrimaryFont, false)) {
 							fontSettingsInvalid = true;
 						} else {
 							pendingFont = &fonts[index];
@@ -371,34 +271,20 @@ namespace SFSEMenuFramework::SettingsWindow
 				ImGui::EndCombo();
 			}
 
-			pendingFont = nullptr;
-			const auto selectedFontName = FontNameView(pending.PrimaryFont);
-			for (const auto& font : fonts) {
-				if (EqualsIgnoreCaseAscii(selectedFontName, font.Name)) {
-					pendingFont = &font;
-					break;
-				}
-			}
-
 			if (pendingFont && pendingFont->WeightAxis) {
 				const auto& axis = *pendingFont->WeightAxis;
 				ImGui::Text(
 					"Font weight (%.0f - %.0f)",
 					axis.Minimum,
 					axis.Maximum);
-				if (ImGui::SliderFloat(
+				const bool weightEdited = ImGui::SliderFloat(
 						"##FontWeight",
 						&pending.FontWeight,
 						axis.Minimum,
 						axis.Maximum,
 						"%.0f",
-						ImGuiSliderFlags_AlwaysClamp)) {
-					fontSettingsInvalid =
-						!FrameworkSettings::ValidateFontSettings(pending);
-				}
-				if (ImGui::IsItemDeactivatedAfterEdit()) {
-					fontSettingsInvalid = !QueueLiveFontSettings(pending);
-				}
+						ImGuiSliderFlags_AlwaysClamp);
+				FinishFontEdit(pending, weightEdited);
 				ImGui::TextDisabled(
 					"Variable font; built-in default weight %.0f.",
 					axis.Default);
@@ -420,13 +306,7 @@ namespace SFSEMenuFramework::SettingsWindow
 					1.0F,
 					4.0F,
 					"%.1f");
-			if (fontSizeEdited) {
-				fontSettingsInvalid =
-					!FrameworkSettings::ValidateFontSettings(pending);
-			}
-			if (ImGui::IsItemDeactivatedAfterEdit()) {
-				fontSettingsInvalid = !QueueLiveFontSettings(pending);
-			}
+			FinishFontEdit(pending, fontSizeEdited);
 
 			ImGui::TextUnformatted("UI scale");
 			if (ImGui::IsItemHovered()) {
@@ -435,19 +315,16 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 			int uiScalePercent = static_cast<int>(
 				std::lround(pending.UIScale * 100.0F));
-			if (ImGui::SliderInt(
+			const bool uiScaleEdited = ImGui::SliderInt(
 					"##UIScale",
 					&uiScalePercent,
 					75,
 					200,
-					"%d%%")) {
+					"%d%%");
+			if (uiScaleEdited) {
 				pending.UIScale = static_cast<float>(uiScalePercent) / 100.0F;
-				fontSettingsInvalid =
-					!FrameworkSettings::ValidateFontSettings(pending);
 			}
-			if (ImGui::IsItemDeactivatedAfterEdit()) {
-				fontSettingsInvalid = !QueueLiveFontSettings(pending);
-			}
+			FinishFontEdit(pending, uiScaleEdited);
 
 			const auto activeName = FontManager::GetActiveFontName();
 			const auto activeScalePercent = static_cast<int>(
@@ -530,7 +407,8 @@ namespace SFSEMenuFramework::SettingsWindow
 					applyError.data());
 			} else if (pendingValid && !MatchesLiveSettings(pending)) {
 				ImGui::TextDisabled("Finish editing to apply the live preview.");
-			} else if (!FontSettingsEqual(pending, configured)) {
+			} else if (!FrameworkSettings::FontSettingsEqual(
+				pending, configured, 0.0001F, true)) {
 				ImGui::TextColored(
 					ImVec4{ 1.0F, 0.75F, 0.25F, 1.0F },
 					"Live preview applied; changes are not saved.");
@@ -544,7 +422,7 @@ namespace SFSEMenuFramework::SettingsWindow
 		{
 			static bool saveFailed{};
 			static bool themeLoadFailed{};
-			const auto settingsBeforeRender = CaptureSettings();
+			const auto settingsBeforeRender = FrameworkSettings::CaptureSnapshot();
 			bool changed{};
 
 			const auto themes = ThemeManager::GetThemes();
@@ -594,52 +472,49 @@ namespace SFSEMenuFramework::SettingsWindow
 			changed =
 				RenderToggleMode(
 					"Toggle mode (keyboard)",
+					"##KeyboardToggleMode",
 					FrameworkSettings::GetToggleMode(),
-					false) ||
+					&FrameworkSettings::SetToggleMode) ||
 				changed;
-			changed = RenderKeyboardBinding() || changed;
+			changed = RenderBinding(
+				"Toggle key (keyboard)",
+				"##KeyboardToggleKey",
+				FrameworkSettings::GetKeyboardBindings(),
+				FrameworkSettings::GetToggleKey(),
+				&FrameworkSettings::SetToggleKey) || changed;
 
 			ImGui::Separator();
 			changed =
 				RenderToggleMode(
 					"Toggle mode (gamepad)",
+					"##GamePadToggleMode",
 					FrameworkSettings::GetToggleModeGamePad(),
-					true) ||
+					&FrameworkSettings::SetToggleModeGamePad) ||
 				changed;
-			changed = RenderGamePadBinding() || changed;
+			changed = RenderBinding(
+				"Toggle key (gamepad)",
+				"##GamePadToggleKey",
+				FrameworkSettings::GetGamePadBindings(),
+				FrameworkSettings::GetToggleKeyGamePad(),
+				&FrameworkSettings::SetToggleKeyGamePad) || changed;
 
 			if (changed) {
 				ApplyRuntimeSettings();
-				if (!FrameworkSettings::Save()) {
-					RestoreSettings(settingsBeforeRender);
-					themeLoadFailed = !ThemeManager::QueueConfiguredTheme();
-					ApplyRuntimeSettings();
-					saveFailed = true;
-				} else {
-					saveFailed = false;
-				}
+				saveFailed = !SaveOrRestore(
+					settingsBeforeRender, false, themeLoadFailed);
 			}
 
 			ImGui::Spacing();
 			if (ImGui::Button("Reset to defaults")) {
-				const auto settingsBeforeReset = CaptureSettings();
+				const auto settingsBeforeReset = FrameworkSettings::CaptureSnapshot();
 				FrameworkSettings::ResetDefaults();
 				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(
 					FrameworkSettings::GetFontSettings());
 				fontSettingsRefreshRequested = true;
 				themeLoadFailed = !ThemeManager::QueueConfiguredTheme();
 				ApplyRuntimeSettings();
-				if (!FrameworkSettings::Save()) {
-					RestoreSettings(settingsBeforeReset);
-					fontSettingsInvalid = !FontManager::RequestAtlasRebuild(
-						settingsBeforeReset.Fonts);
-					fontSettingsRefreshRequested = true;
-					themeLoadFailed = !ThemeManager::QueueConfiguredTheme();
-					ApplyRuntimeSettings();
-					saveFailed = true;
-				} else {
-					saveFailed = false;
-				}
+				saveFailed = !SaveOrRestore(
+					settingsBeforeReset, true, themeLoadFailed);
 			}
 
 			if (themeLoadFailed) {

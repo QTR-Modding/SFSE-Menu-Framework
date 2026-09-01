@@ -11,7 +11,6 @@ namespace SFSEMenuFramework::InputCapture
 	};
 
 	[[nodiscard]] bool Install();
-	void ArmKeyboardEdgeCapture() noexcept;
 	void ArmFunctionalCapture() noexcept;
 
 	void FlushDiagnostics() noexcept;

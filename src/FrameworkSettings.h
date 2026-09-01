@@ -34,6 +34,18 @@ namespace SFSEMenuFramework::FrameworkSettings
 		float        UIScale{};
 	};
 
+	struct SettingsSnapshot final
+	{
+		std::uint32_t ToggleKey{};
+		ToggleMode    Mode{};
+		std::uint32_t ToggleKeyGamePad{};
+		ToggleMode    ModeGamePad{};
+		bool          FreezeTimeOnMenu{};
+		bool          BlurBackgroundOnMenu{};
+		MenuStyleName MenuStyle{};
+		FontSettings  Fonts{};
+	};
+
 	[[nodiscard]] bool Load() noexcept;
 	[[nodiscard]] bool Save() noexcept;
 	void               ResetDefaults() noexcept;
@@ -54,6 +66,22 @@ namespace SFSEMenuFramework::FrameworkSettings
 	[[nodiscard]] MenuStyleName GetMenuStyle() noexcept;
 	[[nodiscard]] FontSettings  GetFontSettings() noexcept;
 	[[nodiscard]] FontSettings  GetDefaultFontSettings() noexcept;
+	[[nodiscard]] SettingsSnapshot CaptureSnapshot() noexcept;
+	void RestoreSnapshot(const SettingsSnapshot& a_snapshot) noexcept;
+	[[nodiscard]] std::string_view GetFontFileNameView(
+		const FontFileName& a_name) noexcept;
+	[[nodiscard]] bool EqualsIgnoreCaseAscii(
+		std::string_view a_left,
+		std::string_view a_right) noexcept;
+	[[nodiscard]] bool CopyFontFileName(
+		std::string_view a_name,
+		FontFileName&    a_result,
+		bool             a_validate = true) noexcept;
+	[[nodiscard]] bool FontSettingsEqual(
+		const FontSettings& a_left,
+		const FontSettings& a_right,
+		float               a_tolerance = 0.0F,
+		bool                a_ignoreNameCase = false) noexcept;
 	[[nodiscard]] bool ValidateFontSettings(
 		const FontSettings& a_settings) noexcept;
 
@@ -65,5 +93,4 @@ namespace SFSEMenuFramework::FrameworkSettings
 	void               SetBlurBackgroundOnMenu(bool a_enabled) noexcept;
 	[[nodiscard]] bool SetMenuStyle(std::string_view a_name) noexcept;
 	[[nodiscard]] bool SetFontSettings(const FontSettings& a_settings) noexcept;
-	void               ResetFontSettings() noexcept;
 }

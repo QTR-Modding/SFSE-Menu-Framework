@@ -55,31 +55,31 @@ namespace SFSEMenuFramework::FontManager
 			std::vector<std::uint8_t>        Bytes;
 			std::string                      ActiveName;
 			std::string                      FallbackReason;
-			float                            RasterSize{};
-			bool                             Embedded{};
+
+			[[nodiscard]] float RasterSize() const noexcept
+			{
+				return Settings.FontSizeMedium * Settings.UIScale;
+			}
 		};
 
 		struct State final
 		{
 			std::vector<FontEntry> Fonts;
 			std::optional<FrameworkSettings::FontSettings> PendingSettings;
-			FontSource             ActiveSource;
-			std::string            ConfiguredFontName;
-			std::string            ActiveFontName;
-			std::string            FallbackReason;
-			std::string            LastApplyError;
-			float                  ActiveFontSize{};
-			float                  ActiveUIScale{ 1.0F };
-			float                  ActiveRasterSize{};
-			float                  ActiveFontWeight{};
-			std::optional<FontWeightAxis> ActiveWeightAxis;
-			bool                   HasActiveSource{};
+			std::optional<FontSource> ActiveSource;
+			std::string LastApplyError;
 		};
 
 		[[nodiscard]] State& GetState()
 		{
 			static auto* state = new State();
 			return *state;
+		}
+
+		[[nodiscard]] const FontSource* GetActiveSource() noexcept
+		{
+			const auto& source = GetState().ActiveSource;
+			return source ? &*source : nullptr;
 		}
 
 		[[nodiscard]] char ToLowerAscii(char a_character) noexcept
@@ -102,18 +102,6 @@ namespace SFSEMenuFramework::FontManager
 				}
 			}
 			return true;
-		}
-
-		[[nodiscard]] bool FontSettingsEqual(
-			const FrameworkSettings::FontSettings& a_left,
-			const FrameworkSettings::FontSettings& a_right) noexcept
-		{
-			return a_left.PrimaryFont == a_right.PrimaryFont &&
-			       a_left.FontWeight == a_right.FontWeight &&
-			       a_left.FontSizeMedium == a_right.FontSizeMedium &&
-			       a_left.MinFontSize == a_right.MinFontSize &&
-			       a_left.MaxFontSize == a_right.MaxFontSize &&
-			       a_left.UIScale == a_right.UIScale;
 		}
 
 		[[nodiscard]] bool LessIgnoreCase(
@@ -388,12 +376,11 @@ namespace SFSEMenuFramework::FontManager
 			configuration.PixelSnapH = false;
 			configuration.FontBuilderFlags = 0;
 			configuration.RasterizerDensity = 1.0F;
-			if (a_source.Embedded) {
-				configuration.SizePixels = a_source.RasterSize;
+			if (a_source.Bytes.empty()) {
+				configuration.SizePixels = a_source.RasterSize();
 				a_font = a_atlas.AddFontDefault(&configuration);
 			} else {
-				if (a_source.Bytes.empty() ||
-					a_source.Bytes.size() > static_cast<std::size_t>(
+				if (a_source.Bytes.size() > static_cast<std::size_t>(
 						(std::numeric_limits<int>::max)())) {
 					return false;
 				}
@@ -401,7 +388,7 @@ namespace SFSEMenuFramework::FontManager
 				a_font = a_atlas.AddFontFromMemoryTTF(
 					const_cast<std::uint8_t*>(a_source.Bytes.data()),
 					static_cast<int>(a_source.Bytes.size()),
-					a_source.RasterSize,
+					a_source.RasterSize(),
 					&configuration,
 					a_atlas.GetGlyphRangesDefault());
 			}
@@ -420,12 +407,13 @@ namespace SFSEMenuFramework::FontManager
 		}
 
 		[[nodiscard]] bool TryFileSource(
-			ImFontAtlas&     a_atlas,
-			const FontEntry& a_entry,
-			FontSource&      a_source,
-			ImFont*&         a_font)
+			ImFontAtlas&                            a_atlas,
+			const FontEntry&                        a_entry,
+			const FrameworkSettings::FontSettings& a_settings,
+			FontSource&                             a_source,
+			ImFont*&                                a_font)
 		{
-			a_source.Embedded = false;
+			a_source.Settings = a_settings;
 			a_source.WeightAxis = a_entry.WeightAxis;
 			if (a_source.WeightAxis) {
 				a_source.Settings.FontWeight = std::clamp(
@@ -457,14 +445,16 @@ namespace SFSEMenuFramework::FontManager
 			ImFont*&                                a_font)
 		{
 			a_source = FontSource{};
-			a_source.Settings = a_settings;
-			a_source.RasterSize = a_settings.FontSizeMedium * a_settings.UIScale;
 			const auto configuredName =
 				std::string_view{ a_settings.PrimaryFont.data() };
 
 			if (const auto* configured = FindFont(configuredName)) {
-				a_source.Settings = a_settings;
-				if (TryFileSource(a_atlas, *configured, a_source, a_font)) {
+				if (TryFileSource(
+						a_atlas,
+						*configured,
+						a_settings,
+						a_source,
+						a_font)) {
 					return true;
 				}
 				a_source.FallbackReason =
@@ -480,8 +470,12 @@ namespace SFSEMenuFramework::FontManager
 					continue;
 				}
 				const auto* fallback = FindFont(fallbackName);
-				a_source.Settings = a_settings;
-				if (fallback && TryFileSource(a_atlas, *fallback, a_source, a_font)) {
+				if (fallback && TryFileSource(
+						a_atlas,
+						*fallback,
+						a_settings,
+						a_source,
+						a_font)) {
 					logger::warn(
 						"{} Active fallback: '{}'",
 						a_source.FallbackReason,
@@ -490,7 +484,6 @@ namespace SFSEMenuFramework::FontManager
 				}
 			}
 
-			a_source.Embedded = true;
 			a_source.Settings = a_settings;
 			a_source.WeightAxis.reset();
 			a_source.Bytes.clear();
@@ -508,33 +501,25 @@ namespace SFSEMenuFramework::FontManager
 		void CommitActive(FontSource&& a_source)
 		{
 			auto& state = GetState();
-			state.ConfiguredFontName = a_source.Settings.PrimaryFont.data();
-			state.ActiveFontName = a_source.ActiveName;
-			state.FallbackReason = a_source.FallbackReason;
-			state.ActiveFontSize = a_source.Settings.FontSizeMedium;
-			state.ActiveUIScale = a_source.Settings.UIScale;
-			state.ActiveRasterSize = a_source.RasterSize;
-			state.ActiveFontWeight = a_source.Settings.FontWeight;
-			state.ActiveWeightAxis = a_source.WeightAxis;
 			state.ActiveSource = std::move(a_source);
-			state.HasActiveSource = true;
-			if (state.ActiveWeightAxis) {
+			const auto& active = *state.ActiveSource;
+			if (active.WeightAxis) {
 				logger::info(
 					"Loaded ImGui font '{}' at weight {:.0f}, {:.1f} logical px, "
 					"{:.0f}% UI scale, {:.1f} raster px (FreeType native hinting)",
-					state.ActiveFontName,
-					state.ActiveFontWeight,
-					state.ActiveFontSize,
-					state.ActiveUIScale * 100.0F,
-					state.ActiveRasterSize);
+					active.ActiveName,
+					active.Settings.FontWeight,
+					active.Settings.FontSizeMedium,
+					active.Settings.UIScale * 100.0F,
+					active.RasterSize());
 			} else {
 				logger::info(
 					"Loaded ImGui font '{}' at {:.1f} logical px, {:.0f}% UI scale, "
 					"{:.1f} raster px (FreeType native hinting)",
-					state.ActiveFontName,
-					state.ActiveFontSize,
-					state.ActiveUIScale * 100.0F,
-					state.ActiveRasterSize);
+					active.ActiveName,
+					active.Settings.FontSizeMedium,
+					active.Settings.UIScale * 100.0F,
+					active.RasterSize());
 			}
 		}
 
@@ -543,6 +528,12 @@ namespace SFSEMenuFramework::FontManager
 			auto& state = GetState();
 			state.LastApplyError = a_message;
 			logger::error("{}", state.LastApplyError);
+		}
+
+		[[nodiscard]] LiveApplyResult ApplyFailed(std::string_view a_message)
+		{
+			SetApplyFailure(a_message);
+			return LiveApplyResult::Failed;
 		}
 
 		[[nodiscard]] bool GetAtlasPixels(
@@ -591,8 +582,10 @@ namespace SFSEMenuFramework::FontManager
 
 		auto& state = GetState();
 		state.LastApplyError.clear();
-		if (state.HasActiveSource &&
-			FontSettingsEqual(a_settings, state.ActiveSource.Settings)) {
+		if (state.ActiveSource &&
+			FrameworkSettings::FontSettingsEqual(
+				a_settings,
+				state.ActiveSource->Settings)) {
 			state.PendingSettings.reset();
 			return true;
 		}
@@ -622,10 +615,9 @@ namespace SFSEMenuFramework::FontManager
 		if (!context || &context->IO != &a_io || !a_io.Fonts ||
 			context->WithinFrameScope || a_io.Fonts->Locked ||
 			!context->FontStack.empty()) {
-			SetApplyFailure(
+			return ApplyFailed(
 				"Could not apply the requested font at a safe ImGui frame boundary; "
 				"the previous font remains active.");
-			return LiveApplyResult::Failed;
 		}
 
 		ImFontAtlas candidateAtlas;
@@ -639,9 +631,8 @@ namespace SFSEMenuFramework::FontManager
 				requested,
 				candidateSource,
 				candidateFont)) {
-			SetApplyFailure(
+			return ApplyFailed(
 				"Could not build the requested font; the previous font remains active.");
-			return LiveApplyResult::Failed;
 		}
 
 		unsigned char* candidatePixels{};
@@ -652,9 +643,8 @@ namespace SFSEMenuFramework::FontManager
 				candidatePixels,
 				candidateWidth,
 				candidateHeight)) {
-			SetApplyFailure(
+			return ApplyFailed(
 				"Could not read the requested font atlas; the previous font remains active.");
-			return LiveApplyResult::Failed;
 		}
 
 		TextureBuildResult textureResult{};
@@ -666,9 +656,8 @@ namespace SFSEMenuFramework::FontManager
 				textureResult,
 				a_userData) ||
 			textureResult.TextureID == 0) {
-			SetApplyFailure(
+			return ApplyFailed(
 				"Could not upload the requested font; the previous font remains active.");
-			return LiveApplyResult::Failed;
 		}
 
 		candidateAtlas.SetTexID(
@@ -693,50 +682,54 @@ namespace SFSEMenuFramework::FontManager
 
 	FrameworkSettings::FontSettings GetActiveSettings() noexcept
 	{
-		const auto& state = GetState();
-		return state.HasActiveSource ?
-			state.ActiveSource.Settings :
+		const auto* source = GetActiveSource();
+		return source ?
+			source->Settings :
 			FrameworkSettings::GetFontSettings();
-	}
-
-	std::string_view GetConfiguredFontName() noexcept
-	{
-		return GetState().ConfiguredFontName;
 	}
 
 	std::string_view GetActiveFontName() noexcept
 	{
-		return GetState().ActiveFontName;
+		const auto* source = GetActiveSource();
+		return source ? std::string_view{ source->ActiveName } : std::string_view{};
 	}
 
 	float GetActiveFontSize() noexcept
 	{
-		return GetState().ActiveFontSize;
+		const auto* source = GetActiveSource();
+		return source ? source->Settings.FontSizeMedium : 0.0F;
 	}
 
 	float GetActiveUIScale() noexcept
 	{
-		return GetState().ActiveUIScale;
+		const auto* source = GetActiveSource();
+		return source ? source->Settings.UIScale : 1.0F;
 	}
 
 	float GetActiveRasterSize() noexcept
 	{
-		return GetState().ActiveRasterSize;
+		const auto* source = GetActiveSource();
+		return source ? source->RasterSize() : 0.0F;
 	}
 
 	float GetActiveFontWeight() noexcept
 	{
-		return GetState().ActiveFontWeight;
+		const auto* source = GetActiveSource();
+		return source ? source->Settings.FontWeight : 0.0F;
 	}
 
 	std::optional<FontWeightAxis> GetActiveWeightAxis() noexcept
 	{
-		return GetState().ActiveWeightAxis;
+		const auto* source = GetActiveSource();
+		return source ? source->WeightAxis : std::nullopt;
 	}
 
 	std::string_view GetFallbackReason() noexcept
 	{
-		return GetState().FallbackReason;
+		const auto* source = GetActiveSource();
+		return source ?
+			std::string_view{ source->FallbackReason } :
+			std::string_view{};
 	}
 
 	std::string_view GetLastApplyError() noexcept

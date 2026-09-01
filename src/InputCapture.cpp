@@ -48,27 +48,15 @@ namespace SFSEMenuFramework::InputCapture
 			Failed
 		};
 
-		enum class DiagnosticEdge : std::uint8_t
-		{
-			None,
-			Opened,
-			Closed
-		};
-
 		using InputProcessor = RE::BSInputDeviceManagerInput::PerformInputProcessing_t*;
 
 		std::atomic<HookState>      hookState{ HookState::Uninitialized };
 		std::atomic<InputProcessor> originalInputProcessor{ nullptr };
-		std::atomic<bool>           keyboardEdgeCaptureArmed{ false };
-		std::atomic<bool>           functionalCaptureArmed{ false };
+		std::atomic<bool>           captureArmed{ false };
 		std::atomic<bool>           modal{ false };
 		std::atomic<std::uint64_t>  pendingKeyboardSuppression{ 0 };
 		std::atomic<std::uint32_t>  keyboardEdgeGeneration{ 0 };
 		std::atomic<bool>           captureFaulted{ false };
-		std::atomic<bool>           keyboardEdgeCorrelationMissed{ false };
-		std::atomic_flag            inputBatchObserved{};
-		std::atomic<bool>           inputBatchReportPending{ false };
-		std::atomic<DiagnosticEdge> edgeReportPending{ DiagnosticEdge::None };
 		std::atomic_flag            eventLimitLogged{};
 		struct ToggleTracker final
 		{
@@ -129,18 +117,6 @@ namespace SFSEMenuFramework::InputCapture
 			       button.idCode == VK_SNAPSHOT;
 		}
 
-		[[nodiscard]] bool IsInputQueueBounded(
-			const RE::InputEvent* a_queueHead) noexcept
-		{
-			auto event = a_queueHead;
-			std::size_t eventCount{};
-			while (event && eventCount < maximumInputEvents) {
-				event = event->next;
-				++eventCount;
-			}
-			return event == nullptr;
-		}
-
 		void FaultCaptureOnEventLimit() noexcept
 		{
 			captureFaulted.store(true, std::memory_order_release);
@@ -169,13 +145,12 @@ namespace SFSEMenuFramework::InputCapture
 			}
 
 			const auto deadline = static_cast<std::uint32_t>(pending >> 32);
-			if (CaptureDeadlinePassed(deadline, ::GetTickCount()) &&
-				pendingKeyboardSuppression.compare_exchange_strong(
+			if (CaptureDeadlinePassed(deadline, ::GetTickCount())) {
+				static_cast<void>(pendingKeyboardSuppression.compare_exchange_strong(
 					pending,
 					0,
 					std::memory_order_acq_rel,
-					std::memory_order_acquire)) {
-				keyboardEdgeCorrelationMissed.store(true, std::memory_order_release);
+					std::memory_order_acquire));
 			}
 		}
 
@@ -189,13 +164,11 @@ namespace SFSEMenuFramework::InputCapture
 
 			const auto deadline = static_cast<std::uint32_t>(pending >> 32);
 			if (CaptureDeadlinePassed(deadline, ::GetTickCount())) {
-				if (pendingKeyboardSuppression.compare_exchange_strong(
+				static_cast<void>(pendingKeyboardSuppression.compare_exchange_strong(
 						pending,
 						0,
 						std::memory_order_acq_rel,
-						std::memory_order_acquire)) {
-					keyboardEdgeCorrelationMissed.store(true, std::memory_order_release);
-				}
+						std::memory_order_acquire));
 				return false;
 			}
 
@@ -250,10 +223,17 @@ namespace SFSEMenuFramework::InputCapture
 				// later engine batch.
 				return false;
 			}
-			if (!matches && !requireHeld) {
-				keyboardEdgeCorrelationMissed.store(true, std::memory_order_release);
-			}
 			return matches;
+		}
+
+		void ForwardInput(
+			RE::BSInputEventReceiver* a_receiver,
+			const RE::InputEvent*     a_queueHead)
+		{
+			if (const auto original =
+					originalInputProcessor.load(std::memory_order_acquire)) {
+				original(a_receiver, a_queueHead);
+			}
 		}
 
 		[[nodiscard]] bool IsInitialPress(const RE::ButtonEvent& a_button) noexcept
@@ -351,60 +331,14 @@ namespace SFSEMenuFramework::InputCapture
 			RE::BSInputEventReceiver* a_receiver,
 			const RE::InputEvent*      a_queueHead)
 		{
-			const bool functionalCapture =
-				functionalCaptureArmed.load(std::memory_order_acquire);
-			const bool keyboardEdgeCapture =
-				keyboardEdgeCaptureArmed.load(std::memory_order_acquire);
-			if (!functionalCapture && !keyboardEdgeCapture) {
-				const auto original =
-					originalInputProcessor.load(std::memory_order_acquire);
-				if (original) {
-					original(a_receiver, a_queueHead);
-				}
+			if (!captureArmed.load(std::memory_order_acquire)) {
+				ForwardInput(a_receiver, a_queueHead);
 				return;
 			}
 
 			ExpirePendingKeyboardEdge();
-			if (a_queueHead &&
-				!inputBatchObserved.test_and_set(std::memory_order_relaxed)) {
-				inputBatchReportPending.store(true, std::memory_order_release);
-			}
-
-			const bool keyboardEdgeMatched = keyboardEdgeCapture &&
+			const bool keyboardEdgeMatched =
 				a_queueHead && TryClaimKeyboardSuppression(a_queueHead);
-			if (!functionalCapture) {
-				if (keyboardEdgeMatched) {
-					// The suppression token can be published concurrently with this
-					// callback. Prove the exact queue that will be mutated is bounded
-					// after claiming the token, not from an earlier atomic snapshot.
-					if (!IsInputQueueBounded(a_queueHead)) {
-						FaultCaptureOnEventLimit();
-						const auto original =
-							originalInputProcessor.load(std::memory_order_acquire);
-						if (original) {
-							original(a_receiver, a_queueHead);
-						}
-						return;
-					}
-					for (auto event = a_queueHead; event; event = event->next) {
-						auto* mutableEvent = const_cast<RE::InputEvent*>(event);
-						mutableEvent->status = RE::InputEvent::Status::kStop;
-					}
-					const auto* mainWindow = WindowManager::GetMainWindow();
-					const bool isOpen = mainWindow &&
-						mainWindow->IsOpen.load(std::memory_order_acquire);
-					edgeReportPending.store(
-						isOpen ? DiagnosticEdge::Opened : DiagnosticEdge::Closed,
-						std::memory_order_release);
-				}
-
-				const auto original =
-					originalInputProcessor.load(std::memory_order_acquire);
-				if (original) {
-					original(a_receiver, a_queueHead);
-				}
-				return;
-			}
 
 			bool stateChanged{};
 			const bool captureBatch = modal.load(std::memory_order_acquire);
@@ -439,23 +373,10 @@ namespace SFSEMenuFramework::InputCapture
 							mutableEvent->status = RE::InputEvent::Status::kStop;
 						}
 					}
-
-					if (keyboardEdgeMatched || stateChanged) {
-						const auto* mainWindow = WindowManager::GetMainWindow();
-						const bool isOpen =
-							mainWindow &&
-							mainWindow->IsOpen.load(std::memory_order_acquire);
-						edgeReportPending.store(
-							isOpen ? DiagnosticEdge::Opened : DiagnosticEdge::Closed,
-							std::memory_order_release);
-					}
 				}
 			}
 
-			const auto original = originalInputProcessor.load(std::memory_order_acquire);
-			if (original) {
-				original(a_receiver, a_queueHead);
-			}
+			ForwardInput(a_receiver, a_queueHead);
 		}
 	}
 
@@ -532,7 +453,6 @@ namespace SFSEMenuFramework::InputCapture
 
 		hookState.store(HookState::Ready, std::memory_order_release);
 		pendingKeyboardSuppression.store(0, std::memory_order_release);
-		keyboardEdgeCorrelationMissed.store(false, std::memory_order_release);
 		captureFaulted.store(false, std::memory_order_release);
 		logger::info(
 			"Installed BSInputDeviceManager global input capture at {:X}",
@@ -540,40 +460,14 @@ namespace SFSEMenuFramework::InputCapture
 		return true;
 	}
 
-	void ArmKeyboardEdgeCapture() noexcept
-	{
-		keyboardEdgeCaptureArmed.store(true, std::memory_order_release);
-	}
-
 	void ArmFunctionalCapture() noexcept
 	{
-		ArmKeyboardEdgeCapture();
-		functionalCaptureArmed.store(true, std::memory_order_release);
+		captureArmed.store(true, std::memory_order_release);
 	}
 
 	void FlushDiagnostics() noexcept
 	{
 		ExpirePendingKeyboardEdge();
-		if (keyboardEdgeCorrelationMissed.exchange(
-				false,
-				std::memory_order_acq_rel)) {
-			logger::warn(
-				"A raw keyboard menu edge expired without a matching Starfield keyboard transition");
-		}
-
-		if (inputBatchReportPending.exchange(false, std::memory_order_acq_rel)) {
-			logger::info(
-				"BSInputDeviceManager input receiver observed its first non-empty batch");
-		}
-
-		const auto edge = edgeReportPending.exchange(
-			DiagnosticEdge::None,
-			std::memory_order_acq_rel);
-		if (edge != DiagnosticEdge::None) {
-			logger::info(
-				"BSInputDeviceManager input receiver {} the Mod Control Panel",
-				edge == DiagnosticEdge::Opened ? "opened" : "closed");
-		}
 	}
 
 	bool RequestKeyboardSuppression(
@@ -581,7 +475,6 @@ namespace SFSEMenuFramework::InputCapture
 		KeyboardEdgeMatch a_match) noexcept
 	{
 		if (a_expectedEventID < 0 || a_expectedEventID > 0xFF) {
-			keyboardEdgeCorrelationMissed.store(true, std::memory_order_release);
 			return false;
 		}
 		const bool held = a_match == KeyboardEdgeMatch::HeldPress;
@@ -637,14 +530,12 @@ namespace SFSEMenuFramework::InputCapture
 
 	bool IsKeyboardEdgeOperational() noexcept
 	{
-		return keyboardEdgeCaptureArmed.load(std::memory_order_acquire) &&
-		       hookState.load(std::memory_order_acquire) == HookState::Ready &&
-		       !captureFaulted.load(std::memory_order_acquire);
+		return IsOperational();
 	}
 
 	bool IsOperational() noexcept
 	{
-		return functionalCaptureArmed.load(std::memory_order_acquire) &&
+		return captureArmed.load(std::memory_order_acquire) &&
 		       hookState.load(std::memory_order_acquire) == HookState::Ready &&
 		       !captureFaulted.load(std::memory_order_acquire);
 	}

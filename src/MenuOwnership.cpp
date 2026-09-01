@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <limits>
+#include <utility>
 
 namespace SFSEMenuFramework::MenuOwnership
 {
@@ -49,20 +50,8 @@ namespace SFSEMenuFramework::MenuOwnership
 			bool                      PauseOwned{ false };
 			bool                      BlurOwned{ false };
 			bool                      Faulted{ false };
-			bool                      MissingInputManagerWarned{ false };
-			bool                      MissingCursorWarned{ false };
-			bool                      MissingUIWarned{ false };
-			bool                      MissingBlurManagerWarned{ false };
-			bool                      AllocationFailureWarned{ false };
-			bool                      CursorOverflowWarned{ false };
-			bool                      OwnerMismatchWarned{ false };
-			bool                      ReleaseLayerWarned{ false };
-			bool                      ReleaseCursorWarned{ false };
-			bool                      ReleasePauseWarned{ false };
-			bool                      ReleaseBlurWarned{ false };
 		};
 
-		std::atomic<LifecycleState>   lifecycleState{ LifecycleState::Uninstalled };
 		std::atomic<InputDisposition> inputDisposition{ InputDisposition::PassThrough };
 		std::atomic_flag              wrongThreadLogged{};
 		std::atomic_flag              lifecycleInstalled{};
@@ -80,10 +69,9 @@ namespace SFSEMenuFramework::MenuOwnership
 			return *name;
 		}
 
-		void PublishState(LifecycleState a_state, InputDisposition a_disposition) noexcept
+		void PublishDisposition(InputDisposition a_disposition) noexcept
 		{
 			inputDisposition.store(a_disposition, std::memory_order_release);
-			lifecycleState.store(a_state, std::memory_order_release);
 		}
 
 		[[nodiscard]] bool HasAnyActiveOwnership(const OwnershipState& a_state) noexcept
@@ -132,18 +120,30 @@ namespace SFSEMenuFramework::MenuOwnership
 
 		void MarkFaulted(OwnershipState& a_state, const char* a_reason)
 		{
-			a_state.Faulted = true;
-			if (!a_state.OwnerMismatchWarned) {
-				a_state.OwnerMismatchWarned = true;
+			if (!std::exchange(a_state.Faulted, true)) {
 				logger::critical("Menu ownership faulted: {}", a_reason);
 			}
 			WindowManager::CloseAllBlockingWindows();
-			PublishState(LifecycleState::Faulted, ReleaseDisposition(a_state));
+			PublishDisposition(ReleaseDisposition(a_state));
 		}
 
-		[[nodiscard]] bool ValidateOwners(OwnershipState& a_state)
+		template <class Owner>
+		void ValidateOwner(
+			OwnershipState& a_state,
+			bool&           a_owned,
+			Owner*&         a_owner,
+			Owner*          a_current,
+			const char*     a_reason)
 		{
-			bool valid = true;
+			if (a_owned && a_current && a_current != a_owner) {
+				a_owner = nullptr;
+				a_owned = false;
+				MarkFaulted(a_state, a_reason);
+			}
+		}
+
+		void ValidateOwners(OwnershipState& a_state)
+		{
 			if (a_state.InputLayer) {
 				if (auto* manager = RE::BSInputEnableManager::GetSingleton();
 					manager && manager != a_state.InputManager) {
@@ -151,52 +151,32 @@ namespace SFSEMenuFramework::MenuOwnership
 					a_state.InputLayer = nullptr;
 					a_state.LayerDisabled = false;
 					MarkFaulted(a_state, "the BSInputEnableManager singleton changed");
-					valid = false;
 				}
 			}
-			if (a_state.CursorOwned) {
-				if (auto* cursor = RE::MenuCursor::GetSingleton();
-					cursor && cursor != a_state.CursorOwner) {
-					a_state.CursorOwner = nullptr;
-					a_state.CursorOwned = false;
-					MarkFaulted(
-						a_state,
-						"the MenuCursor singleton changed while its reference was owned");
-					valid = false;
-				}
-			}
-			if (a_state.PauseOwned) {
-				if (auto* ui = RE::UI::GetSingleton(); ui && ui != a_state.PauseOwner) {
-					a_state.PauseOwner = nullptr;
-					a_state.PauseOwned = false;
-					MarkFaulted(
-						a_state,
-						"the UI singleton changed while its pause reference was owned");
-					valid = false;
-				}
-			}
-			if (a_state.BlurOwned) {
-				if (auto* blur = RE::UIBlurManager::GetSingleton();
-					blur && blur != a_state.BlurOwner) {
-					a_state.BlurOwner = nullptr;
-					a_state.BlurOwned = false;
-					MarkFaulted(
-						a_state,
-						"the UIBlurManager singleton changed while its reference was owned");
-					valid = false;
-				}
-			}
-			return valid;
+			ValidateOwner(
+				a_state,
+				a_state.CursorOwned,
+				a_state.CursorOwner,
+				RE::MenuCursor::GetSingleton(),
+				"the MenuCursor singleton changed while its reference was owned");
+			ValidateOwner(
+				a_state,
+				a_state.PauseOwned,
+				a_state.PauseOwner,
+				RE::UI::GetSingleton(),
+				"the UI singleton changed while its pause reference was owned");
+			ValidateOwner(
+				a_state,
+				a_state.BlurOwned,
+				a_state.BlurOwner,
+				RE::UIBlurManager::GetSingleton(),
+				"the UIBlurManager singleton changed while its reference was owned");
 		}
 
 		[[nodiscard]] bool EnsureRetainedLayer(OwnershipState& a_state)
 		{
 			auto* inputManager = RE::BSInputEnableManager::GetSingleton();
 			if (!inputManager) {
-				if (!a_state.MissingInputManagerWarned) {
-					a_state.MissingInputManagerWarned = true;
-					logger::warn("Menu ownership deferred: the input manager is not ready");
-				}
 				return false;
 			}
 			if (a_state.InputLayer) {
@@ -214,17 +194,11 @@ namespace SFSEMenuFramework::MenuOwnership
 
 			RE::BSInputEnableLayer* inputLayer{};
 			if (!inputManager->AllocateNewLayer(&inputLayer, "SFSE Menu Framework") || !inputLayer) {
-				if (!a_state.AllocationFailureWarned) {
-					a_state.AllocationFailureWarned = true;
-					logger::error("Menu ownership deferred: failed to allocate an input-enable layer");
-				}
 				return false;
 			}
 
 			a_state.InputManager = inputManager;
 			a_state.InputLayer = inputLayer;
-			a_state.MissingInputManagerWarned = false;
-			a_state.AllocationFailureWarned = false;
 			logger::info(
 				"Menu input layer {} retained for the process lifetime",
 				inputLayer->GetLayerID());
@@ -242,10 +216,6 @@ namespace SFSEMenuFramework::MenuOwnership
 
 			auto* manager = RE::BSInputEnableManager::GetSingleton();
 			if (!manager) {
-				if (!a_state.ReleaseLayerWarned) {
-					a_state.ReleaseLayerWarned = true;
-					logger::warn("Input-layer transition deferred: the input manager is unavailable");
-				}
 				return false;
 			}
 			if (manager != a_state.InputManager) {
@@ -261,7 +231,6 @@ namespace SFSEMenuFramework::MenuOwnership
 			a_state.InputLayer->EnableUserEvent(userEventsToDisable, !a_disabled);
 			a_state.InputLayer->EnableOtherEvent(otherEventsToDisable, !a_disabled);
 			a_state.LayerDisabled = a_disabled;
-			a_state.ReleaseLayerWarned = false;
 			return true;
 		}
 
@@ -270,11 +239,6 @@ namespace SFSEMenuFramework::MenuOwnership
 			if (a_state.CursorOwned) {
 				auto* cursor = RE::MenuCursor::GetSingleton();
 				if (!cursor) {
-					if (!a_state.MissingCursorWarned) {
-						a_state.MissingCursorWarned = true;
-						logger::warn(
-							"Menu ownership deferred: retained cursor ownership is pending release");
-					}
 					return false;
 				}
 				if (cursor != a_state.CursorOwner) {
@@ -289,24 +253,15 @@ namespace SFSEMenuFramework::MenuOwnership
 			}
 			auto* cursor = RE::MenuCursor::GetSingleton();
 			if (!cursor) {
-				if (!a_state.MissingCursorWarned) {
-					a_state.MissingCursorWarned = true;
-					logger::warn("Menu ownership deferred: the menu cursor is not ready");
-				}
 				return false;
 			}
 			if (cursor->freeCursorRefCount == (std::numeric_limits<std::uint32_t>::max)()) {
-				if (!a_state.CursorOverflowWarned) {
-					a_state.CursorOverflowWarned = true;
-					logger::error("Menu ownership rejected: the free-cursor reference count is full");
-				}
 				return false;
 			}
 
 			++cursor->freeCursorRefCount;
 			a_state.CursorOwner = cursor;
 			a_state.CursorOwned = true;
-			a_state.MissingCursorWarned = false;
 			return true;
 		}
 
@@ -317,10 +272,6 @@ namespace SFSEMenuFramework::MenuOwnership
 			}
 			auto* cursor = RE::MenuCursor::GetSingleton();
 			if (!cursor) {
-				if (!a_state.ReleaseCursorWarned) {
-					a_state.ReleaseCursorWarned = true;
-					logger::warn("Free-cursor release deferred: MenuCursor is unavailable");
-				}
 				return false;
 			}
 			if (cursor != a_state.CursorOwner) {
@@ -332,13 +283,9 @@ namespace SFSEMenuFramework::MenuOwnership
 
 			if (cursor->freeCursorRefCount > 0) {
 				--cursor->freeCursorRefCount;
-			} else if (!a_state.ReleaseCursorWarned) {
-				a_state.ReleaseCursorWarned = true;
-				logger::warn("The free-cursor reference count was already zero during release");
 			}
 			a_state.CursorOwner = nullptr;
 			a_state.CursorOwned = false;
-			a_state.ReleaseCursorWarned = false;
 			return true;
 		}
 
@@ -350,15 +297,6 @@ namespace SFSEMenuFramework::MenuOwnership
 
 			auto* ui = RE::UI::GetSingleton();
 			if (!ui) {
-				if (a_owned) {
-					if (!a_state.MissingUIWarned) {
-						a_state.MissingUIWarned = true;
-						logger::warn("Menu pause deferred: UI is unavailable");
-					}
-				} else if (!a_state.ReleasePauseWarned) {
-					a_state.ReleasePauseWarned = true;
-					logger::warn("Menu pause release deferred: UI is unavailable");
-				}
 				return false;
 			}
 			if (!a_owned && ui != a_state.PauseOwner) {
@@ -373,8 +311,6 @@ namespace SFSEMenuFramework::MenuOwnership
 			ui->ModifyMenuPauseCounter(PauseSourceName(), a_owned);
 			a_state.PauseOwner = a_owned ? ui : nullptr;
 			a_state.PauseOwned = a_owned;
-			a_state.MissingUIWarned = false;
-			a_state.ReleasePauseWarned = false;
 			return true;
 		}
 
@@ -386,15 +322,6 @@ namespace SFSEMenuFramework::MenuOwnership
 
 			auto* blur = RE::UIBlurManager::GetSingleton();
 			if (!blur) {
-				if (a_owned) {
-					if (!a_state.MissingBlurManagerWarned) {
-						a_state.MissingBlurManagerWarned = true;
-						logger::warn("Menu background blur deferred: UIBlurManager is unavailable");
-					}
-				} else if (!a_state.ReleaseBlurWarned) {
-					a_state.ReleaseBlurWarned = true;
-					logger::warn("Menu background blur release deferred: UIBlurManager is unavailable");
-				}
 				return false;
 			}
 			if (!a_owned && blur != a_state.BlurOwner) {
@@ -415,8 +342,6 @@ namespace SFSEMenuFramework::MenuOwnership
 			}
 			a_state.BlurOwner = a_owned ? blur : nullptr;
 			a_state.BlurOwned = a_owned;
-			a_state.MissingBlurManagerWarned = false;
-			a_state.ReleaseBlurWarned = false;
 			return true;
 		}
 
@@ -448,7 +373,7 @@ namespace SFSEMenuFramework::MenuOwnership
 
 		[[nodiscard]] bool ReleaseAllOwnership(OwnershipState& a_state)
 		{
-			PublishState(LifecycleState::ReleasePending, ReleaseDisposition(a_state));
+			PublishDisposition(ReleaseDisposition(a_state));
 
 			const bool blurReleased = SetBlurOwned(a_state, false);
 			const bool pauseReleased = SetPauseOwned(a_state, false);
@@ -459,27 +384,23 @@ namespace SFSEMenuFramework::MenuOwnership
 			}
 			if (!blurReleased || !pauseReleased || !coreReleased ||
 				HasAnyActiveOwnership(a_state)) {
-				PublishState(LifecycleState::ReleasePending, ReleaseDisposition(a_state));
+				PublishDisposition(ReleaseDisposition(a_state));
 				return false;
 			}
 
-			PublishState(LifecycleState::Dormant, InputDisposition::PassThrough);
+			PublishDisposition(InputDisposition::PassThrough);
 			logger::info("Menu ownership released; retained input layer remains dormant");
 			return true;
 		}
 
 		[[nodiscard]] bool AcquireCoreOwnership(OwnershipState& a_state)
 		{
-			PublishState(LifecycleState::Arming, InputDisposition::Suppress);
+			PublishDisposition(InputDisposition::Suppress);
 
 			if (!EnsureRetainedLayer(a_state) || !SetLayerDisabled(a_state, true)) {
 				if (!a_state.Faulted) {
 					const auto disposition = ReleaseDisposition(a_state);
-					PublishState(
-						disposition == InputDisposition::Suppress ?
-							LifecycleState::ReleasePending :
-							LifecycleState::AwaitingLayer,
-						disposition);
+					PublishDisposition(disposition);
 				}
 				return false;
 			}
@@ -488,12 +409,7 @@ namespace SFSEMenuFramework::MenuOwnership
 				if (a_state.Faulted) {
 					return false;
 				}
-				const bool cleanupPending = HasAnyActiveOwnership(a_state);
-				PublishState(
-					cleanupPending ?
-						LifecycleState::ReleasePending :
-						LifecycleState::Dormant,
-					ReleaseDisposition(a_state));
+				PublishDisposition(ReleaseDisposition(a_state));
 				return false;
 			}
 
@@ -524,7 +440,7 @@ namespace SFSEMenuFramework::MenuOwnership
 			return;
 		}
 
-		PublishState(LifecycleState::AwaitingLayer, InputDisposition::PassThrough);
+		PublishDisposition(InputDisposition::PassThrough);
 		logger::info("Engine menu-ownership lifecycle installed");
 	}
 
@@ -542,12 +458,12 @@ namespace SFSEMenuFramework::MenuOwnership
 		}
 
 		auto& state = GetState();
-		const bool ownersValid = ValidateOwners(state);
-		if (state.Faulted || !ownersValid) {
+		ValidateOwners(state);
+		if (state.Faulted) {
 			if (HasAnyActiveOwnership(state)) {
 				static_cast<void>(ReleaseAllOwnership(state));
 			}
-			PublishState(LifecycleState::Faulted, ReleaseDisposition(state));
+			PublishDisposition(ReleaseDisposition(state));
 			return;
 		}
 
@@ -561,7 +477,7 @@ namespace SFSEMenuFramework::MenuOwnership
 					return;
 				}
 			}
-			PublishState(LifecycleState::Suspended, InputDisposition::PassThrough);
+			PublishDisposition(InputDisposition::PassThrough);
 			return;
 		}
 
@@ -575,9 +491,7 @@ namespace SFSEMenuFramework::MenuOwnership
 				static_cast<void>(EnsureRetainedLayer(state));
 			}
 			if (!state.Faulted) {
-				PublishState(
-					state.InputLayer ? LifecycleState::Dormant : LifecycleState::AwaitingLayer,
-					InputDisposition::PassThrough);
+				PublishDisposition(InputDisposition::PassThrough);
 			}
 			return;
 		}
@@ -595,7 +509,7 @@ namespace SFSEMenuFramework::MenuOwnership
 					if (HasAnyActiveOwnership(state)) {
 						static_cast<void>(ReleaseAllOwnership(state));
 					}
-					PublishState(LifecycleState::Faulted, ReleaseDisposition(state));
+					PublishDisposition(ReleaseDisposition(state));
 				}
 				return;
 			}
@@ -607,7 +521,7 @@ namespace SFSEMenuFramework::MenuOwnership
 					if (HasAnyActiveOwnership(state)) {
 						static_cast<void>(ReleaseAllOwnership(state));
 					}
-					PublishState(LifecycleState::Faulted, ReleaseDisposition(state));
+					PublishDisposition(ReleaseDisposition(state));
 				}
 				return;
 			}
@@ -620,12 +534,11 @@ namespace SFSEMenuFramework::MenuOwnership
 			if (HasAnyActiveOwnership(state)) {
 				static_cast<void>(ReleaseAllOwnership(state));
 			}
-			PublishState(LifecycleState::Faulted, ReleaseDisposition(state));
+			PublishDisposition(ReleaseDisposition(state));
 			return;
 		}
 
-		PublishState(
-			LifecycleState::Active,
+		PublishDisposition(
 			wantsInput && HasCoreOwnership(state) ?
 				InputDisposition::RouteToMenu :
 				InputDisposition::PassThrough);
@@ -637,11 +550,6 @@ namespace SFSEMenuFramework::MenuOwnership
 			.Availability = HostAvailability::Unavailable,
 			.PauseAllowed = false,
 		});
-	}
-
-	LifecycleState GetLifecycleState() noexcept
-	{
-		return lifecycleState.load(std::memory_order_acquire);
 	}
 
 	InputDisposition GetInputDisposition() noexcept

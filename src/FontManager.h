@@ -57,7 +57,6 @@ namespace SFSEMenuFramework::FontManager
 
 	[[nodiscard]] std::span<const FontEntry> GetFonts() noexcept;
 	[[nodiscard]] FrameworkSettings::FontSettings GetActiveSettings() noexcept;
-	[[nodiscard]] std::string_view GetConfiguredFontName() noexcept;
 	[[nodiscard]] std::string_view GetActiveFontName() noexcept;
 	[[nodiscard]] float            GetActiveFontSize() noexcept;
 	[[nodiscard]] float            GetActiveUIScale() noexcept;

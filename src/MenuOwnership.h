@@ -11,18 +11,6 @@ namespace SFSEMenuFramework::MenuOwnership
 		Unavailable
 	};
 
-	enum class LifecycleState : std::uint8_t
-	{
-		Uninstalled,
-		AwaitingLayer,
-		Dormant,
-		Arming,
-		Active,
-		Suspended,
-		ReleasePending,
-		Faulted
-	};
-
 	enum class InputDisposition : std::uint8_t
 	{
 		PassThrough,
@@ -43,6 +31,5 @@ namespace SFSEMenuFramework::MenuOwnership
 	void ReconcileOnHostWindowThread(const ReconcileContext& a_context);
 	void ReleaseOnHostWindowThread();
 
-	[[nodiscard]] LifecycleState   GetLifecycleState() noexcept;
 	[[nodiscard]] InputDisposition GetInputDisposition() noexcept;
 }

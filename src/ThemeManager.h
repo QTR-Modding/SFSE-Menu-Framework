@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <filesystem>
-#include <limits>
 #include <span>
 #include <string>
 
@@ -13,9 +12,6 @@ namespace SFSEMenuFramework::ThemeManager
 		std::string           Name;
 		std::filesystem::path Path;
 	};
-
-	inline constexpr std::size_t NO_THEME =
-		(std::numeric_limits<std::size_t>::max)();
 
 	void Initialize();
 	void ApplyPending() noexcept;

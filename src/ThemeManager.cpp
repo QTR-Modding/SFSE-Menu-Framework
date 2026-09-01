@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <system_error>
@@ -33,11 +34,12 @@ namespace SFSEMenuFramework::ThemeManager
 		constexpr std::size_t pathCapacity = 32768;
 		constexpr std::uintmax_t maximumThemeBytes = 1024 * 1024;
 		constexpr double maximumStyleMagnitude = 10000.0;
+		constexpr std::size_t NO_THEME =
+			(std::numeric_limits<std::size_t>::max)();
 
-		struct PendingTheme final
+		struct ThemeSelection final
 		{
 			ImGuiStyle  BaseStyle;
-			ImGuiStyle  Style;
 			std::size_t Index{ NO_THEME };
 			float       UIScale{ 1.0F };
 		};
@@ -45,10 +47,8 @@ namespace SFSEMenuFramework::ThemeManager
 		struct State final
 		{
 			std::vector<ThemeEntry> Themes;
-			std::optional<PendingTheme> Pending;
-			ImGuiStyle  ActiveBaseStyle;
-			std::size_t ActiveIndex{ NO_THEME };
-			float       UIScale{ 1.0F };
+			std::optional<ThemeSelection> Pending;
+			ThemeSelection Active;
 		};
 
 		[[nodiscard]] State& GetState()
@@ -108,7 +108,7 @@ namespace SFSEMenuFramework::ThemeManager
 			auto& state = GetState();
 			state.Themes.clear();
 			state.Pending.reset();
-			state.ActiveIndex = NO_THEME;
+			state.Active.Index = NO_THEME;
 
 			const auto directory = BuildThemeDirectory();
 			if (directory.empty()) {
@@ -204,6 +204,13 @@ namespace SFSEMenuFramework::ThemeManager
 			const auto mouseCursorScale = a_style.MouseCursorScale * a_scale;
 			a_style.ScaleAllSizes(a_scale);
 			a_style.MouseCursorScale = mouseCursorScale;
+		}
+
+		void ApplySelection(const ThemeSelection& a_selection) noexcept
+		{
+			auto style = a_selection.BaseStyle;
+			ScaleStyle(style, a_selection.UIScale);
+			ImGui::GetStyle() = style;
 		}
 
 		[[nodiscard]] bool ReadFloat(
@@ -348,110 +355,110 @@ namespace SFSEMenuFramework::ThemeManager
 			const nlohmann::json& a_json,
 			ImGuiStyle&           a_style)
 		{
-			return
-				ReadFloat(a_json, "Alpha", a_style.Alpha, 0.0, 1.0) &&
-				ReadFloat(
-					a_json,
-					"DisabledAlpha",
-					a_style.DisabledAlpha,
-					0.0,
-					1.0) &&
-				ReadVector(a_json, "WindowPadding", a_style.WindowPadding) &&
-				ReadFloat(a_json, "WindowRounding", a_style.WindowRounding) &&
-				ReadFloat(a_json, "WindowBorderSize", a_style.WindowBorderSize) &&
-				ReadVector(
-					a_json,
-					"WindowMinSize",
-					a_style.WindowMinSize,
-					1.0) &&
-				ReadVector(a_json, "WindowTitleAlign", a_style.WindowTitleAlign) &&
-				ReadFloat(a_json, "ChildRounding", a_style.ChildRounding) &&
-				ReadFloat(a_json, "ChildBorderSize", a_style.ChildBorderSize) &&
-				ReadFloat(a_json, "PopupRounding", a_style.PopupRounding) &&
-				ReadFloat(a_json, "PopupBorderSize", a_style.PopupBorderSize) &&
-				ReadVector(a_json, "FramePadding", a_style.FramePadding) &&
-				ReadFloat(a_json, "FrameRounding", a_style.FrameRounding) &&
-				ReadFloat(a_json, "FrameBorderSize", a_style.FrameBorderSize) &&
-				ReadVector(a_json, "ItemSpacing", a_style.ItemSpacing) &&
-				ReadVector(a_json, "ItemInnerSpacing", a_style.ItemInnerSpacing) &&
-				ReadVector(a_json, "CellPadding", a_style.CellPadding) &&
-				ReadVector(a_json, "TouchExtraPadding", a_style.TouchExtraPadding) &&
-				ReadFloat(a_json, "IndentSpacing", a_style.IndentSpacing) &&
-				ReadFloat(a_json, "ColumnsMinSpacing", a_style.ColumnsMinSpacing) &&
-				ReadFloat(a_json, "ScrollbarSize", a_style.ScrollbarSize) &&
-				ReadFloat(a_json, "ScrollbarRounding", a_style.ScrollbarRounding) &&
-				ReadFloat(a_json, "GrabMinSize", a_style.GrabMinSize) &&
-				ReadFloat(a_json, "GrabRounding", a_style.GrabRounding) &&
-				ReadFloat(a_json, "LogSliderDeadzone", a_style.LogSliderDeadzone) &&
-				ReadFloat(a_json, "TabRounding", a_style.TabRounding) &&
-				ReadFloat(a_json, "TabBorderSize", a_style.TabBorderSize) &&
-				ReadFloat(
-					a_json,
-					"TabMinWidthForCloseButton",
-					a_style.TabMinWidthForCloseButton,
+			struct FloatField final
+			{
+				std::string_view Name;
+				float ImGuiStyle::* Value;
+				double Minimum{ -maximumStyleMagnitude };
+				double Maximum{ maximumStyleMagnitude };
+			};
+			static constexpr FloatField floatFields[]{
+				{ "Alpha", &ImGuiStyle::Alpha, 0.0, 1.0 },
+				{ "DisabledAlpha", &ImGuiStyle::DisabledAlpha, 0.0, 1.0 },
+				{ "WindowRounding", &ImGuiStyle::WindowRounding },
+				{ "WindowBorderSize", &ImGuiStyle::WindowBorderSize },
+				{ "ChildRounding", &ImGuiStyle::ChildRounding },
+				{ "ChildBorderSize", &ImGuiStyle::ChildBorderSize },
+				{ "PopupRounding", &ImGuiStyle::PopupRounding },
+				{ "PopupBorderSize", &ImGuiStyle::PopupBorderSize },
+				{ "FrameRounding", &ImGuiStyle::FrameRounding },
+				{ "FrameBorderSize", &ImGuiStyle::FrameBorderSize },
+				{ "IndentSpacing", &ImGuiStyle::IndentSpacing },
+				{ "ColumnsMinSpacing", &ImGuiStyle::ColumnsMinSpacing },
+				{ "ScrollbarSize", &ImGuiStyle::ScrollbarSize },
+				{ "ScrollbarRounding", &ImGuiStyle::ScrollbarRounding },
+				{ "GrabMinSize", &ImGuiStyle::GrabMinSize },
+				{ "GrabRounding", &ImGuiStyle::GrabRounding },
+				{ "LogSliderDeadzone", &ImGuiStyle::LogSliderDeadzone },
+				{ "TabRounding", &ImGuiStyle::TabRounding },
+				{ "TabBorderSize", &ImGuiStyle::TabBorderSize },
+				{ "TabMinWidthForCloseButton", &ImGuiStyle::TabMinWidthForCloseButton,
 					-maximumStyleMagnitude,
-					static_cast<double>((std::numeric_limits<float>::max)())) &&
-				ReadFloat(a_json, "TabBarBorderSize", a_style.TabBarBorderSize) &&
-				ReadFloat(
-					a_json,
-					"TableAngledHeadersAngle",
-					a_style.TableAngledHeadersAngle,
-					-50.0,
-					50.0) &&
-				ReadVector(
-					a_json,
-					"TableAngledHeadersTextAlign",
-					a_style.TableAngledHeadersTextAlign) &&
-				ReadVector(a_json, "ButtonTextAlign", a_style.ButtonTextAlign) &&
-				ReadVector(
-					a_json,
-					"SelectableTextAlign",
-					a_style.SelectableTextAlign) &&
-				ReadFloat(
-					a_json,
-					"SeparatorTextBorderSize",
-					a_style.SeparatorTextBorderSize) &&
-				ReadVector(
-					a_json,
-					"SeparatorTextAlign",
-					a_style.SeparatorTextAlign) &&
-				ReadVector(
-					a_json,
-					"SeparatorTextPadding",
-					a_style.SeparatorTextPadding) &&
-				ReadVector(
-					a_json,
-					"DisplayWindowPadding",
-					a_style.DisplayWindowPadding) &&
-				ReadVector(
-					a_json,
-					"DisplaySafeAreaPadding",
-					a_style.DisplaySafeAreaPadding) &&
-				ReadFloat(
-					a_json,
-					"MouseCursorScale",
-					a_style.MouseCursorScale,
-					0.01,
-					100.0) &&
-				ReadBool(a_json, "AntiAliasedLines", a_style.AntiAliasedLines) &&
-				ReadBool(
-					a_json,
-					"AntiAliasedLinesUseTex",
-					a_style.AntiAliasedLinesUseTex) &&
-				ReadBool(a_json, "AntiAliasedFill", a_style.AntiAliasedFill) &&
-				ReadFloat(
-					a_json,
-					"CurveTessellationTol",
-					a_style.CurveTessellationTol,
-					0.01,
-					maximumStyleMagnitude) &&
-				ReadFloat(
-					a_json,
-					"CircleTessellationMaxError",
-					a_style.CircleTessellationMaxError,
-					0.01,
-					maximumStyleMagnitude) &&
-				ApplyColors(a_json, a_style);
+					static_cast<double>((std::numeric_limits<float>::max)()) },
+				{ "TabBarBorderSize", &ImGuiStyle::TabBarBorderSize },
+				{ "TableAngledHeadersAngle", &ImGuiStyle::TableAngledHeadersAngle,
+					-50.0, 50.0 },
+				{ "SeparatorTextBorderSize", &ImGuiStyle::SeparatorTextBorderSize },
+				{ "MouseCursorScale", &ImGuiStyle::MouseCursorScale, 0.01, 100.0 },
+				{ "CurveTessellationTol", &ImGuiStyle::CurveTessellationTol,
+					0.01, maximumStyleMagnitude },
+				{ "CircleTessellationMaxError", &ImGuiStyle::CircleTessellationMaxError,
+					0.01, maximumStyleMagnitude }
+			};
+
+			struct VectorField final
+			{
+				std::string_view Name;
+				ImVec2 ImGuiStyle::* Value;
+				double Minimum{ -maximumStyleMagnitude };
+				double Maximum{ maximumStyleMagnitude };
+			};
+			static constexpr VectorField vectorFields[]{
+				{ "WindowPadding", &ImGuiStyle::WindowPadding },
+				{ "WindowMinSize", &ImGuiStyle::WindowMinSize, 1.0 },
+				{ "WindowTitleAlign", &ImGuiStyle::WindowTitleAlign },
+				{ "FramePadding", &ImGuiStyle::FramePadding },
+				{ "ItemSpacing", &ImGuiStyle::ItemSpacing },
+				{ "ItemInnerSpacing", &ImGuiStyle::ItemInnerSpacing },
+				{ "CellPadding", &ImGuiStyle::CellPadding },
+				{ "TouchExtraPadding", &ImGuiStyle::TouchExtraPadding },
+				{ "TableAngledHeadersTextAlign",
+					&ImGuiStyle::TableAngledHeadersTextAlign },
+				{ "ButtonTextAlign", &ImGuiStyle::ButtonTextAlign },
+				{ "SelectableTextAlign", &ImGuiStyle::SelectableTextAlign },
+				{ "SeparatorTextAlign", &ImGuiStyle::SeparatorTextAlign },
+				{ "SeparatorTextPadding", &ImGuiStyle::SeparatorTextPadding },
+				{ "DisplayWindowPadding", &ImGuiStyle::DisplayWindowPadding },
+				{ "DisplaySafeAreaPadding", &ImGuiStyle::DisplaySafeAreaPadding }
+			};
+
+			struct BoolField final
+			{
+				std::string_view Name;
+				bool ImGuiStyle::* Value;
+			};
+			static constexpr BoolField boolFields[]{
+				{ "AntiAliasedLines", &ImGuiStyle::AntiAliasedLines },
+				{ "AntiAliasedLinesUseTex", &ImGuiStyle::AntiAliasedLinesUseTex },
+				{ "AntiAliasedFill", &ImGuiStyle::AntiAliasedFill }
+			};
+
+			for (const auto& field : floatFields) {
+				if (!ReadFloat(
+						a_json,
+						field.Name,
+						a_style.*field.Value,
+						field.Minimum,
+						field.Maximum)) {
+					return false;
+				}
+			}
+			for (const auto& field : vectorFields) {
+				if (!ReadVector(
+						a_json,
+						field.Name,
+						a_style.*field.Value,
+						field.Minimum,
+						field.Maximum)) {
+					return false;
+				}
+			}
+			for (const auto& field : boolFields) {
+				if (!ReadBool(a_json, field.Name, a_style.*field.Value)) {
+					return false;
+				}
+			}
+			return ApplyColors(a_json, a_style);
 		}
 
 		[[nodiscard]] bool LoadTheme(
@@ -506,15 +513,14 @@ namespace SFSEMenuFramework::ThemeManager
 				return false;
 			}
 
-			ImGuiStyle baseStyle{};
-			if (!LoadTheme(state.Themes[a_index], baseStyle)) {
+			ThemeSelection selection;
+			if (!LoadTheme(state.Themes[a_index], selection.BaseStyle)) {
 				return false;
 			}
-			auto style = baseStyle;
-			ScaleStyle(style, state.UIScale);
-			ImGui::GetStyle() = style;
-			state.ActiveBaseStyle = baseStyle;
-			state.ActiveIndex = a_index;
+			selection.Index = a_index;
+			selection.UIScale = state.Active.UIScale;
+			ApplySelection(selection);
+			state.Active = std::move(selection);
 			return true;
 		}
 
@@ -533,7 +539,7 @@ namespace SFSEMenuFramework::ThemeManager
 	void Initialize()
 	{
 		auto& state = GetState();
-		state.UIScale = FrameworkSettings::GetFontSettings().UIScale;
+		state.Active.UIScale = FrameworkSettings::GetFontSettings().UIScale;
 		RefreshThemes();
 
 		const auto configured = FrameworkSettings::GetMenuStyle();
@@ -551,17 +557,13 @@ namespace SFSEMenuFramework::ThemeManager
 		if (TryFallbackTheme()) {
 			logger::info(
 				"Applied fallback ImGui theme '{}'",
-				state.Themes[state.ActiveIndex].Name);
+				state.Themes[state.Active.Index].Name);
 			return;
 		}
 
-		ImGuiStyle baseStyle{};
-		BuildBaselineStyle(baseStyle);
-		auto style = baseStyle;
-		ScaleStyle(style, state.UIScale);
-		ImGui::GetStyle() = style;
-		state.ActiveBaseStyle = baseStyle;
-		state.ActiveIndex = NO_THEME;
+		BuildBaselineStyle(state.Active.BaseStyle);
+		state.Active.Index = NO_THEME;
+		ApplySelection(state.Active);
 		logger::warn("No valid JSON theme was available; using the built-in dark style");
 	}
 
@@ -572,10 +574,8 @@ namespace SFSEMenuFramework::ThemeManager
 			return;
 		}
 
-		ImGui::GetStyle() = state.Pending->Style;
-		state.ActiveBaseStyle = state.Pending->BaseStyle;
-		state.ActiveIndex = state.Pending->Index;
-		state.UIScale = state.Pending->UIScale;
+		ApplySelection(*state.Pending);
+		state.Active = std::move(*state.Pending);
 		state.Pending.reset();
 	}
 
@@ -590,7 +590,7 @@ namespace SFSEMenuFramework::ThemeManager
 		if (state.Pending) {
 			return state.Pending->Index;
 		}
-		return state.ActiveIndex;
+		return state.Active.Index;
 	}
 
 	bool QueueTheme(std::size_t a_index)
@@ -600,21 +600,15 @@ namespace SFSEMenuFramework::ThemeManager
 			return false;
 		}
 
-		ImGuiStyle baseStyle{};
-		if (!LoadTheme(state.Themes[a_index], baseStyle) ||
+		ThemeSelection selection;
+		if (!LoadTheme(state.Themes[a_index], selection.BaseStyle) ||
 			!FrameworkSettings::SetMenuStyle(state.Themes[a_index].Name)) {
 			return false;
 		}
-		const auto scale = state.Pending ? state.Pending->UIScale : state.UIScale;
-		auto style = baseStyle;
-		ScaleStyle(style, scale);
-
-		state.Pending = PendingTheme{
-			.BaseStyle = baseStyle,
-			.Style = style,
-			.Index = a_index,
-			.UIScale = scale
-		};
+		selection.Index = a_index;
+		selection.UIScale =
+			state.Pending ? state.Pending->UIScale : state.Active.UIScale;
+		state.Pending = std::move(selection);
 		return true;
 	}
 
@@ -632,18 +626,9 @@ namespace SFSEMenuFramework::ThemeManager
 		}
 
 		auto& state = GetState();
-		const auto baseStyle =
-			state.Pending ? state.Pending->BaseStyle : state.ActiveBaseStyle;
-		const auto index =
-			state.Pending ? state.Pending->Index : state.ActiveIndex;
-		auto style = baseStyle;
-		ScaleStyle(style, a_scale);
-		state.Pending = PendingTheme{
-			.BaseStyle = baseStyle,
-			.Style = style,
-			.Index = index,
-			.UIScale = a_scale
-		};
+		auto selection = state.Pending ? *state.Pending : state.Active;
+		selection.UIScale = a_scale;
+		state.Pending = std::move(selection);
 		return true;
 	}
 }

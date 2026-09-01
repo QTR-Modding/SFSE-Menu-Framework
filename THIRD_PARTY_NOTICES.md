@@ -200,10 +200,10 @@ complete license is installed alongside the font as
 `Data/SFSE/Plugins/Fonts/SpaceGrotesk-OFL.txt` and retained in
 [`public/SFSE/Plugins/Fonts/SpaceGrotesk-OFL.txt`](public/SFSE/Plugins/Fonts/SpaceGrotesk-OFL.txt).
 
-## FreeType 2.14.3
+## FreeType 2.14.1
 
-The framework statically links FreeType 2.14.3 from the official
-[`VER-2-14-3` source](https://gitlab.freedesktop.org/freetype/freetype/-/tree/VER-2-14-3)
+The framework statically links FreeType 2.14.1 from the official
+[`VER-2-14-1` source](https://gitlab.freedesktop.org/freetype/freetype/-/tree/VER-2-14-1)
 to rasterize ImGui fonts with TrueType hinting.
 
 This software is based in part on the work of the FreeType Team.
@@ -214,25 +214,6 @@ Portions of this software are copyright © 2026 The FreeType Project
 FreeType is used under the FreeType License. The complete license is installed
 as `Data/SFSE/Plugins/Fonts/FreeType-FTL.txt` and retained in
 [`public/SFSE/Plugins/Fonts/FreeType-FTL.txt`](public/SFSE/Plugins/Fonts/FreeType-FTL.txt).
-
-## xmake-repo
-
-The repository-local FreeType package recipe is adapted from the FreeType
-recipe in [xmake-io/xmake-repo at commit
-`4033f542417b761af67a9bfc2a3bac3cf8c6b6f1`](https://github.com/xmake-io/xmake-repo/tree/4033f542417b761af67a9bfc2a3bac3cf8c6b6f1/packages/f/freetype).
-That recipe is used under Apache License 2.0.
-
-A package repository based on xmake
-
-Copyright 2017-2018 The Xmake Open Source Community
-
-This product includes software developed by The Xmake Open Source Community
-(https://xmake.io/).
-
-The complete source-distribution attribution is retained in
-[`xmake-packages/LICENSE.xmake-repo.md`](xmake-packages/LICENSE.xmake-repo.md)
-and
-[`xmake-packages/NOTICE.xmake-repo.md`](xmake-packages/NOTICE.xmake-repo.md).
 
 ## JSON for Modern C++ 3.11.3
 

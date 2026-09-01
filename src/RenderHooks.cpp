@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cwchar>
 #include <mutex>
+#include <span>
 #include <utility>
 
 #include <wrl/client.h>
@@ -104,41 +105,16 @@ namespace SFSEMenuFramework::RenderHooks
 		std::atomic<ResourceBarrierFunction>    resourceBarrierOriginal{ nullptr };
 		std::atomic<SetDescriptorHeapsFunction> setDescriptorHeapsOriginal{ nullptr };
 
-		std::atomic<std::uint64_t> realResourceBarrierHits{ 0 };
-		std::atomic<std::uint64_t> realDescriptorHeapHits{ 0 };
-		std::atomic<std::uint64_t> completedRegions{ 0 };
-		std::atomic<std::uint64_t> renderedRegions{ 0 };
-		std::atomic<std::uint64_t> beginPassHits{ 0 };
-		std::atomic<std::uint64_t> endPassHits{ 0 };
-		std::atomic<std::uint64_t> compositePassHits{ 0 };
-		std::atomic<std::uint64_t> activeBarrierCalls{ 0 };
-		std::atomic<std::uint64_t> activeDescriptorHeapHits{ 0 };
-		std::atomic<std::uint64_t> transitionBarrierHits{ 0 };
-		std::atomic<std::uint64_t> renderTargetExitHits{ 0 };
-		std::atomic<std::uint64_t> candidateShapeHits{ 0 };
-		std::atomic<std::uint64_t> ordinaryCandidateHits{ 0 };
-		std::atomic<std::uint64_t> copyCandidateHits{ 0 };
-		std::atomic<std::uint64_t> selectedCandidateHits{ 0 };
-		std::atomic<std::uint64_t> missingHeapSnapshotHits{ 0 };
-		std::atomic<std::uint64_t> renderAttempts{ 0 };
-		std::atomic<std::uint64_t> probeFrames{ 0 };
-		std::atomic<std::uint64_t> realResetHits{ 0 };
-		std::atomic<std::uint64_t> realClearStateHits{ 0 };
-		std::atomic<std::uint64_t> heapSnapshotInvalidations{ 0 };
-		std::atomic<std::uint64_t> heapSnapshotEpochMismatches{ 0 };
-		std::atomic<std::uint64_t> epochTableExhaustions{ 0 };
-
-		constexpr auto renderResultCount =
-			static_cast<std::size_t>(D3D12Renderer::RenderResult::Count);
-		std::array<std::atomic<std::uint64_t>, renderResultCount> renderResults{};
-
 		thread_local RegionState         regionState;
 		thread_local DescriptorHeapState descriptorHeapState;
 		thread_local bool                internalD3D{ false };
-		thread_local bool                selfTestResetSeen{ false };
-		thread_local bool                selfTestClearStateSeen{ false };
-		thread_local bool                selfTestResourceBarrierSeen{ false };
-		thread_local bool                selfTestDescriptorHeapsSeen{ false };
+		thread_local std::uint8_t        selfTestSeen{};
+		constexpr std::uint8_t           resetSeen = 1U << 0;
+		constexpr std::uint8_t           clearStateSeen = 1U << 1;
+		constexpr std::uint8_t           resourceBarrierSeen = 1U << 2;
+		constexpr std::uint8_t           descriptorHeapsSeen = 1U << 3;
+		constexpr std::uint8_t           allSelfTestsSeen =
+			resetSeen | clearStateSeen | resourceBarrierSeen | descriptorHeapsSeen;
 
 		void BeginThunk(
 			RE::CreationRendererPrivate::RenderPass*              a_pass,
@@ -168,27 +144,8 @@ namespace SFSEMenuFramework::RenderHooks
 			UINT                         a_heapCount,
 			ID3D12DescriptorHeap* const* a_heaps) noexcept;
 
-		[[nodiscard]] std::uintptr_t FunctionAddress(RenderPassFunction a_function)
-		{
-			return reinterpret_cast<std::uintptr_t>(a_function);
-		}
-
-		[[nodiscard]] std::uintptr_t FunctionAddress(ResourceBarrierFunction a_function)
-		{
-			return reinterpret_cast<std::uintptr_t>(a_function);
-		}
-
-		[[nodiscard]] std::uintptr_t FunctionAddress(ResetFunction a_function)
-		{
-			return reinterpret_cast<std::uintptr_t>(a_function);
-		}
-
-		[[nodiscard]] std::uintptr_t FunctionAddress(ClearStateFunction a_function)
-		{
-			return reinterpret_cast<std::uintptr_t>(a_function);
-		}
-
-		[[nodiscard]] std::uintptr_t FunctionAddress(SetDescriptorHeapsFunction a_function)
+		template <class Function>
+		[[nodiscard]] std::uintptr_t FunctionAddress(Function a_function)
 		{
 			return reinterpret_cast<std::uintptr_t>(a_function);
 		}
@@ -351,8 +308,7 @@ namespace SFSEMenuFramework::RenderHooks
 			std::uintptr_t                   a_expected,
 			std::uintptr_t                   a_replacement,
 			std::uintptr_t&                  a_previous,
-			bool&                            a_attempted,
-			bool&                            a_written)
+			bool&                            a_attempted)
 		{
 			if (ReadVtableSlot(a_vtable, a_index) != a_expected) {
 				return false;
@@ -360,8 +316,8 @@ namespace SFSEMenuFramework::RenderHooks
 
 			a_attempted = true;
 			a_previous = a_vtable.write_vfunc(a_index, a_replacement);
-			a_written = ReadVtableSlot(a_vtable, a_index) == a_replacement;
-			return a_previous == a_expected && a_written;
+			return a_previous == a_expected &&
+			       ReadVtableSlot(a_vtable, a_index) == a_replacement;
 		}
 
 		[[nodiscard]] bool RestoreVtableSlot(
@@ -369,17 +325,13 @@ namespace SFSEMenuFramework::RenderHooks
 			std::size_t                      a_index,
 			std::uintptr_t                   a_ours,
 			std::uintptr_t                   a_previous,
-			bool                             a_attempted,
-			bool                             a_written)
+			bool                             a_attempted)
 		{
 			if (!a_attempted) {
 				return true;
 			}
 
 			const auto current = ReadVtableSlot(a_vtable, a_index);
-			if (!a_written && current == a_previous) {
-				return true;
-			}
 			if (current == a_previous) {
 				return true;
 			}
@@ -389,6 +341,47 @@ namespace SFSEMenuFramework::RenderHooks
 
 			a_vtable.write_vfunc(a_index, a_previous);
 			return ReadVtableSlot(a_vtable, a_index) == a_previous;
+		}
+
+		struct VtableHook final
+		{
+			REL::Relocation<std::uintptr_t>* Vtable;
+			std::size_t                      Index;
+			std::uintptr_t                   Expected;
+			std::uintptr_t                   Replacement;
+			std::uintptr_t                   Previous{};
+			bool                             Attempted{};
+		};
+
+		[[nodiscard]] bool CommitHooks(std::span<VtableHook> a_hooks)
+		{
+			for (auto& hook : a_hooks) {
+				if (!WriteVtableSlot(
+						*hook.Vtable,
+						hook.Index,
+						hook.Expected,
+						hook.Replacement,
+						hook.Previous,
+						hook.Attempted)) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		[[nodiscard]] bool RollBackHooks(std::span<VtableHook> a_hooks)
+		{
+			bool restored = true;
+			for (auto hook = a_hooks.rbegin(); hook != a_hooks.rend(); ++hook) {
+				restored = RestoreVtableSlot(
+							   *hook->Vtable,
+							   hook->Index,
+							   hook->Replacement,
+							   hook->Previous,
+							   hook->Attempted) &&
+				           restored;
+			}
+			return restored;
 		}
 
 		void ResetRegion() noexcept
@@ -425,7 +418,6 @@ namespace SFSEMenuFramework::RenderHooks
 				}
 			}
 
-			epochTableExhaustions.fetch_add(1, std::memory_order_relaxed);
 			return nullptr;
 		}
 
@@ -443,66 +435,6 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 		}
 
-		void MaybeLogRenderProbe() noexcept
-		{
-			const auto frame = probeFrames.fetch_add(1, std::memory_order_relaxed) + 1;
-			if (frame != 1 && frame != 60 && frame != 300) {
-				return;
-			}
-
-			auto load = [](const auto& a_counter) {
-				return a_counter.load(std::memory_order_relaxed);
-			};
-			logger::info(
-				"Render probe {}: passes={}/{}/{}, regions={}, barriers={}/{}, heaps={}/{}, "
-				"transitions={}, rt-exits={}, shape={}, ordinary={}, copy={}, selected={}, "
-				"missing-heap={}, attempts={}, rendered={}, resets={}, clear-states={}, "
-				"heap-invalidations={}, epoch-mismatches={}, epoch-table-full={}",
-				frame,
-				load(beginPassHits),
-				load(endPassHits),
-				load(compositePassHits),
-				load(completedRegions),
-				load(realResourceBarrierHits),
-				load(activeBarrierCalls),
-				load(realDescriptorHeapHits),
-				load(activeDescriptorHeapHits),
-				load(transitionBarrierHits),
-				load(renderTargetExitHits),
-				load(candidateShapeHits),
-				load(ordinaryCandidateHits),
-				load(copyCandidateHits),
-				load(selectedCandidateHits),
-				load(missingHeapSnapshotHits),
-				load(renderAttempts),
-				load(renderedRegions),
-				load(realResetHits),
-				load(realClearStateHits),
-				load(heapSnapshotInvalidations),
-				load(heapSnapshotEpochMismatches),
-				load(epochTableExhaustions));
-			logger::info(
-				"Render outcomes: invalid-args={}, busy={}, device-query={}, device-mismatch={}, "
-				"list2={}, slot-busy={}, invalid-target={}, platform-frame={}, display-size={}",
-				load(renderResults[static_cast<std::size_t>(
-					D3D12Renderer::RenderResult::InvalidArguments)]),
-				load(renderResults[static_cast<std::size_t>(D3D12Renderer::RenderResult::Busy)]),
-				load(renderResults[static_cast<std::size_t>(
-					D3D12Renderer::RenderResult::DeviceQueryFailed)]),
-				load(renderResults[static_cast<std::size_t>(
-					D3D12Renderer::RenderResult::DeviceMismatch)]),
-				load(renderResults[static_cast<std::size_t>(
-					D3D12Renderer::RenderResult::CommandList2Unavailable)]),
-				load(renderResults[static_cast<std::size_t>(
-					D3D12Renderer::RenderResult::FrameSlotBusy)]),
-				load(renderResults[static_cast<std::size_t>(
-					D3D12Renderer::RenderResult::InvalidTarget)]),
-				load(renderResults[static_cast<std::size_t>(
-					D3D12Renderer::RenderResult::PlatformFrameUnavailable)]),
-				load(renderResults[static_cast<std::size_t>(
-					D3D12Renderer::RenderResult::InvalidDisplaySize)]));
-		}
-
 		[[nodiscard]] bool CopyHeapSnapshot(
 			ID3D12GraphicsCommandList*             a_commandList,
 			D3D12Renderer::DescriptorHeapSnapshot& a_snapshot) noexcept
@@ -514,7 +446,6 @@ namespace SFSEMenuFramework::RenderHooks
 
 			const auto epoch = ReadCommandListEpoch(a_commandList);
 			if (!epoch || descriptorHeapState.Epoch != epoch) {
-				heapSnapshotEpochMismatches.fetch_add(1, std::memory_order_relaxed);
 				descriptorHeapState = {};
 				return false;
 			}
@@ -525,7 +456,6 @@ namespace SFSEMenuFramework::RenderHooks
 				a_snapshot.Heaps[index] = descriptorHeapState.Heaps[index].Get();
 			}
 			if (ReadCommandListEpoch(a_commandList) != epoch) {
-				heapSnapshotEpochMismatches.fetch_add(1, std::memory_order_relaxed);
 				descriptorHeapState = {};
 				a_snapshot = {};
 				return false;
@@ -557,27 +487,18 @@ namespace SFSEMenuFramework::RenderHooks
 				a_barrier.Flags != D3D12_RESOURCE_BARRIER_FLAG_NONE) {
 				return;
 			}
-			transitionBarrierHits.fetch_add(1, std::memory_order_relaxed);
 			if (a_barrier.Transition.StateBefore != D3D12_RESOURCE_STATE_RENDER_TARGET) {
 				return;
 			}
-			renderTargetExitHits.fetch_add(1, std::memory_order_relaxed);
 			if (!IsCandidateResource(a_barrier.Transition.pResource)) {
 				return;
 			}
-			candidateShapeHits.fetch_add(1, std::memory_order_relaxed);
 
 			const auto stateAfter = a_barrier.Transition.StateAfter;
 			const bool ordinaryTarget =
 				(stateAfter & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) != 0;
 			const bool copyTarget =
 				(stateAfter & D3D12_RESOURCE_STATE_COPY_SOURCE) != 0 && !ordinaryTarget;
-			if (ordinaryTarget) {
-				ordinaryCandidateHits.fetch_add(1, std::memory_order_relaxed);
-			}
-			if (copyTarget) {
-				copyCandidateHits.fetch_add(1, std::memory_order_relaxed);
-			}
 			if (!ordinaryTarget && !copyTarget) {
 				return;
 			}
@@ -603,12 +524,9 @@ namespace SFSEMenuFramework::RenderHooks
 			if (!selected) {
 				return;
 			}
-			selectedCandidateHits.fetch_add(1, std::memory_order_relaxed);
-
 			regionState.FrameStarted = true;
 			D3D12Renderer::DescriptorHeapSnapshot heapSnapshot;
 			if (!CopyHeapSnapshot(a_commandList, heapSnapshot)) {
-				missingHeapSnapshotHits.fetch_add(1, std::memory_order_relaxed);
 				return;
 			}
 
@@ -618,20 +536,12 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 
 			internalD3D = true;
-			renderAttempts.fetch_add(1, std::memory_order_relaxed);
-			const auto result = D3D12Renderer::Render(
+			D3D12Renderer::Render(
 				a_commandList,
 				a_barrier.Transition.pResource,
 				heapSnapshot,
 				setHeaps);
 			internalD3D = false;
-			renderResults[static_cast<std::size_t>(result)].fetch_add(
-				1,
-				std::memory_order_relaxed);
-
-			if (result == D3D12Renderer::RenderResult::Rendered) {
-				renderedRegions.fetch_add(1, std::memory_order_relaxed);
-			}
 		}
 
 		void STDMETHODCALLTYPE ResourceBarrierThunk(
@@ -645,16 +555,14 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 
 			if (internalD3D) {
-				selfTestResourceBarrierSeen = true;
+				selfTestSeen |= resourceBarrierSeen;
 				original(a_commandList, a_barrierCount, a_barriers);
 				return;
 			}
 
-			realResourceBarrierHits.fetch_add(1, std::memory_order_relaxed);
 			if (drawEnabled.load(std::memory_order_acquire) && regionState.Active &&
 				a_commandList && a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT &&
 				a_barriers) {
-				activeBarrierCalls.fetch_add(1, std::memory_order_relaxed);
 				if (regionState.SawValidCandidate) {
 					if (regionState.BarrierCallsAfterFirstCandidate >= 4) {
 						original(a_commandList, a_barrierCount, a_barriers);
@@ -681,11 +589,10 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 
 			if (internalD3D) {
-				selfTestResetSeen = true;
+				selfTestSeen |= resetSeen;
 				return original(a_commandList, a_allocator, a_initialState);
 			}
 
-			realResetHits.fetch_add(1, std::memory_order_relaxed);
 			const auto result = original(a_commandList, a_allocator, a_initialState);
 			if (SUCCEEDED(result)) {
 				if (a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT) {
@@ -693,7 +600,6 @@ namespace SFSEMenuFramework::RenderHooks
 				}
 				if (descriptorHeapState.CommandList.Get() == a_commandList) {
 					descriptorHeapState = {};
-					heapSnapshotInvalidations.fetch_add(1, std::memory_order_relaxed);
 				}
 			}
 			return result;
@@ -709,19 +615,17 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 
 			if (internalD3D) {
-				selfTestClearStateSeen = true;
+				selfTestSeen |= clearStateSeen;
 				original(a_commandList, a_pipelineState);
 				return;
 			}
 
 			original(a_commandList, a_pipelineState);
-			realClearStateHits.fetch_add(1, std::memory_order_relaxed);
 			if (a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT) {
 				AdvanceCommandListEpoch(a_commandList);
 			}
 			if (descriptorHeapState.CommandList.Get() == a_commandList) {
 				descriptorHeapState = {};
-				heapSnapshotInvalidations.fetch_add(1, std::memory_order_relaxed);
 			}
 		}
 
@@ -737,14 +641,10 @@ namespace SFSEMenuFramework::RenderHooks
 
 			original(a_commandList, a_heapCount, a_heaps);
 			if (internalD3D) {
-				selfTestDescriptorHeapsSeen = true;
+				selfTestSeen |= descriptorHeapsSeen;
 				return;
 			}
 
-			realDescriptorHeapHits.fetch_add(1, std::memory_order_relaxed);
-			if (regionState.Active) {
-				activeDescriptorHeapHits.fetch_add(1, std::memory_order_relaxed);
-			}
 			const bool directCommandList =
 				a_commandList && a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT;
 			if (directCommandList) {
@@ -779,52 +679,6 @@ namespace SFSEMenuFramework::RenderHooks
 				return;
 			}
 			descriptorHeapState = std::move(nextState);
-		}
-
-		[[nodiscard]] bool RollBackCommandListHooks(
-			REL::Relocation<std::uintptr_t>& a_vtable,
-			bool                             a_heapAttempted,
-			bool                             a_heapWritten,
-			std::uintptr_t                   a_heapPrevious,
-			bool                             a_barrierAttempted,
-			bool                             a_barrierWritten,
-			std::uintptr_t                   a_barrierPrevious,
-			bool                             a_clearStateAttempted,
-			bool                             a_clearStateWritten,
-			std::uintptr_t                   a_clearStatePrevious,
-			bool                             a_resetAttempted,
-			bool                             a_resetWritten,
-			std::uintptr_t                   a_resetPrevious)
-		{
-			const bool heapRestored = RestoreVtableSlot(
-				a_vtable,
-				setDescriptorHeapsIndex,
-				FunctionAddress(&SetDescriptorHeapsThunk),
-				a_heapPrevious,
-				a_heapAttempted,
-				a_heapWritten);
-			const bool barrierRestored = RestoreVtableSlot(
-				a_vtable,
-				resourceBarrierIndex,
-				FunctionAddress(&ResourceBarrierThunk),
-				a_barrierPrevious,
-				a_barrierAttempted,
-				a_barrierWritten);
-			const bool clearStateRestored = RestoreVtableSlot(
-				a_vtable,
-				clearStateIndex,
-				FunctionAddress(&ClearStateThunk),
-				a_clearStatePrevious,
-				a_clearStateAttempted,
-				a_clearStateWritten);
-			const bool resetRestored = RestoreVtableSlot(
-				a_vtable,
-				resetIndex,
-				FunctionAddress(&ResetThunk),
-				a_resetPrevious,
-				a_resetAttempted,
-				a_resetWritten);
-			return heapRestored && barrierRestored && clearStateRestored && resetRestored;
 		}
 
 		[[nodiscard]] bool EnsureCommandListHooks() noexcept
@@ -995,74 +849,21 @@ namespace SFSEMenuFramework::RenderHooks
 				reinterpret_cast<SetDescriptorHeapsFunction>(heapTarget),
 				std::memory_order_release);
 
-			std::uintptr_t resetPrevious{};
-			std::uintptr_t clearStatePrevious{};
-			std::uintptr_t barrierPrevious{};
-			std::uintptr_t heapPrevious{};
-			bool           resetWritten{ false };
-			bool           clearStateWritten{ false };
-			bool           barrierWritten{ false };
-			bool           heapWritten{ false };
-			bool           resetAttempted{ false };
-			bool           clearStateAttempted{ false };
-			bool           barrierAttempted{ false };
-			bool           heapAttempted{ false };
-			if (!WriteVtableSlot(
-					vtable,
-					resetIndex,
-					resetTarget,
-					FunctionAddress(&ResetThunk),
-					resetPrevious,
-					resetAttempted,
-					resetWritten) ||
-				!WriteVtableSlot(
-					vtable,
-					clearStateIndex,
-					clearStateTarget,
-					FunctionAddress(&ClearStateThunk),
-					clearStatePrevious,
-					clearStateAttempted,
-					clearStateWritten) ||
-				!WriteVtableSlot(
-					vtable,
-					resourceBarrierIndex,
-					barrierTarget,
-					FunctionAddress(&ResourceBarrierThunk),
-					barrierPrevious,
-					barrierAttempted,
-					barrierWritten) ||
-				!WriteVtableSlot(
-					vtable,
-					setDescriptorHeapsIndex,
-					heapTarget,
-					FunctionAddress(&SetDescriptorHeapsThunk),
-					heapPrevious,
-					heapAttempted,
-					heapWritten)) {
-				const bool restored = RollBackCommandListHooks(
-					vtable,
-					heapAttempted,
-					heapWritten,
-					heapPrevious,
-					barrierAttempted,
-					barrierWritten,
-					barrierPrevious,
-					clearStateAttempted,
-					clearStateWritten,
-					clearStatePrevious,
-					resetAttempted,
-					resetWritten,
-					resetPrevious);
+			std::array<VtableHook, 4> hooks{
+				VtableHook{ &vtable, resetIndex, resetTarget, FunctionAddress(&ResetThunk) },
+				VtableHook{ &vtable, clearStateIndex, clearStateTarget, FunctionAddress(&ClearStateThunk) },
+				VtableHook{ &vtable, resourceBarrierIndex, barrierTarget, FunctionAddress(&ResourceBarrierThunk) },
+				VtableHook{ &vtable, setDescriptorHeapsIndex, heapTarget, FunctionAddress(&SetDescriptorHeapsThunk) }
+			};
+			if (!CommitHooks(hooks)) {
+				const bool restored = RollBackHooks(hooks);
 				logger::critical(
 					"Failed to commit the D3D12 command-list hooks; rollback {}",
 					restored ? "succeeded" : "was incomplete");
 				return fail();
 			}
 
-			selfTestResetSeen = false;
-			selfTestClearStateSeen = false;
-			selfTestResourceBarrierSeen = false;
-			selfTestDescriptorHeapsSeen = false;
+			selfTestSeen = 0;
 			internalD3D = true;
 
 			D3D12_RESOURCE_BARRIER testBarrier{};
@@ -1078,23 +879,9 @@ namespace SFSEMenuFramework::RenderHooks
 			const auto finalCloseResult = SUCCEEDED(resetResult) ? commandList->Close() : E_FAIL;
 			internalD3D = false;
 
-			if (!selfTestResetSeen || !selfTestClearStateSeen || !selfTestResourceBarrierSeen ||
-				!selfTestDescriptorHeapsSeen || FAILED(closeResult) || FAILED(resetResult) ||
+			if (selfTestSeen != allSelfTestsSeen || FAILED(closeResult) || FAILED(resetResult) ||
 				FAILED(finalCloseResult)) {
-				const bool restored = RollBackCommandListHooks(
-					vtable,
-					heapAttempted,
-					heapWritten,
-					heapPrevious,
-					barrierAttempted,
-					barrierWritten,
-					barrierPrevious,
-					clearStateAttempted,
-					clearStateWritten,
-					clearStatePrevious,
-					resetAttempted,
-					resetWritten,
-					resetPrevious);
+				const bool restored = RollBackHooks(hooks);
 				logger::critical(
 					"The D3D12 hook self-test failed; rollback {}",
 					restored ? "succeeded" : "was incomplete");
@@ -1105,20 +892,7 @@ namespace SFSEMenuFramework::RenderHooks
 			const bool rendererReady = D3D12Renderer::Initialize(hookDevice.Get());
 			internalD3D = false;
 			if (!rendererReady) {
-				const bool restored = RollBackCommandListHooks(
-					vtable,
-					heapAttempted,
-					heapWritten,
-					heapPrevious,
-					barrierAttempted,
-					barrierWritten,
-					barrierPrevious,
-					clearStateAttempted,
-					clearStateWritten,
-					clearStatePrevious,
-					resetAttempted,
-					resetWritten,
-					resetPrevious);
+				const bool restored = RollBackHooks(hooks);
 				logger::critical(
 					"The ImGui renderer could not be initialized; D3D12 rollback {}",
 					restored ? "succeeded" : "was incomplete");
@@ -1136,7 +910,6 @@ namespace SFSEMenuFramework::RenderHooks
 			RE::CreationRendererPrivate::RenderPassContext*       a_context,
 			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept
 		{
-			beginPassHits.fetch_add(1, std::memory_order_relaxed);
 			ResetRegion();
 			if (scaleformState.load(std::memory_order_acquire) == HookState::Ready) {
 				static_cast<void>(EnsureCommandListHooks());
@@ -1146,9 +919,6 @@ namespace SFSEMenuFramework::RenderHooks
 				original(a_pass, a_context, a_executionData);
 			}
 
-			if (commandListState.load(std::memory_order_acquire) == HookState::Ready) {
-				MaybeLogRenderProbe();
-			}
 		}
 
 		void EndThunk(
@@ -1156,7 +926,6 @@ namespace SFSEMenuFramework::RenderHooks
 			RE::CreationRendererPrivate::RenderPassContext*       a_context,
 			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept
 		{
-			endPassHits.fetch_add(1, std::memory_order_relaxed);
 			if (const auto original = endOriginal.load(std::memory_order_acquire)) {
 				original(a_pass, a_context, a_executionData);
 			}
@@ -1171,9 +940,7 @@ namespace SFSEMenuFramework::RenderHooks
 			RE::CreationRendererPrivate::RenderPassContext*       a_context,
 			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept
 		{
-			compositePassHits.fetch_add(1, std::memory_order_relaxed);
 			if (regionState.Active) {
-				completedRegions.fetch_add(1, std::memory_order_relaxed);
 				if (regionState.SawValidCandidate) {
 					previousRegion.store(
 						regionState.SawCopyTarget ? PreviousRegion::FrameGeneration : PreviousRegion::Normal,
@@ -1217,65 +984,13 @@ namespace SFSEMenuFramework::RenderHooks
 				reinterpret_cast<RenderPassFunction>(compositeTarget),
 				std::memory_order_release);
 
-			std::uintptr_t beginPrevious{};
-			std::uintptr_t endPrevious{};
-			std::uintptr_t compositePrevious{};
-			bool           beginWritten{ false };
-			bool           endWritten{ false };
-			bool           compositeWritten{ false };
-			bool           beginAttempted{ false };
-			bool           endAttempted{ false };
-			bool           compositeAttempted{ false };
-
-			const bool committed =
-				WriteVtableSlot(
-					beginVtable,
-					slot,
-					beginTarget,
-					FunctionAddress(&BeginThunk),
-					beginPrevious,
-					beginAttempted,
-					beginWritten) &&
-				WriteVtableSlot(
-					endVtable,
-					slot,
-					endTarget,
-					FunctionAddress(&EndThunk),
-					endPrevious,
-					endAttempted,
-					endWritten) &&
-				WriteVtableSlot(
-					compositeVtable,
-					slot,
-					compositeTarget,
-					FunctionAddress(&CompositeThunk),
-					compositePrevious,
-					compositeAttempted,
-					compositeWritten);
-
-			if (!committed) {
-				const bool compositeRestored = RestoreVtableSlot(
-					compositeVtable,
-					slot,
-					FunctionAddress(&CompositeThunk),
-					compositePrevious,
-					compositeAttempted,
-					compositeWritten);
-				const bool endRestored = RestoreVtableSlot(
-					endVtable,
-					slot,
-					FunctionAddress(&EndThunk),
-					endPrevious,
-					endAttempted,
-					endWritten);
-				const bool beginRestored = RestoreVtableSlot(
-					beginVtable,
-					slot,
-					FunctionAddress(&BeginThunk),
-					beginPrevious,
-					beginAttempted,
-					beginWritten);
-				const bool restored = compositeRestored && endRestored && beginRestored;
+			std::array<VtableHook, 3> hooks{
+				VtableHook{ &beginVtable, slot, beginTarget, FunctionAddress(&BeginThunk) },
+				VtableHook{ &endVtable, slot, endTarget, FunctionAddress(&EndThunk) },
+				VtableHook{ &compositeVtable, slot, compositeTarget, FunctionAddress(&CompositeThunk) }
+			};
+			if (!CommitHooks(hooks)) {
+				const bool restored = RollBackHooks(hooks);
 				logger::critical(
 					"Failed to commit the Scaleform render-pass hooks; rollback {}",
 					restored ? "succeeded" : "was incomplete, so the DLL must remain loaded");

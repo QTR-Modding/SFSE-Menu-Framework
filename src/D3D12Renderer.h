@@ -19,28 +19,13 @@ namespace SFSEMenuFramework::D3D12Renderer
 		UINT                                 Count{ 0 };
 	};
 
-	enum class RenderResult : std::uint8_t
-	{
-		Rendered,
-		InvalidArguments,
-		Busy,
-		DeviceQueryFailed,
-		DeviceMismatch,
-		CommandList2Unavailable,
-		FrameSlotBusy,
-		InvalidTarget,
-		PlatformFrameUnavailable,
-		InvalidDisplaySize,
-		Count
-	};
-
 	[[nodiscard]] bool Initialize(ID3D12Device* a_device);
 	[[nodiscard]] bool SetPlatformInputEnabled(
 		bool a_enabled,
 		std::uint64_t a_earlyRawMouseGeneration = 0);
 	[[nodiscard]] bool HasRecentBlockingWindowFrame(std::uint64_t a_generation) noexcept;
 
-	[[nodiscard]] RenderResult Render(
+	void Render(
 		ID3D12GraphicsCommandList*    a_commandList,
 		ID3D12Resource*               a_renderTarget,
 		const DescriptorHeapSnapshot& a_engineHeaps,

@@ -1,11 +1,9 @@
 #include "EventManager.h"
-
-#include <Windows.h>
+#include "PanelRegistry.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -83,35 +81,10 @@ namespace SFSEMenuFramework
 			return registry;
 		}
 
-		[[nodiscard]] bool IsExecutableImageAddress(
-			Model::EventCallback a_function) noexcept
-		{
-			static_assert(sizeof(a_function) == sizeof(const void*));
-			const auto address = std::bit_cast<const void*>(a_function);
-
-			MEMORY_BASIC_INFORMATION information{};
-			if (::VirtualQuery(address, &information, sizeof(information)) !=
-					sizeof(information) ||
-				information.State != MEM_COMMIT ||
-				information.Type != MEM_IMAGE ||
-				(information.Protect & PAGE_GUARD) != 0 ||
-				!information.AllocationBase) {
-				return false;
-			}
-
-			const auto protection = information.Protect & 0xFF;
-			return protection == PAGE_EXECUTE ||
-			       protection == PAGE_EXECUTE_READ ||
-			       protection == PAGE_EXECUTE_READWRITE ||
-			       protection == PAGE_EXECUTE_WRITECOPY;
-		}
-
 		[[nodiscard]] bool IsSupportedEventType(Model::EventType a_type) noexcept
 		{
-			return a_type == Model::EventType::kOpenMenu ||
-			       a_type == Model::EventType::kCloseMenu ||
-			       a_type == Model::EventType::kBeforeRender ||
-			       a_type == Model::EventType::kAfterRender;
+			return a_type >= Model::EventType::kOpenMenu &&
+			       a_type <= Model::EventType::kAfterRender;
 		}
 
 		void LeaveListener(const ListenerPointer& a_listener) noexcept
@@ -196,12 +169,6 @@ namespace SFSEMenuFramework
 			return true;
 		}
 
-		void SetStateWithoutRegistry(
-			std::atomic<bool>& a_state,
-			bool               a_open) noexcept
-		{
-			a_state.store(a_open, std::memory_order_release);
-		}
 	}
 
 	Model::RegistrationResult EventManager::Register(
@@ -222,7 +189,7 @@ namespace SFSEMenuFramework
 		}
 		if (!a_registration->Callback ||
 			!std::isfinite(a_registration->Priority) ||
-			!IsExecutableImageAddress(a_registration->Callback)) {
+			!Detail::IsExecutableImageFunction(a_registration->Callback)) {
 			return Model::RegistrationResult::InvalidArgument;
 		}
 
@@ -333,54 +300,12 @@ namespace SFSEMenuFramework
 			if (a_emergencyClose && !a_open) {
 				logger::critical(
 					"Applying an emergency main-window close without lifecycle delivery");
-				SetStateWithoutRegistry(a_state, false);
+				a_state.store(false, std::memory_order_release);
 				return true;
 			}
 			return false;
 		}
-		SetStateWithoutRegistry(a_state, a_open);
-		return true;
-	}
-
-	bool EventManager::ToggleMainWindowState(
-		std::atomic<bool>& a_state,
-		bool*              a_open) noexcept
-	{
-		if (a_open) {
-			*a_open = a_state.load(std::memory_order_acquire);
-		}
-
-		auto* registry = GetRegistry();
-		if (!registry) {
-			bool expected = a_state.load(std::memory_order_acquire);
-			while (!a_state.compare_exchange_weak(
-				expected,
-				!expected,
-				std::memory_order_acq_rel,
-				std::memory_order_acquire)) {
-			}
-			if (a_open) {
-				*a_open = !expected;
-			}
-			return true;
-		}
-
-		std::scoped_lock lock{ registry->TransitionMutex };
-		const bool next = !a_state.load(std::memory_order_acquire);
-		const auto snapshot =
-			registry->Published.load(std::memory_order_acquire);
-		if (!QueueTransitionLocked(
-				*registry,
-				next ? Model::EventType::kOpenMenu :
-					Model::EventType::kCloseMenu,
-				snapshot,
-				false)) {
-			return false;
-		}
-		SetStateWithoutRegistry(a_state, next);
-		if (a_open) {
-			*a_open = next;
-		}
+		a_state.store(a_open, std::memory_order_release);
 		return true;
 	}
 

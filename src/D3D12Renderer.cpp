@@ -425,7 +425,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		       (::GetTickCount64() - lastTick) <= maximumBlockingWindowFrameAgeMilliseconds;
 	}
 
-	RenderResult Render(
+	void Render(
 		ID3D12GraphicsCommandList*    a_commandList,
 		ID3D12Resource*               a_renderTarget,
 		const DescriptorHeapSnapshot& a_engineHeaps,
@@ -434,35 +434,35 @@ namespace SFSEMenuFramework::D3D12Renderer
 		if (!a_commandList || !a_renderTarget || !a_setDescriptorHeaps ||
 			a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
 			!HasValidHeapSnapshot(a_engineHeaps)) {
-			return RenderResult::InvalidArguments;
+			return;
 		}
 
 		std::scoped_lock lock{ GetRendererMutex() };
 		if (renderInProgress) {
-			return RenderResult::Busy;
+			return;
 		}
 		renderInProgress = true;
 		const RenderScope renderScope{ renderInProgress };
 
 		Microsoft::WRL::ComPtr<ID3D12Device> commandListDevice;
 		if (FAILED(a_commandList->GetDevice(IID_PPV_ARGS(commandListDevice.GetAddressOf())))) {
-			return RenderResult::DeviceQueryFailed;
+			return;
 		}
 
 		auto& rendererState = GetRendererState();
 		if (!rendererState.Context ||
 			!HasSameComIdentity(rendererState.Device.Get(), commandListDevice.Get())) {
-			return RenderResult::DeviceMismatch;
+			return;
 		}
 
 		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> commandList2;
 		if (FAILED(a_commandList->QueryInterface(IID_PPV_ARGS(commandList2.GetAddressOf())))) {
-			return RenderResult::CommandList2Unavailable;
+			return;
 		}
 
 		std::size_t frameSlot{};
 		if (!AcquireFrameSlot(rendererState, frameSlot)) {
-			return RenderResult::FrameSlotBusy;
+			return;
 		}
 
 		const auto description = a_renderTarget->GetDesc();
@@ -470,25 +470,25 @@ namespace SFSEMenuFramework::D3D12Renderer
 			description.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS ||
 			description.SampleDesc.Count != 1 || description.Width < 256 ||
 			description.Height < 256) {
-			return RenderResult::InvalidTarget;
+			return;
 		}
 
 		EventManager::Snapshot lifecycleSnapshot;
 		if (!EventManager::BeginFrame(lifecycleSnapshot)) {
-			return RenderResult::Busy;
+			return;
 		}
 
 		ImGui::SetCurrentContext(rendererState.Context);
 		auto& io = ImGui::GetIO();
 		if (!Win32Platform::PrepareFrame()) {
-			return RenderResult::PlatformFrameUnavailable;
+			return;
 		}
 		ImGui_ImplDX12_NewFrame();
 		if (!std::isfinite(io.DisplaySize.x) ||
 			!std::isfinite(io.DisplaySize.y) ||
 			io.DisplaySize.x <= 0.0F ||
 			io.DisplaySize.y <= 0.0F) {
-			return RenderResult::InvalidDisplaySize;
+			return;
 		}
 
 		FontUploadContext fontUpload{
@@ -557,7 +557,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		auto* activeFontHeap =
 			rendererState.ActiveFontResources.ShaderHeap.Get();
 		if (!activeFontHeap) {
-			return RenderResult::DeviceMismatch;
+			return;
 		}
 		ID3D12DescriptorHeap* frameworkHeaps[]{ activeFontHeap };
 		a_setDescriptorHeaps(a_commandList, 1, frameworkHeaps);
@@ -582,6 +582,5 @@ namespace SFSEMenuFramework::D3D12Renderer
 			Model::EventType::kAfterRender,
 			lifecycleSnapshot);
 
-		return RenderResult::Rendered;
 	}
 }
