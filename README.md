@@ -23,12 +23,10 @@ font face, variable font weight, logical font size, and manual UI scale are conf
 The bundled `CLASSIC`, `MODERN`, `SKYRIMDEFAULT`, and `STARFIELD` themes live in
 `Data/SFSE/Plugins/SFSEMenuFrameworkThemes`. Additional JSON themes using
 the same schema appear in the selector after the next game restart.
-The framework defaults to the `CLASSIC` theme and bundled Jost 400 Book face
-at 48 logical px, rasterized with FreeType native hinting. Jost 500 Medium is
-also bundled. The `STARFIELD` theme pairs with the bundled Space Grotesk
-variable face, which supports live weights from 300 through 700; weight 500 is
-the intended starting point. At 4K, 32 logical px and UI scale 1.5 are the
-intended size and scale starting point.
+The framework defaults to the `STARFIELD` theme and bundled Space Grotesk
+variable face at weight 350, 40 logical px, 100% UI scale, and FreeType
+auto-hinting. The variable face supports live weights from 300 through 700.
+Jost 400 Book and Jost 500 Medium are bundled as fallback faces.
 ASCII-named direct-child `.ttf` and `.otf` files placed in
 `Data/SFSE/Plugins/Fonts` appear in the selector after the next game restart.
 Font rendering mode, face, variable weight, font size, and UI-scale previews

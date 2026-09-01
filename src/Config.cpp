@@ -121,10 +121,10 @@ namespace SFSEMenuFramework::FrameworkSettings
 			.ModeGamePad = ToggleMode::DoublePress,
 			.FreezeTimeOnMenu = true,
 			.BlurBackgroundOnMenu = true,
-			.MenuStyle = MakeName<MenuStyleName>("CLASSIC"),
+			.MenuStyle = MakeName<MenuStyleName>("STARFIELD"),
 			.Fonts = {
-				MakeName<FontFileName>("Jost-400-Book.ttf"),
-				500.0F, 48.0F, 12.0F, 64.0F, 1.0F, FontRendering::Native }
+				MakeName<FontFileName>("SpaceGrotesk[wght].ttf"),
+				350.0F, 40.0F, 12.0F, 64.0F, 1.0F, FontRendering::Auto }
 		};
 		constexpr const auto& defaultFontSettings = defaultValues.Fonts;
 		SRWLOCK stateLock = SRWLOCK_INIT;
