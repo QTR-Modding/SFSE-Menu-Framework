@@ -1,5 +1,7 @@
 #include "config/RootMenuConfig.h"
 
+#include <Windows.h>
+
 #include <nlohmann/json.hpp>
 
 #include <exception>
@@ -17,6 +19,9 @@ namespace SFSEMenuFramework::RootMenuConfig
 		// The path and namespace are changed for SFSE; bounded error handling and
 		// save-result propagation are Starfield-port corrections.
 		constexpr char configPath[]{ "Data/SFSE/Plugins/SFSEMenuFrameworkMenuConfig.json" };
+		constexpr char temporaryConfigPath[]{
+			"Data/SFSE/Plugins/SFSEMenuFrameworkMenuConfig.json.tmp"
+		};
 
 		using MenuNames = std::set<std::string, std::less<>>;
 		enum class MenuList
@@ -27,6 +32,44 @@ namespace SFSEMenuFramework::RootMenuConfig
 
 		MenuNames favoriteMenus;
 		MenuNames archivedMenus;
+
+		void DiscardTemporaryConfig() noexcept
+		{
+			static_cast<void>(::DeleteFileA(temporaryConfigPath));
+		}
+
+		[[nodiscard]] bool FlushTemporaryConfig() noexcept
+		{
+			const auto file = ::CreateFileA(
+				temporaryConfigPath,
+				GENERIC_WRITE,
+				FILE_SHARE_READ,
+				nullptr,
+				OPEN_EXISTING,
+				FILE_ATTRIBUTE_NORMAL,
+				nullptr);
+			if (file == INVALID_HANDLE_VALUE) {
+				logger::error(
+					"Could not reopen temporary root menu configuration '{}' (Windows error {})",
+					temporaryConfigPath,
+					::GetLastError());
+				return false;
+			}
+
+			bool success = ::FlushFileBuffers(file) != FALSE;
+			auto error = success ? ERROR_SUCCESS : ::GetLastError();
+			if (!::CloseHandle(file) && success) {
+				success = false;
+				error = ::GetLastError();
+			}
+			if (!success) {
+				logger::error(
+					"Could not flush temporary root menu configuration '{}' (Windows error {})",
+					temporaryConfigPath,
+					error);
+			}
+			return success;
+		}
 
 		void LoadMenuNames(
 			const nlohmann::json& a_config, const char* a_key, MenuNames& a_menuNames)
@@ -51,23 +94,47 @@ namespace SFSEMenuFramework::RootMenuConfig
 					{ "favorites", a_favoriteMenus },
 					{ "archived", a_archivedMenus }
 				};
+				const std::string serializedConfig = config.dump(2) + '\n';
 
-				std::ofstream file{ configPath, std::ios::trunc };
+				std::ofstream file{ temporaryConfigPath, std::ios::trunc };
 				if (!file.good()) {
-					logger::error("Could not save root menu configuration to '{}'", configPath);
+					DiscardTemporaryConfig();
+					logger::error(
+						"Could not open temporary root menu configuration '{}'",
+						temporaryConfigPath);
 					return false;
 				}
 
-				file << config.dump(2) << '\n';
+				file << serializedConfig;
 				file.flush();
 				const bool written = file.good();
 				file.close();
 				if (!written || file.fail()) {
-					logger::error("Could not finish writing root menu configuration to '{}'", configPath);
+					DiscardTemporaryConfig();
+					logger::error(
+						"Could not finish writing temporary root menu configuration '{}'",
+						temporaryConfigPath);
+					return false;
+				}
+				if (!FlushTemporaryConfig()) {
+					DiscardTemporaryConfig();
+					return false;
+				}
+				if (!::MoveFileExA(
+						temporaryConfigPath,
+						configPath,
+						MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+					const auto error = ::GetLastError();
+					DiscardTemporaryConfig();
+					logger::error(
+						"Could not replace root menu configuration '{}' (Windows error {})",
+						configPath,
+						error);
 					return false;
 				}
 				return true;
 			} catch (const std::exception& exception) {
+				DiscardTemporaryConfig();
 				logger::error(
 					"Could not serialize root menu configuration '{}': {}",
 					configPath, exception.what());
