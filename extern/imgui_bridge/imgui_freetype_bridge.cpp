@@ -18,20 +18,31 @@ namespace
 		const FT_Byte*  a_bytes,
 		FT_Long         a_size,
 		FT_Long         a_faceIndex,
-		FT_Face*        a_face)
+		FT_Face*        a_face) noexcept
 	{
+		if (!a_library || !a_bytes || a_size <= 0 || !a_face) {
+			return FT_Err_Invalid_Argument;
+		}
+		*a_face = nullptr;
 		const auto error = FT_New_Memory_Face(
 			a_library,
 			a_bytes,
 			a_size,
 			a_faceIndex,
 			a_face);
-		if (error != 0 || !a_face || !*a_face) {
+		if (error != 0) {
+			*a_face = nullptr;
 			return error;
+		}
+		if (!*a_face) {
+			return FT_Err_Invalid_Argument;
 		}
 		if (SFSEMenuFramework::FontVariation::ApplyRequestedWeight(
 				a_library,
-				*a_face)) {
+				*a_face,
+				std::span{
+					reinterpret_cast<const std::uint8_t*>(a_bytes),
+					static_cast<std::size_t>(a_size) })) {
 			return 0;
 		}
 

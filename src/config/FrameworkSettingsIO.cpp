@@ -361,6 +361,11 @@ namespace SFSEMenuFramework::FrameworkSettings
 				fontSectionName, setting.Name, loaded.Fonts.*setting.Value,
 				setting.Default, ParseNumber<float>);
 		}
+		for (const auto& setting : glyphSettings) {
+			profile.Read(
+				fontSectionName, setting.Name, loaded.Fonts.Glyphs.*setting.Value,
+				defaultFontSettings.Glyphs.*setting.Value, ParseBool);
+		}
 
 		const bool valid = NormalizeFontSettings(loaded.Fonts) &&
 			static_cast<bool>(profile);
@@ -401,6 +406,11 @@ namespace SFSEMenuFramework::FrameworkSettings
 		for (const auto& setting : fontFloatSettings) {
 			profile.Write(
 				fontSectionName, setting.Name, saved.Fonts.*setting.Value);
+		}
+		for (const auto& setting : glyphSettings) {
+			profile.Write(
+				fontSectionName, setting.Name,
+				saved.Fonts.Glyphs.*setting.Value ? L"1" : L"0");
 		}
 
 		// The documented cache-flush form returns zero even when it only

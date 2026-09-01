@@ -187,6 +187,27 @@ license is installed alongside the font as
 `Data/SFSE/Plugins/Fonts/Jost-OFL.txt` and retained in
 [`public/SFSE/Plugins/Fonts/Jost-OFL.txt`](public/SFSE/Plugins/Fonts/Jost-OFL.txt).
 
+## Font Awesome Free 6.5.2
+
+The unmodified `fa-solid-900.ttf`, `fa-regular-400.ttf`, and
+`fa-brands-400.ttf` webfonts are redistributed from the official
+[FortAwesome/Font-Awesome 6.5.2 tag at commit
+`c0f460dca7f7688761120415ff3c9cf7f73119be`](https://github.com/FortAwesome/Font-Awesome/tree/c0f460dca7f7688761120415ff3c9cf7f73119be).
+
+The retained SHA-256 hashes are:
+
+- `fa-solid-900.ttf`: `4312F534F4FC39B771774DB6A5A00E22992437D8707A02CE163B4E47E432E65C`
+- `fa-regular-400.ttf`: `C7908AE0C2DC972A2CC0F9404AE4B5FD1DC310D4DC2DB6BFC9C5FD5FAA8819C6`
+- `fa-brands-400.ttf`: `C4C68E0616FD5EB4369DF492AF0C55ACE43A728744E0E9AA1E50C835DC1CA2D2`
+
+Copyright 2024 Fonticons, Inc. (https://fontawesome.com), with Reserved
+Font Name `Font Awesome`.
+
+The font files are licensed under the SIL Open Font License, Version 1.1.
+The complete upstream license is installed alongside them as
+`Data/SFSE/Plugins/Fonts/Font-Awesome-LICENSE.txt` and retained in
+[`public/SFSE/Plugins/Fonts/Font-Awesome-LICENSE.txt`](public/SFSE/Plugins/Fonts/Font-Awesome-LICENSE.txt).
+
 ## Space Grotesk 2.0.0
 
 The unmodified `SpaceGrotesk-Medium.ttf` and

@@ -54,7 +54,9 @@ namespace SFSEMenuFramework::FrameworkSettings
 			       a_settings.UIScale >= hardMinUIScale &&
 			       a_settings.UIScale <= hardMaxUIScale &&
 			       a_settings.FontSizeMedium * a_settings.UIScale <=
-				       maximumRasterSize;
+				       maximumRasterSize &&
+			       !(a_settings.Glyphs.ChineseSimplifiedCommon &&
+			         a_settings.Glyphs.ChineseFull);
 		}
 
 	}
@@ -73,6 +75,11 @@ namespace SFSEMenuFramework::FrameworkSettings
 			unchanged = false;
 		}
 		a_settings.PrimaryFont = normalizedName;
+		if (a_settings.Glyphs.ChineseSimplifiedCommon &&
+			a_settings.Glyphs.ChineseFull) {
+			a_settings.Glyphs.ChineseSimplifiedCommon = false;
+			unchanged = false;
+		}
 		if (std::to_underlying(a_settings.Rendering) >
 			std::to_underlying(FontRendering::Auto)) {
 			a_settings.Rendering = defaultFontSettings.Rendering;
@@ -273,6 +280,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 			a_left.PrimaryFont == a_right.PrimaryFont;
 		return sameFont &&
 		       a_left.Rendering == a_right.Rendering &&
+		       a_left.Glyphs == a_right.Glyphs &&
 		       close(a_left.FontWeight, a_right.FontWeight) &&
 		       close(a_left.FontSizeMedium, a_right.FontSizeMedium) &&
 		       close(a_left.MinFontSize, a_right.MinFontSize) &&

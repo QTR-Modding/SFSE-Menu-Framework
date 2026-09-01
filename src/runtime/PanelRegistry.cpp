@@ -1,4 +1,5 @@
 #include "runtime/PanelRegistry.h"
+#include "appearance/fonts/ConsumerFontScope.h"
 #include "runtime/ConsumerValidation.h"
 
 #include <algorithm>
@@ -182,6 +183,7 @@ namespace SFSEMenuFramework
 			!a_panel->Render) {
 			return;
 		}
+		ConsumerFontScope::CallbackScope callbackScope{ "panel" };
 		const auto result = a_panel->Render(&a_context, a_panel->UserData);
 		if (result == Model::PanelRenderResult::Continue) {
 			return;

@@ -105,7 +105,7 @@ namespace SFSEMenuFramework::FrameworkSettings::Detail
 		.MenuStyle = MakeName<MenuStyleName>("STARFIELD"),
 		.Fonts = {
 			MakeName<FontFileName>("SpaceGrotesk[wght].ttf"),
-			300.0F, 40.0F, 12.0F, 64.0F, 1.0F, FontRendering::Auto }
+			300.0F, 40.0F, 12.0F, 64.0F, 1.0F, FontRendering::Auto, {} }
 	};
 	inline constexpr const auto& defaultFontSettings = defaultValues.Fonts;
 
@@ -241,6 +241,28 @@ namespace SFSEMenuFramework::FrameworkSettings::Detail
 		FloatSetting{
 			L"UIScale", &FontSettings::UIScale,
 			defaultFontSettings.UIScale, hardMinUIScale, hardMaxUIScale }
+	};
+	struct GlyphSetting final
+	{
+		const wchar_t* Name;
+		bool GlyphCoverage::* Value;
+	};
+	// The optional language-range toggles and shipped false defaults adapt
+	// SKSE Menu Framework 3 Config.cpp/FontManager.cpp at commit
+	// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0).
+	// Greek, Vietnamese, and the two Chinese choices extend that configuration.
+	inline constexpr std::array glyphSettings{
+		GlyphSetting{ L"EnableGreek", &GlyphCoverage::Greek },
+		GlyphSetting{ L"EnableCyrillic", &GlyphCoverage::Cyrillic },
+		GlyphSetting{ L"EnableVietnamese", &GlyphCoverage::Vietnamese },
+		GlyphSetting{ L"EnableTurkish", &GlyphCoverage::Turkish },
+		GlyphSetting{ L"EnableThai", &GlyphCoverage::Thai },
+		GlyphSetting{ L"EnableKorean", &GlyphCoverage::Korean },
+		GlyphSetting{ L"EnableJapanese", &GlyphCoverage::Japanese },
+		GlyphSetting{
+			L"EnableChineseSimplifiedCommon",
+			&GlyphCoverage::ChineseSimplifiedCommon },
+		GlyphSetting{ L"EnableChineseFull", &GlyphCoverage::ChineseFull }
 	};
 
 	[[nodiscard]] bool NormalizeFontSettings(

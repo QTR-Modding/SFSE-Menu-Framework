@@ -160,6 +160,53 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 		}
 
+		void RenderGlyphCoverage(
+			FrameworkSettings::FontSettings& a_pending)
+		{
+			struct GlyphToggle final
+			{
+				const char* Label;
+				bool FrameworkSettings::GlyphCoverage::* Value;
+			};
+			constexpr std::array toggles{
+				GlyphToggle{ "Greek", &FrameworkSettings::GlyphCoverage::Greek },
+				GlyphToggle{ "Cyrillic", &FrameworkSettings::GlyphCoverage::Cyrillic },
+				GlyphToggle{ "Vietnamese", &FrameworkSettings::GlyphCoverage::Vietnamese },
+				GlyphToggle{ "Turkish", &FrameworkSettings::GlyphCoverage::Turkish },
+				GlyphToggle{ "Thai", &FrameworkSettings::GlyphCoverage::Thai },
+				GlyphToggle{ "Korean", &FrameworkSettings::GlyphCoverage::Korean },
+				GlyphToggle{ "Japanese", &FrameworkSettings::GlyphCoverage::Japanese },
+				GlyphToggle{
+					"Chinese (Simplified Common)",
+					&FrameworkSettings::GlyphCoverage::ChineseSimplifiedCommon },
+				GlyphToggle{
+					"Chinese (Full)",
+					&FrameworkSettings::GlyphCoverage::ChineseFull }
+			};
+
+			ImGui::SeparatorText("Glyph coverage");
+			ImGui::TextDisabled(
+				"Enable only the character sets needed by framework panels.");
+			for (const auto& toggle : toggles) {
+				auto& enabled = a_pending.Glyphs.*toggle.Value;
+				if (!ToggleButton(toggle.Label, &enabled)) {
+					continue;
+				}
+				if (enabled &&
+					toggle.Value ==
+						&FrameworkSettings::GlyphCoverage::ChineseSimplifiedCommon) {
+					a_pending.Glyphs.ChineseFull = false;
+				} else if (enabled &&
+					toggle.Value == &FrameworkSettings::GlyphCoverage::ChineseFull) {
+					a_pending.Glyphs.ChineseSimplifiedCommon = false;
+				}
+				fontSettingsInvalid =
+					!FontManager::RequestAtlasRebuild(a_pending);
+			}
+			ImGui::TextDisabled(
+				"The two Chinese ranges are alternatives; Full uses substantially more atlas space.");
+		}
+
 		void RenderFontSettings(bool& a_saveFailed)
 		{
 			static FrameworkSettings::FontSettings pending{};
@@ -270,6 +317,8 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 			FinishFontEdit(pending, uiScaleEdited);
 
+			RenderGlyphCoverage(pending);
+
 			const auto activeScalePercent =
 				static_cast<int>(std::lround(active.Settings.UIScale * 100.0F));
 			const auto activeRendering = FrameworkSettings::GetFontRenderingName(
@@ -347,7 +396,7 @@ namespace SFSEMenuFramework::SettingsWindow
 					"Live preview applied; changes are not saved.");
 			} else {
 				ImGui::TextDisabled(
-					"Font rendering, face, variable weight, and UI-scale changes apply live.");
+					"Font rendering, face, weight, scale, and glyph coverage apply live.");
 			}
 		}
 

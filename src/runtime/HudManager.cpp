@@ -1,5 +1,6 @@
 #include "runtime/HudManager.h"
 
+#include "appearance/fonts/ConsumerFontScope.h"
 #include "runtime/CallbackRegistry.h"
 #include "runtime/ConsumerValidation.h"
 
@@ -71,6 +72,7 @@ namespace SFSEMenuFramework::HudManager
 	{
 		if (auto* registry = GetRegistry()) {
 			registry->Dispatch([&a_context](const auto& a_entry) noexcept {
+				ConsumerFontScope::CallbackScope callbackScope{ "HUD" };
 				a_entry.Function(&a_context, a_entry.UserData);
 			});
 		}

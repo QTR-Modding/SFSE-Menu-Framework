@@ -16,24 +16,49 @@ namespace SFSEMenuFramework::FontVariation
 		float Maximum{};
 	};
 
-	class ScopedWeight final
+	enum class FontKind : std::uint8_t
+	{
+		Invalid,
+		Fixed,
+		VariableWeight
+	};
+
+	struct FontInspection final
+	{
+		FontKind Kind{ FontKind::Invalid };
+		bool HasUnicodeCharmap{};
+		bool HasPrintableAscii{};
+		std::optional<WeightAxis> Weight;
+	};
+
+	struct WeightRequest final
+	{
+		// ImGui must receive this same byte span as ImFontConfig::FontData.
+		std::span<const std::uint8_t> FontBytes;
+		float Weight{};
+	};
+
+	// Keeps a non-owning request table active for one synchronous atlas build.
+	class ScopedWeightTable final
 	{
 	public:
-		explicit ScopedWeight(std::optional<float> a_weight) noexcept;
-		~ScopedWeight();
+		explicit ScopedWeightTable(
+			std::span<const WeightRequest> a_requests) noexcept;
+		~ScopedWeightTable() noexcept;
 
-		ScopedWeight(const ScopedWeight&) = delete;
-		ScopedWeight(ScopedWeight&&) = delete;
-		ScopedWeight& operator=(const ScopedWeight&) = delete;
-		ScopedWeight& operator=(ScopedWeight&&) = delete;
+		ScopedWeightTable(const ScopedWeightTable&) = delete;
+		ScopedWeightTable(ScopedWeightTable&&) = delete;
+		ScopedWeightTable& operator=(const ScopedWeightTable&) = delete;
+		ScopedWeightTable& operator=(ScopedWeightTable&&) = delete;
 
 	private:
-		std::optional<float> previous_;
+		std::span<const WeightRequest> previous_;
 	};
 
 	[[nodiscard]] bool ApplyRequestedWeight(
 		FT_Library a_library,
-		FT_Face    a_face) noexcept;
-	[[nodiscard]] std::optional<WeightAxis> InspectWeightAxis(
+		FT_Face    a_face,
+		std::span<const std::uint8_t> a_fontBytes) noexcept;
+	[[nodiscard]] FontInspection InspectFont(
 		std::span<const std::uint8_t> a_fontBytes) noexcept;
 }

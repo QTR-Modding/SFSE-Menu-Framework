@@ -123,6 +123,26 @@ namespace SFSEMenuFramework
 				&Model::InterfaceV4::UnregisterHudElement>();
 		}
 
+		[[nodiscard]] inline const Model::InterfaceV5* RequestInterfaceV5() noexcept
+		{
+			return RequestValidatedInterface<Model::InterfaceV5,
+				Model::INTERFACE_VERSION_5,
+				&Model::InterfaceV5::RegisterPanel,
+				&Model::InterfaceV5::RegisterWindow,
+				&Model::InterfaceV5::GetMainWindow,
+				&Model::InterfaceV5::IsAnyBlockingWindowOpened,
+				&Model::InterfaceV5::SetHotkeyEnabled,
+				&Model::InterfaceV5::IsHotkeyEnabled,
+				&Model::InterfaceV5::RegisterEvent,
+				&Model::InterfaceV5::UnregisterEvent,
+				&Model::InterfaceV5::RegisterInputEvent,
+				&Model::InterfaceV5::UnregisterInputEvent,
+				&Model::InterfaceV5::RegisterHudElement,
+				&Model::InterfaceV5::UnregisterHudElement,
+				&Model::InterfaceV5::PushFont,
+				&Model::InterfaceV5::PopFont>();
+		}
+
 		[[nodiscard]] inline Model::ImGuiLayout GetImGuiLayout() noexcept
 		{
 			return Model::ImGuiLayout{
@@ -350,6 +370,108 @@ namespace SFSEMenuFramework
 	[[nodiscard]] inline bool IsHudElementAPIAvailable() noexcept
 	{
 		return Detail::RequestInterfaceV4() != nullptr;
+	}
+
+	[[nodiscard]] inline bool IsFontAPIAvailable() noexcept
+	{
+		return Detail::RequestInterfaceV5() != nullptr;
+	}
+
+	[[nodiscard]] inline bool PushFont(std::string_view a_name) noexcept
+	{
+		if (!Detail::IsValidText(a_name, Model::MAXIMUM_FONT_NAME_LENGTH)) {
+			return false;
+		}
+		const auto* api = Detail::RequestInterfaceV5();
+		if (!api) {
+			return false;
+		}
+		const auto name = Detail::ToModelString(a_name);
+		return api->PushFont(&name);
+	}
+
+	[[nodiscard]] inline bool PopFont() noexcept
+	{
+		const auto* api = Detail::RequestInterfaceV5();
+		return api && api->PopFont();
+	}
+
+	class ScopedFont final
+	{
+	public:
+		explicit ScopedFont(std::string_view a_name) noexcept :
+			Pushed(PushFont(a_name))
+		{}
+		~ScopedFont() noexcept
+		{
+			if (Pushed) {
+				static_cast<void>(PopFont());
+			}
+		}
+
+		ScopedFont(const ScopedFont&) = delete;
+		ScopedFont(ScopedFont&&) = delete;
+		ScopedFont& operator=(const ScopedFont&) = delete;
+		ScopedFont& operator=(ScopedFont&&) = delete;
+
+		[[nodiscard]] explicit operator bool() const noexcept { return Pushed; }
+
+	private:
+		bool Pushed{};
+	};
+
+	namespace FontAwesome
+	{
+		inline constexpr std::string_view SolidFont{ "fa-solid-900.ttf" };
+		inline constexpr std::string_view RegularFont{ "fa-regular-400.ttf" };
+		inline constexpr std::string_view BrandsFont{ "fa-brands-400.ttf" };
+
+		[[nodiscard]] inline bool PushSolid() noexcept
+		{
+			return SFSEMenuFramework::PushFont(SolidFont);
+		}
+		[[nodiscard]] inline bool PushRegular() noexcept
+		{
+			return SFSEMenuFramework::PushFont(RegularFont);
+		}
+		[[nodiscard]] inline bool PushBrands() noexcept
+		{
+			return SFSEMenuFramework::PushFont(BrandsFont);
+		}
+		[[nodiscard]] inline bool Pop() noexcept
+		{
+			return SFSEMenuFramework::PopFont();
+		}
+
+		// The helper name and UTF-8 result behavior adapt SKSE Menu Framework 3
+		// at commit 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0).
+		// This port replaces codecvt and returns an empty string for invalid scalars.
+		[[nodiscard]] inline std::string UnicodeToUtf8(
+			unsigned int a_codepoint)
+		{
+			if (a_codepoint > 0x10FFFFU ||
+				(a_codepoint >= 0xD800U && a_codepoint <= 0xDFFFU)) {
+				return {};
+			}
+
+			std::string result;
+			if (a_codepoint <= 0x7FU) {
+				result.push_back(static_cast<char>(a_codepoint));
+			} else if (a_codepoint <= 0x7FFU) {
+				result.push_back(static_cast<char>(0xC0U | (a_codepoint >> 6U)));
+				result.push_back(static_cast<char>(0x80U | (a_codepoint & 0x3FU)));
+			} else if (a_codepoint <= 0xFFFFU) {
+				result.push_back(static_cast<char>(0xE0U | (a_codepoint >> 12U)));
+				result.push_back(static_cast<char>(0x80U | ((a_codepoint >> 6U) & 0x3FU)));
+				result.push_back(static_cast<char>(0x80U | (a_codepoint & 0x3FU)));
+			} else {
+				result.push_back(static_cast<char>(0xF0U | (a_codepoint >> 18U)));
+				result.push_back(static_cast<char>(0x80U | ((a_codepoint >> 12U) & 0x3FU)));
+				result.push_back(static_cast<char>(0x80U | ((a_codepoint >> 6U) & 0x3FU)));
+				result.push_back(static_cast<char>(0x80U | (a_codepoint & 0x3FU)));
+			}
+			return result;
+		}
 	}
 
 	[[nodiscard]] inline bool SetSection(std::string_view a_section)

@@ -8,7 +8,8 @@ The implementation is organized by responsibility:
 - `api`: exported interface tables and the single DLL query entry point.
 - `runtime`: lifecycle/HUD dispatch, panel/window registration, callback snapshots, and consumer validation.
 - `config`: framework settings, persistence, and root-menu visibility.
-- `appearance`: font discovery/rasterization and theme discovery/application.
+- `appearance`: live font/theme ownership; `appearance/fonts` separates font
+  discovery, glyph ranges, atlas construction, and consumer stack isolation.
 - `ui`: the framework control panel and settings window.
 - `input`: the game-input capture hook, consumer input callbacks, and keyboard suppression handoff.
 - `lifecycle`: framework startup and ownership of game input, cursor, pause, and blur.
@@ -41,6 +42,14 @@ Within `rendering`, `RenderHooks.cpp` owns the Scaleform render-pass seam and
 transactional vtable patching, while `D3D12CommandListHooks.cpp` owns the
 command-list hooks, Streamline/native-device validation, self-test, and render
 region tracking.
+
+Within `appearance/fonts`, `FontCatalog.cpp` validates and discovers files and
+their sidecars, `GlyphRanges.cpp` builds optional Unicode coverage,
+`FontBuildPlan.cpp` selects assets and fallback roles, and `FontComposer.cpp`
+performs Dear ImGui composition and validation. `FontAtlasBuilder.cpp` owns the
+explicit retry ladder, while `ConsumerFontScope.cpp` contains each plugin
+callback's font-stack mutations. `appearance/FontManager.cpp` only coordinates
+live generation replacement and GPU upload.
 
 Internal headers expose only the contracts required across these units.
 Registry storage and lifecycle state remain private to their owning translation

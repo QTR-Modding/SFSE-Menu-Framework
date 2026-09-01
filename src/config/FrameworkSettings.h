@@ -33,6 +33,22 @@ namespace SFSEMenuFramework::FrameworkSettings
 	using MenuStyleName = std::array<char, 64>;
 	using FontFileName = std::array<char, 64>;
 
+	struct GlyphCoverage final
+	{
+		bool Greek{};
+		bool Cyrillic{};
+		bool Vietnamese{};
+		bool Turkish{};
+		bool Thai{};
+		bool Korean{};
+		bool Japanese{};
+		bool ChineseSimplifiedCommon{};
+		bool ChineseFull{};
+
+		[[nodiscard]] friend constexpr bool operator==(
+			const GlyphCoverage&, const GlyphCoverage&) noexcept = default;
+	};
+
 	struct FontSettings final
 	{
 		FontFileName PrimaryFont{};
@@ -42,6 +58,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 		float        MaxFontSize{};
 		float        UIScale{};
 		FontRendering Rendering{};
+		GlyphCoverage Glyphs{};
 	};
 
 	struct SettingsSnapshot final

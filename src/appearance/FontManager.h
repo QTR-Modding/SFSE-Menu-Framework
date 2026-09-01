@@ -1,33 +1,19 @@
 #pragma once
 
+#include "appearance/fonts/FontCatalog.h"
 #include "config/FrameworkSettings.h"
 
-#include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 
 struct ImGuiIO;
 
 namespace SFSEMenuFramework::FontManager
 {
-	struct FontWeightAxis final
-	{
-		float Minimum{};
-		float Default{};
-		float Maximum{};
-	};
-
-	struct FontEntry final
-	{
-		std::string                   Name;
-		std::filesystem::path         Path;
-		std::optional<FontWeightAxis> WeightAxis;
-		bool                          WeightAxisInspected{};
-	};
+	using FontWeightAxis = Fonts::FontWeightAxis;
+	using FontEntry = Fonts::FontEntry;
 
 	struct ActiveFontInfo final
 	{
@@ -66,4 +52,6 @@ namespace SFSEMenuFramework::FontManager
 	[[nodiscard]] inline float GetActiveUIScale() noexcept {
 		return GetActiveInfo().Settings.UIScale; }
 	[[nodiscard]] std::string_view GetLastApplyError() noexcept;
+	[[nodiscard]] bool PushFont(std::string_view) noexcept;
+	[[nodiscard]] bool PopFont() noexcept;
 }

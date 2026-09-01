@@ -15,9 +15,11 @@ namespace SFSEMenuFramework::Model
 	inline constexpr std::uint32_t INTERFACE_VERSION_2 = 2;
 	inline constexpr std::uint32_t INTERFACE_VERSION_3 = 3;
 	inline constexpr std::uint32_t INTERFACE_VERSION_4 = 4;
+	inline constexpr std::uint32_t INTERFACE_VERSION_5 = 5;
 	inline constexpr std::uint32_t IMGUI_SOURCE_REVISION = 0x6F7B5D0E;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_ID_LENGTH = 255;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_TEXT_LENGTH = 255;
+	inline constexpr std::uint32_t MAXIMUM_FONT_NAME_LENGTH = 63;
 
 	using PanelHandle = std::uint64_t;
 	using EventHandle = std::uint64_t;
@@ -184,6 +186,8 @@ namespace SFSEMenuFramework::Model
 		HudElementHandle*) noexcept;
 	using UnregisterHudElementFunction = void(__stdcall*)(
 		HudElementHandle) noexcept;
+	using PushFontFunction = bool(__stdcall*)(const StringView*) noexcept;
+	using PopFontFunction = bool(__stdcall*)() noexcept;
 
 	struct Interface final
 	{
@@ -236,6 +240,26 @@ namespace SFSEMenuFramework::Model
 		UnregisterHudElementFunction      UnregisterHudElement{ nullptr };
 	};
 
+	struct InterfaceV5 final
+	{
+		std::uint32_t                     StructureSize{ sizeof(InterfaceV5) };
+		std::uint32_t                     Version{ INTERFACE_VERSION_5 };
+		RegisterPanelFunction             RegisterPanel{ nullptr };
+		RegisterWindowFunction            RegisterWindow{ nullptr };
+		GetMainWindowFunction             GetMainWindow{ nullptr };
+		IsAnyBlockingWindowOpenedFunction IsAnyBlockingWindowOpened{ nullptr };
+		SetHotkeyEnabledFunction          SetHotkeyEnabled{ nullptr };
+		IsHotkeyEnabledFunction           IsHotkeyEnabled{ nullptr };
+		RegisterEventFunction             RegisterEvent{ nullptr };
+		UnregisterEventFunction           UnregisterEvent{ nullptr };
+		RegisterInputEventFunction        RegisterInputEvent{ nullptr };
+		UnregisterInputEventFunction      UnregisterInputEvent{ nullptr };
+		RegisterHudElementFunction        RegisterHudElement{ nullptr };
+		UnregisterHudElementFunction      UnregisterHudElement{ nullptr };
+		PushFontFunction                  PushFont{ nullptr };
+		PopFontFunction                   PopFont{ nullptr };
+	};
+
 	using QueryInterfaceFunction = const Interface* (__stdcall*)(std::uint32_t) noexcept;
 
 	static_assert(sizeof(void*) == 8);
@@ -251,5 +275,7 @@ namespace SFSEMenuFramework::Model
 	static_assert(sizeof(InterfaceV2) == 56);
 	static_assert(sizeof(InterfaceV3) == 72);
 	static_assert(sizeof(InterfaceV4) == 104);
+	static_assert(sizeof(InterfaceV5) == 120);
+	static_assert(offsetof(InterfaceV5, PushFont) == sizeof(InterfaceV4));
 	static_assert(std::atomic<bool>::is_always_lock_free);
 }

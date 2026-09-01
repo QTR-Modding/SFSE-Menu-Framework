@@ -1,5 +1,6 @@
 #include "runtime/WindowManager.h"
 
+#include "appearance/fonts/ConsumerFontScope.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/ConsumerValidation.h"
 #include "runtime/EventManager.h"
@@ -255,6 +256,7 @@ namespace SFSEMenuFramework
 				if (window->BuiltInRender) {
 					window->BuiltInRender(a_context);
 				} else if (window->ExternalRender) {
+					ConsumerFontScope::CallbackScope callbackScope{ "window" };
 					window->ExternalRender(&a_context, window->UserData);
 				}
 				renderedBlockingWindow |= blocking;

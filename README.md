@@ -17,7 +17,8 @@ SFSE Menu Framework is a native Starfield Script Extender plugin for building Im
 - Press `Escape` while the panel is open to return to the game.
 
 Menu style, bindings, toggle modes, pause, background blur, font rendering mode,
-font face, variable font weight, logical font size, and manual UI scale are configurable through
+font face, variable font weight, logical font size, manual UI scale, and optional
+language glyph ranges are configurable through
 `Options > Open Settings` and
 `Data/SFSE/Plugins/SFSEMenuFramework.ini`.
 The bundled `CLASSIC`, `MODERN`, `SKYRIMDEFAULT`, and `STARFIELD` themes live in
@@ -27,11 +28,20 @@ The framework defaults to the `STARFIELD` theme and bundled Space Grotesk
 variable face at weight 300, 40 logical px, 100% UI scale, and FreeType
 auto-hinting. The variable face supports live weights from 300 through 700.
 Jost 400 Book and Jost 500 Medium are bundled as fallback faces.
+Jost 400 Book is also merged behind a selected primary to fill missing default
+text glyphs without replacing glyphs the primary already provides.
 ASCII-named direct-child `.ttf` and `.otf` files placed in
-`Data/SFSE/Plugins/Fonts` appear in the selector after the next game restart.
-Font rendering mode, face, variable weight, font size, and UI-scale previews
-apply live; weight, size, and scale commit when their controls are released, and `Save`
-persists the current preview.
+`Data/SFSE/Plugins/Fonts` appear in the selector and become available to
+consumer callbacks after the next game restart. The three bundled Font Awesome
+faces are reserved for the icon API and do not clutter the primary-font selector.
+An adjacent, same-stem JSON file can override one face's logical size; for
+`Example.ttf`, `Example.json` may contain `{ "fontSize": 22.0 }`. The
+case-sensitive `fontSize` value must be a positive finite JSON number. It is
+multiplied by the current UI scale, and an override above the 96 raster-pixel
+safety limit is ignored.
+Font rendering mode, face, variable weight, font size, UI scale, and glyph-range
+previews apply live; weight, size, and scale commit when their controls are
+released, and `Save` persists the current preview.
 If the selected font is missing or cannot build the framework tries the
 bundled Jost faces and then ImGui's embedded font. Custom font files are
 trusted local mod assets. A standard OpenType `wght` axis is detected
@@ -202,6 +212,40 @@ waits for its executing callback to finish and prevents another invocation;
 self-deletion lets the current invocation return normally. Registrations are
 usable from `kPostLoad`, before `kPostDataLoad`.
 
+Named text and Font Awesome faces can be selected inside any panel, window, or
+HUD render callback:
+
+```cpp
+void __stdcall RenderWithFonts() noexcept
+{
+    SFSEMenuFramework::ScopedFont text{ "Jost-400-Book" };
+    if (text) {
+        ImGui::TextUnformatted("Jost selected by filename stem");
+    }
+
+    SFSEMenuFramework::ScopedFont icon{
+        SFSEMenuFramework::FontAwesome::SolidFont };
+    if (icon) {
+        ImGui::TextUnformatted("\xEF\x83\xA9  Font Awesome solid umbrella");
+    }
+}
+```
+
+`PushFont` accepts a case-insensitive filename or filename stem and returns
+`false` when the face is unavailable or the call is outside an active consumer
+render callback. `PopFont` removes only a matching successful framework push;
+`ScopedFont` is the preferred balanced form. `FontAwesome::PushSolid`,
+`PushRegular`, `PushBrands`, and `Pop` provide the familiar SKSE Menu
+Framework-style convenience names; `FontAwesome::UnicodeToUtf8` converts an
+icon code point to text accepted by ImGui. The framework restores the font-stack
+baseline after each consumer callback so one plugin cannot leak a font into the
+next plugin's UI.
+
+The optional Greek, Cyrillic, Vietnamese, Turkish, Thai, Korean, Japanese,
+Simplified Chinese, and Full Chinese ranges control which glyphs are rasterized.
+They cannot add characters that the selected font file does not contain. The
+two Chinese choices are alternatives; Full uses substantially more atlas memory.
+
 Call panel and window registration from the SFSE `kPostLoad` message so it works
 regardless of DLL load order. Consumer projects must compile the four Dear ImGui
 core sources at version 1.90.8, commit
@@ -217,7 +261,8 @@ must not call ImGui. Render callbacks must balance every ImGui `Begin`/`End`
 and `Push`/`Pop` operation.
 The ImGui context and `ImGui::GetIO().Fonts` atlas address remain stable across
 live font changes, but cached `ImFont*` values do not. Consumers must reacquire
-font pointers inside every render callback.
+raw font pointers inside every render callback; the named font API performs that
+lookup against the current generation for every push.
 Because a registered page can render before `kPostDataLoad`, its callback must
 gate any data-dependent engine access at the consumer plugin's own lifecycle
 boundary.
@@ -250,9 +295,10 @@ available under its [MIT license](extern/imgui/LICENSE.txt).
 
 This project is a Starfield port of
 [SKSE Menu Framework 3 by SkyrimThiago at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775).
-Its MCP shell, window, event, input-event, and persistent-HUD APIs, settings
-presentation, theme schema and assets, font discovery and fallback flow, and
-modal-menu behavior are directly adapted under GPL-3.0-only.
+Its MCP shell, window, event, input-event, persistent-HUD, and named-font APIs,
+settings presentation, theme schema and assets, font discovery, glyph-range,
+fallback, and icon-composite flow, and modal-menu behavior are directly adapted
+under GPL-3.0-only.
 
 The DirectX 12 renderer, pre-`kPostDataLoad` Raw Input bridge, stable
 registration snapshots, live atlas transaction, and variable-font controls are
