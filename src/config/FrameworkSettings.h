@@ -95,12 +95,3 @@ namespace SFSEMenuFramework::FrameworkSettings
 	[[nodiscard]] bool SetMenuStyle(std::string_view a_name) noexcept;
 	[[nodiscard]] bool SetFontSettings(const FontSettings& a_settings) noexcept;
 }
-
-namespace SFSEMenuFramework::RootMenuConfig
-{
-	[[nodiscard]] bool Load() noexcept;
-	[[nodiscard]] bool IsFavorite(std::string_view a_menuName) noexcept;
-	[[nodiscard]] bool IsArchived(std::string_view a_menuName) noexcept;
-	[[nodiscard]] bool SetFavorite(std::string_view a_menuName, bool a_favorite) noexcept;
-	[[nodiscard]] bool SetArchived(std::string_view a_menuName, bool a_archived) noexcept;
-}

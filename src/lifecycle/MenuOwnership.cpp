@@ -1,7 +1,7 @@
-#include "MenuOwnership.h"
+#include "lifecycle/MenuOwnership.h"
 
-#include "FrameworkRuntime.h"
-#include "Win32Platform.h"
+#include "platform/win32/Win32Platform.h"
+#include "runtime/WindowManager.h"
 
 #include <atomic>
 #include <limits>

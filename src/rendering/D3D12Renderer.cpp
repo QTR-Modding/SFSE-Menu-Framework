@@ -1,8 +1,10 @@
-#include "D3D12Renderer.h"
+#include "rendering/D3D12Renderer.h"
 
-#include "Appearance.h"
-#include "FrameworkRuntime.h"
-#include "Win32Platform.h"
+#include "appearance/FontManager.h"
+#include "appearance/ThemeManager.h"
+#include "platform/win32/Win32Platform.h"
+#include "runtime/EventManager.h"
+#include "runtime/WindowManager.h"
 
 #include <backends/imgui_impl_dx12.h>
 #include <imgui.h>

@@ -1,5 +1,5 @@
-#include "MenuLifecycle.h"
-#include "RenderHooks.h"
+#include "lifecycle/MenuLifecycle.h"
+#include "rendering/RenderHooks.h"
 
 #include <SFSEMenuFramework/API.h>
 

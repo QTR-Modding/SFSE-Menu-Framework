@@ -1,12 +1,12 @@
-#include "MenuLifecycle.h"
+#include "lifecycle/MenuLifecycle.h"
 
-#include "D3D12Renderer.h"
-#include "Config.h"
-#include "InputCapture.h"
-#include "MenuOwnership.h"
-#include "UI.h"
-#include "Win32Platform.h"
-#include "FrameworkRuntime.h"
+#include "rendering/D3D12Renderer.h"
+#include "config/FrameworkSettings.h"
+#include "input/InputCapture.h"
+#include "lifecycle/MenuOwnership.h"
+#include "ui/McpWindow.h"
+#include "platform/win32/Win32Platform.h"
+#include "runtime/WindowManager.h"
 
 #include <atomic>
 
@@ -200,7 +200,8 @@ namespace SFSEMenuFramework::MenuLifecycle
 		InputCapture::ArmFunctionalCapture();
 		earlyInstallReady.store(true, std::memory_order_release);
 		logger::info(
-			"Mod Control Panel registered during plugin load; it becomes interactive once the Starfield window and renderer produce its first visible frame");
+			"Mod Control Panel registered during plugin load; it becomes interactive "
+			"once the Starfield window and renderer produce its first visible frame");
 		return true;
 	}
 

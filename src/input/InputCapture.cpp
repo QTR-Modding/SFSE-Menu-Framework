@@ -1,7 +1,7 @@
-#include "InputCapture.h"
+#include "input/InputCapture.h"
 
-#include "Config.h"
-#include "FrameworkRuntime.h"
+#include "config/FrameworkSettings.h"
+#include "runtime/WindowManager.h"
 
 #include <RE/B/BSInputDeviceManagerInput.h>
 
@@ -435,7 +435,8 @@ namespace SFSEMenuFramework::InputCapture
 				originalInputProcessor.store(nullptr, std::memory_order_release);
 			}
 			logger::critical(
-				"BSInputDeviceManager input hook verification failed (original matched {}, readback matched {}, rollback attempted {}, rollback verified {})",
+				"BSInputDeviceManager input hook verification failed "
+				"(original matched {}, readback matched {}, rollback attempted {}, rollback verified {})",
 				replacedAddress == originalAddress,
 				liveAddress == hookAddress,
 				rollbackAttempted,
