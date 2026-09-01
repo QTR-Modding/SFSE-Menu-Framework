@@ -1,3 +1,4 @@
+#include "rendering/RenderHooks.h"
 #include "rendering/RenderHooksInternal.h"
 
 #include "rendering/D3D12Renderer.h"
@@ -640,6 +641,12 @@ namespace SFSEMenuFramework::RenderHooks
 		commandListState.store(HookState::Ready, std::memory_order_release);
 		logger::info("D3D12 command-list hooks installed and self-tested");
 		return true;
+	}
+
+	bool HasTerminalRendererFailure() noexcept
+	{
+		return commandListState.load(std::memory_order_acquire) ==
+		       HookState::Failed;
 	}
 
 	void Detail::ResetRegion() noexcept

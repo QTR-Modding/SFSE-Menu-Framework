@@ -163,6 +163,27 @@ namespace
 		ImGui::SetCursorScreenPos(restoreCursor);
 	}
 
+	void RenderLiteralTextClipped(
+		std::string_view a_text,
+		const ImVec2&    a_minimum,
+		const ImVec2&    a_maximum)
+	{
+		if (a_text.empty() || a_maximum.x <= a_minimum.x ||
+			a_maximum.y <= a_minimum.y) {
+			return;
+		}
+
+		const auto* begin = a_text.data();
+		const auto* end = begin + a_text.size();
+		const auto size = ImGui::CalcTextSize(begin, end, false);
+		ImGui::RenderTextClippedEx(
+			ImGui::GetWindowDrawList(),
+			a_minimum,
+			a_maximum,
+			begin,
+			end,
+			&size);
+	}
 
 	void RenderNode(const MenuNodePointer& a_node)
 	{
@@ -235,11 +256,30 @@ namespace
 			});
 
 		for (const auto& root : archivedMenus) {
-			ImGui::PushID(root->Name.c_str());
-			if (ImGui::MenuItem(root->Name.c_str())) {
+			const auto* begin = root->Name.data();
+			const auto* end = begin + root->Name.size();
+			const auto textSize = ImGui::CalcTextSize(begin, end, false);
+			auto* window = ImGui::GetCurrentWindow();
+			const ImVec2 textMinimum{
+				window->DC.CursorPos.x,
+				window->DC.CursorPos.y + window->DC.CurrLineTextBaseOffset
+			};
+
+			ImGui::PushID(root.get());
+			const bool restore = ImGui::Selectable(
+				"##RestoreArchivedMenu",
+				false,
+				ImGuiSelectableFlags_SpanAvailWidth,
+				textSize);
+			RenderLiteralTextClipped(
+				root->Name,
+				textMinimum,
+				ImGui::GetItemRectMax());
+			ImGui::PopID();
+
+			if (restore) {
 				SetRootMenuArchived(root->Name, false);
 			}
-			ImGui::PopID();
 		}
 
 		if (archivedMenus.empty()) {
@@ -421,17 +461,35 @@ namespace
 
 				const bool favorite = SFSEMenuFramework::RootMenuConfig::IsFavorite(root->Name);
 				const bool passesFilter = rootFilter.PassFilter(root->Name.c_str());
-				const std::string headerLabel = root->Name + "##RootMenu-" + root->Name;
 				constexpr ImGuiTreeNodeFlags headerFlags =
-					static_cast<ImGuiTreeNodeFlags>(
-						ImGuiTreeNodeFlags_AllowOverlap) |
-					static_cast<ImGuiTreeNodeFlags>(
-						ImGuiTreeNodeFlags_ClipLabelForTrailingButton);
-				const bool headerOpen = passesFilter &&
-					ImGui::CollapsingHeader(headerLabel.c_str(), headerFlags);
-
+					ImGuiTreeNodeFlags_AllowOverlap;
+				bool headerOpen{};
 				if (passesFilter) {
+					auto* window = ImGui::GetCurrentWindow();
+					const auto& style = ImGui::GetStyle();
+					const ImVec2 textMinimum{
+						window->DC.CursorPos.x + ImGui::GetFontSize() +
+							style.FramePadding.x * 3.0F,
+						window->DC.CursorPos.y + (std::max)(
+							style.FramePadding.y,
+							window->DC.CurrLineTextBaseOffset)
+					};
+
+					ImGui::PushID(root.get());
+					headerOpen = ImGui::CollapsingHeader(
+						"##RootMenuHeader", headerFlags);
+					const auto headerMinimum = ImGui::GetItemRectMin();
+					const auto headerMaximum = ImGui::GetItemRectMax();
+					const float buttonSize = headerMaximum.y - headerMinimum.y;
+					RenderLiteralTextClipped(
+						root->Name,
+						textMinimum,
+						ImVec2{
+							headerMaximum.x - buttonSize * 2.0F,
+							headerMaximum.y
+						});
 					RenderRootMenuButtons(root->Name, favorite);
+					ImGui::PopID();
 				}
 				if (headerOpen) {
 					const auto children = root->Children.load(std::memory_order_acquire);

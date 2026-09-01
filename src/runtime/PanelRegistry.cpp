@@ -36,6 +36,22 @@ namespace SFSEMenuFramework
 			return a_text.Data && a_text.Size && a_text.Size <= a_maximumLength &&
 				!std::memchr(a_text.Data, '\0', a_text.Size);
 		}
+		[[nodiscard]] bool IsValidSection(
+			const Model::StringView& a_section) noexcept
+		{
+			return IsValidText(a_section, Model::MAXIMUM_PANEL_TEXT_LENGTH) &&
+				!std::memchr(a_section.Data, '/', a_section.Size);
+		}
+		[[nodiscard]] bool IsValidTitlePath(
+			const Model::StringView& a_title) noexcept
+		{
+			if (!IsValidText(a_title, Model::MAXIMUM_PANEL_TEXT_LENGTH)) {
+				return false;
+			}
+			const std::string_view title{ a_title.Data, a_title.Size };
+			return title.front() != '/' && title.back() != '/' &&
+				title.find("//") == std::string_view::npos;
+		}
 		[[nodiscard]] bool AddToMenuTree(
 			PanelRegistryState&                          a_registry,
 			const PanelRegistry::PanelPointer& a_panel)
@@ -122,8 +138,8 @@ namespace SFSEMenuFramework
 		}
 		if (!a_registration->Render ||
 			!IsValidText(a_registration->Id, Model::MAXIMUM_PANEL_ID_LENGTH) ||
-			!IsValidText(a_registration->Section, Model::MAXIMUM_PANEL_TEXT_LENGTH) ||
-			!IsValidText(a_registration->Title, Model::MAXIMUM_PANEL_TEXT_LENGTH)) {
+			!IsValidSection(a_registration->Section) ||
+			!IsValidTitlePath(a_registration->Title)) {
 			return Model::RegistrationResult::InvalidArgument;
 		}
 		if (!Detail::HasMatchingImGuiLayout(a_registration->ImGui)) {

@@ -93,6 +93,17 @@ The title passed to `AddSectionItem` may contain `/` separators. Combined
 with the current section, it recreates SKSE Menu Framework's arbitrary-depth
 menu path without changing the binary interface. Use `SetSection` for the
 top-level menu name and place nested path separators in `AddSectionItem`.
+Sections cannot contain `/`; title separators must occur only between nonempty
+path components. Malformed paths are rejected rather than normalized. Menu
+names containing `##` or `###` are displayed literally.
+
+The consumer interface is published before the first rendered frame so plugins
+can register once during SFSE `kPostLoad`. `IsInstalled()` reports that this ABI
+is present, not that the first renderer frame has completed. Renderer-dependent
+registrations are accepted while initialization is pending; after a permanent
+failure, new panel, window, lifecycle-event, and HUD registrations return
+`InterfaceUnavailable`. Input-event registration and all unregister operations
+remain available because they do not depend on frame rendering.
 
 Consumers can also register a separate, resizable ImGui window with the same
 SKSE Menu Framework-style control surface:

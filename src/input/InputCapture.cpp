@@ -363,6 +363,8 @@ namespace SFSEMenuFramework::InputCapture
 					// new frame while Starfield is walking this queue.
 					const bool dispatchConsumerInput =
 						InputEventManager::IsDispatchEnabled();
+					const auto blockingGenerationBeforeConsumers =
+						WindowManager::GetBlockingWindowOpenGeneration();
 					// Every registered callback sees the event in registration order.
 					// A true result consumes only that event; Starfield represents
 					// consumption with kStop instead of Skyrim's queue relinking.
@@ -374,9 +376,18 @@ namespace SFSEMenuFramework::InputCapture
 						}
 					}
 
+					// Persistent capture is armed only after a visible blocking
+					// frame. Suppress this batch only when a consumer opened a
+					// new blocking generation while handling it.
+					const auto blockingGenerationAfterConsumers =
+						WindowManager::GetBlockingWindowOpenGeneration();
+					const bool blockingOpenedDuringBatch =
+						blockingGenerationAfterConsumers != 0 &&
+						blockingGenerationAfterConsumers !=
+							blockingGenerationBeforeConsumers;
 					const bool captureBatch = modalAtBatchStart ||
 						modal.load(std::memory_order_acquire) ||
-						WindowManager::IsAnyBlockingWindowOpened();
+						blockingOpenedDuringBatch;
 					if (captureBatch || keyboardEdgeMatched || stateChanged) {
 						// SKSE Menu Framework sends an empty queue on an actual
 						// open/close edge. During ordinary modal capture it retains

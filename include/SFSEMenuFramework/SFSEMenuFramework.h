@@ -178,6 +178,21 @@ namespace SFSEMenuFramework
 			       a_text.find('\x1F') == std::string_view::npos;
 		}
 
+		[[nodiscard]] inline bool IsValidSection(
+			std::string_view a_section) noexcept
+		{
+			return IsValidText(a_section, Model::MAXIMUM_PANEL_TEXT_LENGTH) &&
+			       a_section.find('/') == std::string_view::npos;
+		}
+
+		[[nodiscard]] inline bool IsValidTitlePath(
+			std::string_view a_title) noexcept
+		{
+			return IsValidText(a_title, Model::MAXIMUM_PANEL_TEXT_LENGTH) &&
+			       a_title.front() != '/' && a_title.back() != '/' &&
+			       a_title.find("//") == std::string_view::npos;
+		}
+
 		[[nodiscard]] inline Model::StringView ToModelString(
 			std::string_view a_text) noexcept
 		{
@@ -402,7 +417,7 @@ namespace SFSEMenuFramework
 
 	[[nodiscard]] inline bool SetSection(std::string_view a_section)
 	{
-		if (!Detail::IsValidText(a_section, Model::MAXIMUM_PANEL_TEXT_LENGTH)) {
+		if (!Detail::IsValidSection(a_section)) {
 			return false;
 		}
 
@@ -424,9 +439,8 @@ namespace SFSEMenuFramework
 		}
 
 		if (!a_renderFunction ||
-			!Detail::IsValidText(Detail::currentSection,
-				Model::MAXIMUM_PANEL_TEXT_LENGTH) ||
-			!Detail::IsValidText(a_title, Model::MAXIMUM_PANEL_TEXT_LENGTH)) {
+			!Detail::IsValidSection(Detail::currentSection) ||
+			!Detail::IsValidTitlePath(a_title)) {
 			return Model::RegistrationResult::InvalidArgument;
 		}
 
