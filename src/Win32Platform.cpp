@@ -1,9 +1,9 @@
 #include "Win32Platform.h"
 
+#include "Config.h"
 #include "D3D12Renderer.h"
-#include "FrameworkSettings.h"
+#include "FrameworkRuntime.h"
 #include "InputCapture.h"
-#include "WindowManager.h"
 
 #include <backends/imgui_impl_win32.h>
 #include <imgui.h>
@@ -63,13 +63,24 @@ namespace SFSEMenuFramework::Win32Platform
 			LPARAM LParam{ 0 };
 		};
 
+		struct RawMouseBatch final
+		{
+			std::array<QueuedWindowMessage, rawMouseMessageCapacity> Messages{};
+			std::size_t Count{};
+
+			void Push(HWND a_window, UINT a_message, WPARAM a_wParam, LPARAM a_lParam) noexcept
+			{
+				if (Count < Messages.size()) {
+					Messages[Count++] = { a_window, a_message, a_wParam, a_lParam };
+				}
+			}
+		};
+
 		struct InputQueueState final
 		{
 			std::mutex                                          Mutex;
 			std::array<QueuedWindowMessage, inputQueueCapacity> Messages{};
 			std::size_t                                         Count{ 0 };
-			std::uint64_t                                       DroppedSinceDrain{ 0 };
-			std::uint64_t                                       OverflowResetsSinceDrain{ 0 };
 			bool                                                ResetRequested{ true };
 		};
 
@@ -77,8 +88,6 @@ namespace SFSEMenuFramework::Win32Platform
 		{
 			std::array<QueuedWindowMessage, inputQueueCapacity> Messages{};
 			std::size_t                                         Count{ 0 };
-			std::uint64_t                                       Dropped{ 0 };
-			std::uint64_t                                       OverflowResets{ 0 };
 			std::uint64_t                                       StateGeneration{ 0 };
 			bool                                                ResetRequested{ false };
 		};
@@ -542,7 +551,7 @@ namespace SFSEMenuFramework::Win32Platform
 			const bool valid =
 				dik != 0 && dik < state.Down.size() && state.Down[dik] &&
 				::GetForegroundWindow() == a_window &&
-				InputCapture::IsKeyboardEdgeOperational() &&
+				InputCapture::IsOperational() &&
 				WindowManager::IsHotkeyEnabled() && mainWindow &&
 				!mainWindow->IsOpen.load(std::memory_order_acquire) &&
 				FrameworkSettings::GetToggleMode() ==
@@ -580,7 +589,7 @@ namespace SFSEMenuFramework::Win32Platform
 				}
 				return false;
 			}
-			if (wasDown || !InputCapture::IsKeyboardEdgeOperational()) {
+			if (wasDown || !InputCapture::IsOperational()) {
 				return false;
 			}
 
@@ -850,8 +859,6 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 
 			if (queue.Count == queue.Messages.size()) {
-				queue.DroppedSinceDrain += queue.Count + 1;
-				++queue.OverflowResetsSinceDrain;
 				InvalidateQueuedInput(queue);
 				return false;
 			}
@@ -879,23 +886,17 @@ namespace SFSEMenuFramework::Win32Platform
 				return false;
 			}
 
-			auto stagedMessages = queue.Messages;
-			auto stagedCount = queue.Count;
 			for (std::size_t index = 0; index < a_count; ++index) {
-				if (stagedCount != 0 &&
-					TryCoalesce(stagedMessages[stagedCount - 1], a_messages[index])) {
+				if (queue.Count != 0 &&
+					TryCoalesce(queue.Messages[queue.Count - 1], a_messages[index])) {
 					continue;
 				}
-				if (stagedCount == stagedMessages.size()) {
-					queue.DroppedSinceDrain += queue.Count + a_count;
-					++queue.OverflowResetsSinceDrain;
+				if (queue.Count == queue.Messages.size()) {
 					InvalidateQueuedInput(queue);
 					return false;
 				}
-				stagedMessages[stagedCount++] = a_messages[index];
+				queue.Messages[queue.Count++] = a_messages[index];
 			}
-			queue.Messages = stagedMessages;
-			queue.Count = stagedCount;
 			return true;
 		}
 
@@ -906,29 +907,13 @@ namespace SFSEMenuFramework::Win32Platform
 			std::scoped_lock lock{ queue.Mutex };
 			result.Count = queue.Count;
 			std::copy_n(queue.Messages.begin(), queue.Count, result.Messages.begin());
-			result.Dropped = queue.DroppedSinceDrain;
-			result.OverflowResets = queue.OverflowResetsSinceDrain;
 			result.ResetRequested = queue.ResetRequested;
 			result.StateGeneration =
 				inputStateGeneration.load(std::memory_order_acquire);
 
 			queue.Count = 0;
-			queue.DroppedSinceDrain = 0;
-			queue.OverflowResetsSinceDrain = 0;
 			queue.ResetRequested = false;
 			return result;
-		}
-
-		void ReportQueueTelemetry(const DrainedInput& a_input)
-		{
-			if (a_input.OverflowResets != 0) {
-				logger::warn(
-					"Win32 input queue overflow: dropped {} messages and reset {} batch(es) "
-					"(capacity {})",
-					a_input.Dropped,
-					a_input.OverflowResets,
-					inputQueueCapacity);
-			}
 		}
 
 		[[nodiscard]] std::uint32_t MouseButtonMask(
@@ -1081,25 +1066,6 @@ namespace SFSEMenuFramework::Win32Platform
 				static_cast<WORD>(a_state.Y));
 		}
 
-		void AppendRawMouseMessage(
-			std::array<QueuedWindowMessage, rawMouseMessageCapacity>& a_messages,
-			std::size_t& a_count,
-			HWND a_window,
-			UINT a_message,
-			WPARAM a_wParam,
-			LPARAM a_lParam) noexcept
-		{
-			if (a_count >= a_messages.size()) {
-				return;
-			}
-			a_messages[a_count++] = {
-				.Window = a_window,
-				.Message = a_message,
-				.WParam = a_wParam,
-				.LParam = a_lParam
-			};
-		}
-
 		[[nodiscard]] bool UpdateRawMousePosition(
 			HWND a_window,
 			const RAWMOUSE& a_mouse,
@@ -1165,8 +1131,7 @@ namespace SFSEMenuFramework::Win32Platform
 		}
 
 		void AppendRawButtonTransition(
-			std::array<QueuedWindowMessage, rawMouseMessageCapacity>& a_messages,
-			std::size_t& a_count,
+			RawMouseBatch& a_batch,
 			HWND a_window,
 			RawMouseState& a_state,
 			USHORT a_rawFlags,
@@ -1177,23 +1142,15 @@ namespace SFSEMenuFramework::Win32Platform
 			if ((a_rawFlags & a_binding.DownFlag) != 0) {
 				a_state.ButtonsDown |= a_buttonMask;
 				const auto keys = RawMouseKeyState(a_state.ButtonsDown);
-				AppendRawMouseMessage(
-					a_messages,
-					a_count,
-					a_window,
-					a_binding.DownMessage,
-					a_binding.XButton != 0 ? MAKEWPARAM(keys, a_binding.XButton) : keys,
+				a_batch.Push(a_window, a_binding.DownMessage,
+					a_binding.XButton ? MAKEWPARAM(keys, a_binding.XButton) : keys,
 					position);
 			}
 			if ((a_rawFlags & a_binding.UpFlag) != 0) {
 				a_state.ButtonsDown &= ~a_buttonMask;
 				const auto keys = RawMouseKeyState(a_state.ButtonsDown);
-				AppendRawMouseMessage(
-					a_messages,
-					a_count,
-					a_window,
-					a_binding.UpMessage,
-					a_binding.XButton != 0 ? MAKEWPARAM(keys, a_binding.XButton) : keys,
+				a_batch.Push(a_window, a_binding.UpMessage,
+					a_binding.XButton ? MAKEWPARAM(keys, a_binding.XButton) : keys,
 					position);
 			}
 		}
@@ -1220,55 +1177,39 @@ namespace SFSEMenuFramework::Win32Platform
 				return false;
 			}
 
-			std::array<QueuedWindowMessage, rawMouseMessageCapacity> messages{};
-			std::size_t count{};
+			RawMouseBatch batch;
 			const bool hasButtonsOrWheel = a_mouse.usButtonFlags != 0;
 			if (positionChanged || hasButtonsOrWheel) {
-				AppendRawMouseMessage(
-					messages,
-					count,
-					a_window,
-					WM_MOUSEMOVE,
-					RawMouseKeyState(state.ButtonsDown),
-					RawMousePositionParameter(state));
+				batch.Push(a_window, WM_MOUSEMOVE,
+					RawMouseKeyState(state.ButtonsDown), RawMousePositionParameter(state));
 			}
 
 			for (std::size_t index = 0; index < rawButtonBindings.size(); ++index) {
 				AppendRawButtonTransition(
-					messages, count, a_window, state, a_mouse.usButtonFlags,
+					batch, a_window, state, a_mouse.usButtonFlags,
 					1U << index, rawButtonBindings[index]);
 			}
 
 			const auto keys = RawMouseKeyState(state.ButtonsDown);
 			if ((a_mouse.usButtonFlags & RI_MOUSE_WHEEL) != 0) {
-				AppendRawMouseMessage(
-					messages,
-					count,
-					a_window,
-					WM_MOUSEWHEEL,
-					MAKEWPARAM(keys, a_mouse.usButtonData),
-					RawMousePositionParameter(state));
+				batch.Push(a_window, WM_MOUSEWHEEL,
+					MAKEWPARAM(keys, a_mouse.usButtonData), RawMousePositionParameter(state));
 			}
 			if ((a_mouse.usButtonFlags & RI_MOUSE_HWHEEL) != 0) {
-				AppendRawMouseMessage(
-					messages,
-					count,
-					a_window,
-					WM_MOUSEHWHEEL,
-					MAKEWPARAM(keys, a_mouse.usButtonData),
-					RawMousePositionParameter(state));
+				batch.Push(a_window, WM_MOUSEHWHEEL,
+					MAKEWPARAM(keys, a_mouse.usButtonData), RawMousePositionParameter(state));
 			}
 
-			if (count == 0) {
+			if (batch.Count == 0) {
 				return true;
 			}
-			for (std::size_t index = 0; index < count; ++index) {
+			for (std::size_t index = 0; index < batch.Count; ++index) {
 				UpdateWindowThreadMouseState(
 					a_window,
-					messages[index].Message,
-					messages[index].WParam);
+					batch.Messages[index].Message,
+					batch.Messages[index].WParam);
 			}
-			if (!EnqueueRawMouseBatch(messages, count, generation)) {
+			if (!EnqueueRawMouseBatch(batch.Messages, batch.Count, generation)) {
 				state.ButtonsDown = 0;
 				ResetWindowThreadMouseState(a_window);
 				return false;
@@ -1387,19 +1328,16 @@ namespace SFSEMenuFramework::Win32Platform
 
 		void SendMouseReleaseMessages(HWND a_window)
 		{
-			ImGui_ImplWin32_WndProcHandler(a_window, WM_LBUTTONUP, 0, 0);
-			ImGui_ImplWin32_WndProcHandler(a_window, WM_RBUTTONUP, 0, 0);
-			ImGui_ImplWin32_WndProcHandler(a_window, WM_MBUTTONUP, 0, 0);
-			ImGui_ImplWin32_WndProcHandler(
-				a_window,
-				WM_XBUTTONUP,
-				MAKEWPARAM(0, XBUTTON1),
-				0);
-			ImGui_ImplWin32_WndProcHandler(
-				a_window,
-				WM_XBUTTONUP,
-				MAKEWPARAM(0, XBUTTON2),
-				0);
+			constexpr std::array releases{
+				std::pair{ WM_LBUTTONUP, WPARAM{} },
+				std::pair{ WM_RBUTTONUP, WPARAM{} },
+				std::pair{ WM_MBUTTONUP, WPARAM{} },
+				std::pair{ WM_XBUTTONUP, static_cast<WPARAM>(MAKEWPARAM(0, XBUTTON1)) },
+				std::pair{ WM_XBUTTONUP, static_cast<WPARAM>(MAKEWPARAM(0, XBUTTON2)) }
+			};
+			for (const auto [message, parameter] : releases) {
+				ImGui_ImplWin32_WndProcHandler(a_window, message, parameter, 0);
+			}
 		}
 
 		void ResetBackendInput(HWND a_window, bool a_acceptingInput)
@@ -1964,7 +1902,6 @@ namespace SFSEMenuFramework::Win32Platform
 		}
 
 		const auto input = DrainQueuedInput();
-		ReportQueueTelemetry(input);
 		bool acceptingInput = acceptInput.load(std::memory_order_acquire);
 		if (input.ResetRequested) {
 			ResetBackendInput(window, acceptingInput);

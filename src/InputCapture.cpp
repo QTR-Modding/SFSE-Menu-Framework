@@ -1,7 +1,7 @@
 #include "InputCapture.h"
 
-#include "FrameworkSettings.h"
-#include "WindowManager.h"
+#include "Config.h"
+#include "FrameworkRuntime.h"
 
 #include <RE/B/BSInputDeviceManagerInput.h>
 
@@ -130,13 +130,6 @@ namespace SFSEMenuFramework::InputCapture
 			}
 		}
 
-		[[nodiscard]] bool CaptureDeadlinePassed(
-			std::uint32_t a_deadline,
-			std::uint32_t a_now) noexcept
-		{
-			return static_cast<std::int32_t>(a_now - a_deadline) > 0;
-		}
-
 		void ExpirePendingKeyboardEdge() noexcept
 		{
 			auto pending = pendingKeyboardSuppression.load(std::memory_order_acquire);
@@ -145,7 +138,7 @@ namespace SFSEMenuFramework::InputCapture
 			}
 
 			const auto deadline = static_cast<std::uint32_t>(pending >> 32);
-			if (CaptureDeadlinePassed(deadline, ::GetTickCount())) {
+			if (static_cast<std::int32_t>(::GetTickCount() - deadline) > 0) {
 				static_cast<void>(pendingKeyboardSuppression.compare_exchange_strong(
 					pending,
 					0,
@@ -163,7 +156,7 @@ namespace SFSEMenuFramework::InputCapture
 			}
 
 			const auto deadline = static_cast<std::uint32_t>(pending >> 32);
-			if (CaptureDeadlinePassed(deadline, ::GetTickCount())) {
+			if (static_cast<std::int32_t>(::GetTickCount() - deadline) > 0) {
 				static_cast<void>(pendingKeyboardSuppression.compare_exchange_strong(
 						pending,
 						0,
@@ -465,11 +458,6 @@ namespace SFSEMenuFramework::InputCapture
 		captureArmed.store(true, std::memory_order_release);
 	}
 
-	void FlushDiagnostics() noexcept
-	{
-		ExpirePendingKeyboardEdge();
-	}
-
 	bool RequestKeyboardSuppression(
 		std::int32_t      a_expectedEventID,
 		KeyboardEdgeMatch a_match) noexcept
@@ -526,11 +514,6 @@ namespace SFSEMenuFramework::InputCapture
 	bool IsModal() noexcept
 	{
 		return modal.load(std::memory_order_acquire);
-	}
-
-	bool IsKeyboardEdgeOperational() noexcept
-	{
-		return IsOperational();
 	}
 
 	bool IsOperational() noexcept

@@ -2,7 +2,9 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace SFSEMenuFramework::FrameworkSettings
@@ -52,10 +54,8 @@ namespace SFSEMenuFramework::FrameworkSettings
 
 	[[nodiscard]] std::span<const Binding> GetKeyboardBindings() noexcept;
 	[[nodiscard]] std::span<const Binding> GetGamePadBindings() noexcept;
-	[[nodiscard]] std::string_view GetKeyboardBindingName(
-		std::uint32_t a_key) noexcept;
-	[[nodiscard]] std::string_view GetGamePadBindingName(
-		std::uint32_t a_key) noexcept;
+	[[nodiscard]] std::string_view GetKeyboardBindingName(std::uint32_t a_key) noexcept;
+	[[nodiscard]] std::string_view GetGamePadBindingName(std::uint32_t a_key) noexcept;
 
 	[[nodiscard]] std::uint32_t GetToggleKey() noexcept;
 	[[nodiscard]] ToggleMode    GetToggleMode() noexcept;
@@ -68,29 +68,30 @@ namespace SFSEMenuFramework::FrameworkSettings
 	[[nodiscard]] FontSettings  GetDefaultFontSettings() noexcept;
 	[[nodiscard]] SettingsSnapshot CaptureSnapshot() noexcept;
 	void RestoreSnapshot(const SettingsSnapshot& a_snapshot) noexcept;
-	[[nodiscard]] std::string_view GetFontFileNameView(
-		const FontFileName& a_name) noexcept;
+	[[nodiscard]] std::string_view GetFontFileNameView(const FontFileName& a_name) noexcept;
 	[[nodiscard]] bool EqualsIgnoreCaseAscii(
-		std::string_view a_left,
-		std::string_view a_right) noexcept;
+		std::string_view a_left, std::string_view a_right) noexcept;
 	[[nodiscard]] bool CopyFontFileName(
-		std::string_view a_name,
-		FontFileName&    a_result,
-		bool             a_validate = true) noexcept;
+		std::string_view a_name, FontFileName& a_result, bool a_validate = true) noexcept;
+	[[nodiscard]] bool NormalizeMenuStyleName(
+		std::string_view a_name, MenuStyleName& a_result) noexcept;
+	[[nodiscard]] bool NormalizeMenuStyleName(
+		std::wstring_view a_name, std::string& a_result);
+	[[nodiscard]] std::filesystem::path BuildGamePath(std::wstring_view a_relativePath);
 	[[nodiscard]] bool FontSettingsEqual(
-		const FontSettings& a_left,
-		const FontSettings& a_right,
-		float               a_tolerance = 0.0F,
-		bool                a_ignoreNameCase = false) noexcept;
-	[[nodiscard]] bool ValidateFontSettings(
-		const FontSettings& a_settings) noexcept;
+		const FontSettings& a_left, const FontSettings& a_right,
+		float a_tolerance = 0.0F, bool a_ignoreNameCase = false) noexcept;
+	[[nodiscard]] bool ValidateFontSettings(const FontSettings& a_settings) noexcept;
 
-	[[nodiscard]] bool SetToggleKey(std::uint32_t a_key) noexcept;
-	[[nodiscard]] bool SetToggleMode(ToggleMode a_mode) noexcept;
-	[[nodiscard]] bool SetToggleKeyGamePad(std::uint32_t a_key) noexcept;
-	[[nodiscard]] bool SetToggleModeGamePad(ToggleMode a_mode) noexcept;
-	void               SetFreezeTimeOnMenu(bool a_enabled) noexcept;
-	void               SetBlurBackgroundOnMenu(bool a_enabled) noexcept;
 	[[nodiscard]] bool SetMenuStyle(std::string_view a_name) noexcept;
 	[[nodiscard]] bool SetFontSettings(const FontSettings& a_settings) noexcept;
+}
+
+namespace SFSEMenuFramework::RootMenuConfig
+{
+	[[nodiscard]] bool Load() noexcept;
+	[[nodiscard]] bool IsFavorite(std::string_view a_menuName) noexcept;
+	[[nodiscard]] bool IsArchived(std::string_view a_menuName) noexcept;
+	[[nodiscard]] bool SetFavorite(std::string_view a_menuName, bool a_favorite) noexcept;
+	[[nodiscard]] bool SetArchived(std::string_view a_menuName, bool a_archived) noexcept;
 }

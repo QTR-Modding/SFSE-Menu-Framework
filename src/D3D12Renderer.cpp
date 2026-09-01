@@ -1,17 +1,17 @@
 #include "D3D12Renderer.h"
 
-#include "D3D12FontTexture.h"
-#include "EventManager.h"
-#include "FontManager.h"
-#include "ThemeManager.h"
+#include "Appearance.h"
+#include "FrameworkRuntime.h"
 #include "Win32Platform.h"
-#include "WindowManager.h"
 
 #include <backends/imgui_impl_dx12.h>
 #include <imgui.h>
 
 #include <atomic>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <type_traits>
 #include <utility>
@@ -44,12 +44,25 @@ namespace SFSEMenuFramework::D3D12Renderer
 			}
 		};
 
+		struct FontResources final
+		{
+			ComPtr<ID3D12DescriptorHeap> ShaderHeap;
+			ComPtr<ID3D12Resource>       Texture;
+			ComPtr<ID3D12Resource>       UploadBuffer;
+
+			void Reset() noexcept
+			{
+				UploadBuffer.Reset();
+				Texture.Reset();
+				ShaderHeap.Reset();
+			}
+		};
+
 		struct CompletionSlot final
 		{
 			std::uint32_t LastCompletedValue{ 0 };
 			std::uint32_t PendingValue{ 0 };
-			D3D12FontTexture::Resources FontResources;
-			bool          Pending{ false };
+			FontResources Resources;
 		};
 
 		struct RendererState final
@@ -59,7 +72,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			ComPtr<ID3D12DescriptorHeap>                   RenderTargetHeap;
 			ComPtr<ID3D12Resource>                         CompletionBuffer;
 			std::array<CompletionSlot, frameResourceCount> CompletionSlots{};
-			D3D12FontTexture::Resources                   ActiveFontResources;
+			FontResources                                  ActiveFontResources;
 			std::uint64_t                                  NextFrameIndex{ 0 };
 			ImGuiContext*                                  Context{ nullptr };
 			std::uint64_t                                  ContextGeneration{ 0 };
@@ -91,6 +104,179 @@ namespace SFSEMenuFramework::D3D12Renderer
 			       leftIdentity.Get() == rightIdentity.Get();
 		}
 
+		[[nodiscard]] bool CheckResult(HRESULT a_result, const char* a_operation) noexcept
+		{
+			if (SUCCEEDED(a_result)) {
+				return true;
+			}
+			logger::error(
+				"D3D12 {} failed with HRESULT 0x{:08X}",
+				a_operation,
+				static_cast<std::uint32_t>(a_result));
+			return false;
+		}
+
+		[[nodiscard]] D3D12_HEAP_PROPERTIES HeapProperties(D3D12_HEAP_TYPE a_type) noexcept
+		{
+			D3D12_HEAP_PROPERTIES result{};
+			result.Type = a_type;
+			result.CreationNodeMask = 1;
+			result.VisibleNodeMask = 1;
+			return result;
+		}
+
+		[[nodiscard]] D3D12_RESOURCE_DESC BufferDescription(std::uint64_t a_size) noexcept
+		{
+			D3D12_RESOURCE_DESC result{};
+			result.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			result.Width = a_size;
+			result.Height = 1;
+			result.DepthOrArraySize = 1;
+			result.MipLevels = 1;
+			result.SampleDesc.Count = 1;
+			result.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+			return result;
+		}
+
+		[[nodiscard]] bool CreateDescriptorHeap(
+			ID3D12Device*                  a_device,
+			D3D12_DESCRIPTOR_HEAP_TYPE     a_type,
+			D3D12_DESCRIPTOR_HEAP_FLAGS    a_flags,
+			ComPtr<ID3D12DescriptorHeap>& a_result) noexcept
+		{
+			D3D12_DESCRIPTOR_HEAP_DESC description{};
+			description.Type = a_type;
+			description.NumDescriptors = 1;
+			description.Flags = a_flags;
+			return CheckResult(
+				a_device->CreateDescriptorHeap(
+					&description,
+					IID_PPV_ARGS(a_result.GetAddressOf())),
+				"descriptor-heap creation");
+		}
+
+		// Adapted from Dear ImGui 1.90.8 imgui_impl_dx12.cpp at
+		// 6f7b5d0ee2fe9948ab871a530888a6dc5c960700 (MIT). Each live atlas gets
+		// its own heap; CompletionSlot keeps its resources alive through GPU use.
+		[[nodiscard]] bool CreateFontTexture(
+			ID3D12Device*              a_device,
+			ID3D12GraphicsCommandList* a_commandList,
+			const unsigned char*       a_pixels,
+			int                        a_width,
+			int                        a_height,
+			FontResources&             a_result) noexcept
+		{
+			a_result.Reset();
+			if (!a_device || !a_commandList ||
+				a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT || !a_pixels ||
+				a_width <= 0 || a_height <= 0 ||
+				a_width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+				a_height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
+				logger::error("Rejected invalid live font texture {}x{}", a_width, a_height);
+				return false;
+			}
+
+			const auto rowBytes = static_cast<std::uint64_t>(a_width) * 4;
+			const auto uploadPitch =
+				(rowBytes + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) &
+				~static_cast<std::uint64_t>(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+			const auto uploadSize = uploadPitch * static_cast<std::uint64_t>(a_height);
+			FontResources candidate;
+			if (!CreateDescriptorHeap(
+					a_device,
+					D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+					D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+					candidate.ShaderHeap) ||
+				candidate.ShaderHeap->GetGPUDescriptorHandleForHeapStart().ptr == 0) {
+				return false;
+			}
+
+			D3D12_RESOURCE_DESC texture{};
+			texture.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+			texture.Width = static_cast<UINT64>(a_width);
+			texture.Height = static_cast<UINT>(a_height);
+			texture.DepthOrArraySize = 1;
+			texture.MipLevels = 1;
+			texture.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			texture.SampleDesc.Count = 1;
+			texture.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+			const auto defaultHeap = HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+			if (!CheckResult(
+					a_device->CreateCommittedResource(
+						&defaultHeap,
+						D3D12_HEAP_FLAG_NONE,
+						&texture,
+						D3D12_RESOURCE_STATE_COPY_DEST,
+						nullptr,
+						IID_PPV_ARGS(candidate.Texture.GetAddressOf())),
+					"font-texture creation")) {
+				return false;
+			}
+
+			const auto uploadHeap = HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+			const auto upload = BufferDescription(uploadSize);
+			if (!CheckResult(
+					a_device->CreateCommittedResource(
+						&uploadHeap,
+						D3D12_HEAP_FLAG_NONE,
+						&upload,
+						D3D12_RESOURCE_STATE_GENERIC_READ,
+						nullptr,
+						IID_PPV_ARGS(candidate.UploadBuffer.GetAddressOf())),
+					"font-upload creation")) {
+				return false;
+			}
+
+			void* mapped{};
+			constexpr D3D12_RANGE noCpuReads{ 0, 0 };
+			if (!CheckResult(candidate.UploadBuffer->Map(0, &noCpuReads, &mapped), "font-upload map") ||
+				!mapped) {
+				return false;
+			}
+			for (int row = 0; row < a_height; ++row) {
+				std::memcpy(
+					static_cast<std::byte*>(mapped) +
+						static_cast<std::size_t>(row) * static_cast<std::size_t>(uploadPitch),
+					a_pixels + static_cast<std::size_t>(row) * static_cast<std::size_t>(rowBytes),
+					static_cast<std::size_t>(rowBytes));
+			}
+			const D3D12_RANGE cpuWrites{ 0, static_cast<SIZE_T>(uploadSize) };
+			candidate.UploadBuffer->Unmap(0, &cpuWrites);
+
+			D3D12_TEXTURE_COPY_LOCATION source{};
+			source.pResource = candidate.UploadBuffer.Get();
+			source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+			source.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			source.PlacedFootprint.Footprint.Width = static_cast<UINT>(a_width);
+			source.PlacedFootprint.Footprint.Height = static_cast<UINT>(a_height);
+			source.PlacedFootprint.Footprint.Depth = 1;
+			source.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(uploadPitch);
+			D3D12_TEXTURE_COPY_LOCATION destination{};
+			destination.pResource = candidate.Texture.Get();
+			destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			a_commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+
+			D3D12_RESOURCE_BARRIER barrier{};
+			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barrier.Transition.pResource = candidate.Texture.Get();
+			barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+			a_commandList->ResourceBarrier(1, &barrier);
+
+			D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+			view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			view.Texture2D.MipLevels = 1;
+			a_device->CreateShaderResourceView(
+				candidate.Texture.Get(),
+				&view,
+				candidate.ShaderHeap->GetCPUDescriptorHandleForHeapStart());
+			a_result = std::move(candidate);
+			return true;
+		}
+
 		void ResetInitialization(RendererState& a_state)
 		{
 			if (Win32Platform::HasLiveBackend()) {
@@ -113,8 +299,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 			a_state.RenderTargetHeap.Reset();
 			a_state.ActiveFontResources.Reset();
 			for (auto& slot : a_state.CompletionSlots) {
-				slot.FontResources.Reset();
-				slot.Pending = false;
+				slot.Resources.Reset();
+				slot.PendingValue = 0;
 			}
 			a_state.ShaderHeap.Reset();
 			a_state.CompletionBuffer.Reset();
@@ -126,13 +312,12 @@ namespace SFSEMenuFramework::D3D12Renderer
 			std::size_t    a_slot,
 			std::uint32_t& a_value)
 		{
-			const auto        byteOffset = a_slot * sizeof(std::uint32_t);
+			const auto byteOffset = a_slot * sizeof(std::uint32_t);
 			const D3D12_RANGE readRange{ byteOffset, byteOffset + sizeof(std::uint32_t) };
-			void*             mappedData{};
+			void* mappedData{};
 			if (FAILED(a_state.CompletionBuffer->Map(0, &readRange, &mappedData)) || !mappedData) {
 				return false;
 			}
-
 			a_value = static_cast<const volatile std::uint32_t*>(mappedData)[a_slot];
 			constexpr D3D12_RANGE noCpuWrites{ 0, 0 };
 			a_state.CompletionBuffer->Unmap(0, &noCpuWrites);
@@ -152,24 +337,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 				return false;
 			}
 
-			D3D12_HEAP_PROPERTIES heapProperties{};
-			heapProperties.Type = D3D12_HEAP_TYPE_READBACK;
-			heapProperties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-			heapProperties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-			heapProperties.CreationNodeMask = 1;
-			heapProperties.VisibleNodeMask = 1;
-
-			D3D12_RESOURCE_DESC bufferDescription{};
-			bufferDescription.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-			bufferDescription.Width = frameResourceCount * sizeof(std::uint32_t);
-			bufferDescription.Height = 1;
-			bufferDescription.DepthOrArraySize = 1;
-			bufferDescription.MipLevels = 1;
-			bufferDescription.Format = DXGI_FORMAT_UNKNOWN;
-			bufferDescription.SampleDesc.Count = 1;
-			bufferDescription.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-			bufferDescription.Flags = D3D12_RESOURCE_FLAG_NONE;
-
+			const auto heapProperties = HeapProperties(D3D12_HEAP_TYPE_READBACK);
+			const auto bufferDescription =
+				BufferDescription(frameResourceCount * sizeof(std::uint32_t));
 			if (FAILED(a_state.Device->CreateCommittedResource(
 					&heapProperties,
 					D3D12_HEAP_FLAG_NONE,
@@ -190,7 +360,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 					return false;
 				}
 			}
-
 			return true;
 		}
 
@@ -198,19 +367,17 @@ namespace SFSEMenuFramework::D3D12Renderer
 		{
 			a_slot = static_cast<std::size_t>(a_state.NextFrameIndex % frameResourceCount);
 			auto& slot = a_state.CompletionSlots[a_slot];
-			if (!slot.Pending) {
+			if (!slot.PendingValue) {
 				return true;
 			}
-
 			std::uint32_t completedValue{};
 			if (!ReadCompletionValue(a_state, a_slot, completedValue) ||
 				completedValue != slot.PendingValue) {
 				return false;
 			}
-
 			slot.LastCompletedValue = completedValue;
-			slot.FontResources.Reset();
-			slot.Pending = false;
+			slot.Resources.Reset();
+			slot.PendingValue = 0;
 			return true;
 		}
 
@@ -221,6 +388,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 		{
 			auto& slot = a_state.CompletionSlots[a_slot];
 			slot.PendingValue = slot.LastCompletedValue + 1;
+			if (!slot.PendingValue) {
+				slot.PendingValue = 1;
+			}
 
 			D3D12_WRITEBUFFERIMMEDIATE_PARAMETER marker{};
 			marker.Dest = a_state.CompletionBuffer->GetGPUVirtualAddress() +
@@ -230,8 +400,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 				D3D12_WRITEBUFFERIMMEDIATE_MODE_MARKER_OUT;
 			a_commandList->WriteBufferImmediate(1, &marker, &mode);
 
-			slot.Pending = true;
-			slot.FontResources = a_state.ActiveFontResources;
+			slot.Resources = a_state.ActiveFontResources;
 			a_state.ActiveFontResources.UploadBuffer.Reset();
 			++a_state.NextFrameIndex;
 		}
@@ -240,7 +409,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		{
 			ID3D12Device*              Device{};
 			ID3D12GraphicsCommandList* CommandList{};
-			D3D12FontTexture::Resources Candidate;
+			FontResources              Candidate;
 		};
 
 		[[nodiscard]] bool BuildFontTexture(
@@ -251,8 +420,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			void*                            a_userData) noexcept
 		{
 			auto* context = static_cast<FontUploadContext*>(a_userData);
-			if (!context || !context->Device || !context->CommandList ||
-				!D3D12FontTexture::Create(
+			if (!context || !CreateFontTexture(
 					context->Device,
 					context->CommandList,
 					a_pixels,
@@ -281,47 +449,35 @@ namespace SFSEMenuFramework::D3D12Renderer
 			}
 
 			a_state.Device = a_device;
+			auto fail = [&a_state]() {
+				a_state.InitializationFailed = true;
+				ResetInitialization(a_state);
+				return false;
+			};
 			if (!InitializeCompletionBuffer(a_state)) {
-				a_state.InitializationFailed = true;
-				ResetInitialization(a_state);
-				return false;
+				return fail();
 			}
 
-			D3D12_DESCRIPTOR_HEAP_DESC shaderHeapDescription{};
-			shaderHeapDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-			shaderHeapDescription.NumDescriptors = 1;
-			shaderHeapDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-
-			if (FAILED(a_device->CreateDescriptorHeap(
-					&shaderHeapDescription,
-					IID_PPV_ARGS(a_state.ShaderHeap.GetAddressOf())))) {
-				logger::critical("Failed to create the ImGui shader descriptor heap");
-				a_state.InitializationFailed = true;
-				ResetInitialization(a_state);
-				return false;
+			if (!CreateDescriptorHeap(
+					a_device,
+					D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+					D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+					a_state.ShaderHeap)) {
+				return fail();
 			}
-
-			D3D12_DESCRIPTOR_HEAP_DESC renderTargetHeapDescription{};
-			renderTargetHeapDescription.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-			renderTargetHeapDescription.NumDescriptors = 1;
-			renderTargetHeapDescription.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-
-			if (FAILED(a_device->CreateDescriptorHeap(
-					&renderTargetHeapDescription,
-					IID_PPV_ARGS(a_state.RenderTargetHeap.GetAddressOf())))) {
-				logger::critical("Failed to create the ImGui render-target descriptor heap");
-				a_state.InitializationFailed = true;
-				ResetInitialization(a_state);
-				return false;
+			if (!CreateDescriptorHeap(
+					a_device,
+					D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
+					D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+					a_state.RenderTargetHeap)) {
+				return fail();
 			}
 
 			IMGUI_CHECKVERSION();
 			a_state.Context = ImGui::CreateContext();
 			if (!a_state.Context) {
 				logger::critical("Failed to create the ImGui context");
-				a_state.InitializationFailed = true;
-				ResetInitialization(a_state);
-				return false;
+				return fail();
 			}
 			a_state.ContextGeneration =
 				nextContextGeneration.fetch_add(1, std::memory_order_relaxed);
@@ -338,9 +494,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 				ImGuiConfigFlags_NoMouseCursorChange;
 			if (!FontManager::BuildDefaultAtlas(io)) {
 				logger::critical("Failed to build the configured ImGui font atlas");
-				a_state.InitializationFailed = true;
-				ResetInitialization(a_state);
-				return false;
+				return fail();
 			}
 			ThemeManager::Initialize();
 
@@ -354,16 +508,12 @@ namespace SFSEMenuFramework::D3D12Renderer
 					shaderCpuHandle,
 					shaderGpuHandle)) {
 				logger::critical("Failed to initialize the ImGui DirectX 12 backend");
-				a_state.InitializationFailed = true;
-				ResetInitialization(a_state);
-				return false;
+				return fail();
 			}
 
 			if (!ImGui_ImplDX12_CreateDeviceObjects()) {
 				logger::critical("Failed to create the ImGui DirectX 12 device objects");
-				a_state.InitializationFailed = true;
-				ResetInitialization(a_state);
-				return false;
+				return fail();
 			}
 			a_state.ActiveFontResources.Reset();
 			a_state.ActiveFontResources.ShaderHeap = a_state.ShaderHeap;

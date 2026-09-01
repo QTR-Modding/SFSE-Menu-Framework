@@ -1,0 +1,1064 @@
+
+// ---- Font manager ------------------------------------------------------------
+
+#include "Appearance.h"
+
+#include <FontVariation.h>
+
+#include <imgui.h>
+#include <imgui_internal.h>
+
+#include <algorithm>
+#include <charconv>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <limits>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+namespace SFSEMenuFramework
+{
+	namespace
+	{
+		[[nodiscard]] char LowerAscii(char a_character) noexcept
+		{
+			return a_character >= 'A' && a_character <= 'Z' ?
+				static_cast<char>(a_character + ('a' - 'A')) : a_character;
+		}
+
+		[[nodiscard]] bool LessName(
+			std::string_view a_left, std::string_view a_right,
+			bool a_ignoreCase) noexcept
+		{
+			return std::lexicographical_compare(
+				a_left.begin(), a_left.end(), a_right.begin(), a_right.end(),
+				[a_ignoreCase](char a_lhs, char a_rhs) {
+					return (a_ignoreCase ? LowerAscii(a_lhs) : a_lhs) <
+						(a_ignoreCase ? LowerAscii(a_rhs) : a_rhs);
+				});
+		}
+
+		template <class Entry, class ReadName>
+		void DiscoverFiles(
+			std::wstring_view a_relativeDirectory, std::string_view a_kind,
+			bool a_ignoreCase, std::vector<Entry>& a_entries, ReadName a_readName)
+		{
+			a_entries.clear();
+			const auto directory = FrameworkSettings::BuildGamePath(a_relativeDirectory);
+			if (directory.empty()) {
+				logger::warn("Could not resolve the SFSE Menu Framework {} directory", a_kind);
+				return;
+			}
+
+			std::error_code error;
+			std::filesystem::directory_iterator iterator{ directory, error }, end;
+			for (; !error && iterator != end; iterator.increment(error)) {
+				std::error_code entryError;
+				std::string name;
+				if (iterator->is_regular_file(entryError) && !entryError &&
+					a_readName(iterator->path(), name)) {
+					a_entries.push_back({ std::move(name), iterator->path() });
+				}
+			}
+			if (error) {
+				logger::warn("Could not fully enumerate the {} directory: {}", a_kind,
+					error.message());
+			}
+
+			const auto same = [a_ignoreCase](const Entry& a_left, const Entry& a_right) {
+				return a_ignoreCase ? FrameworkSettings::EqualsIgnoreCaseAscii(
+					a_left.Name, a_right.Name) : a_left.Name == a_right.Name;
+			};
+			std::sort(a_entries.begin(), a_entries.end(),
+				[a_ignoreCase, &same](const Entry& a_left, const Entry& a_right) {
+					return same(a_left, a_right) ?
+						a_left.Path.native() < a_right.Path.native() :
+						LessName(a_left.Name, a_right.Name, a_ignoreCase);
+				});
+			a_entries.erase(std::unique(a_entries.begin(), a_entries.end(), same),
+				a_entries.end());
+		}
+	}
+}
+
+namespace SFSEMenuFramework::FontManager
+{
+	namespace
+	{
+		// Font discovery, configured-primary selection, fallback behavior, the
+		// rebuild request/consume flow, and render-boundary atlas replacement
+		// directly adapt SKSE Menu Framework 3 src/FontManager.cpp,
+		// src/Hooks.cpp, and src/Config.cpp at commit
+		// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0).
+		// Selected-only loading, bounded validation, candidate-atlas validation,
+		// FreeType hinting, transactional atlas-content replacement, and DX12
+		// texture handoff are SFSE-specific.
+		constexpr wchar_t relativeFontDirectory[]{
+			L"Data\\SFSE\\Plugins\\Fonts"
+		};
+		constexpr std::string_view preferredFallbackFont{
+			"Jost-500-Medium.ttf"
+		};
+		constexpr std::string_view secondaryFallbackFont{
+			"Jost-400-Book.ttf"
+		};
+		constexpr std::uintmax_t minimumFontBytes = 100;
+		constexpr std::uintmax_t maximumFontBytes = 32 * 1024 * 1024;
+
+		struct FontSource final
+		{
+			FrameworkSettings::FontSettings Settings{};
+			std::optional<FontWeightAxis>    WeightAxis;
+			std::vector<std::uint8_t>        Bytes;
+			std::string                      ActiveName;
+			std::string                      FallbackReason;
+
+			[[nodiscard]] float RasterSize() const noexcept
+			{
+				return Settings.FontSizeMedium * Settings.UIScale;
+			}
+		};
+
+		struct State final
+		{
+			std::vector<FontEntry> Fonts;
+			std::optional<FrameworkSettings::FontSettings> PendingSettings;
+			std::optional<FontSource> ActiveSource;
+			std::string LastApplyError;
+		};
+
+		[[nodiscard]] State& GetState()
+		{
+			static auto* state = new State();
+			return *state;
+		}
+
+		[[nodiscard]] bool HasSupportedExtension(std::string_view a_name) noexcept
+		{
+			if (a_name.size() < 4) {
+				return false;
+			}
+			const auto extension = a_name.substr(a_name.size() - 4);
+			return FrameworkSettings::EqualsIgnoreCaseAscii(extension, ".ttf") ||
+			       FrameworkSettings::EqualsIgnoreCaseAscii(extension, ".otf");
+		}
+
+		[[nodiscard]] bool ConvertFontFileName(
+			std::wstring_view a_name, std::string& a_result)
+		{
+			if (a_name.empty() ||
+				a_name.size() >= FrameworkSettings::FontFileName{}.size()) {
+				return false;
+			}
+
+			a_result.clear();
+			a_result.reserve(a_name.size());
+			for (const auto character : a_name) {
+				const auto value = static_cast<std::uint32_t>(character);
+				if (value < 0x20 || value > 0x7E) {
+					a_result.clear();
+					return false;
+				}
+				a_result.push_back(static_cast<char>(value));
+			}
+			return HasSupportedExtension(a_result);
+		}
+
+		[[nodiscard]] bool ReadFontFile(const std::filesystem::path& a_path,
+			std::vector<std::uint8_t>& a_bytes);
+
+		void RefreshFonts()
+		{
+			auto& state = GetState();
+			DiscoverFiles(relativeFontDirectory, "font", true, state.Fonts,
+				[](const std::filesystem::path& a_path, std::string& a_name) {
+					return ConvertFontFileName(a_path.filename().native(), a_name);
+				});
+			logger::info("Discovered {} selectable font file(s)", state.Fonts.size());
+		}
+
+		[[nodiscard]] FontEntry* FindFont(std::string_view a_name) noexcept
+		{
+			for (auto& font : GetState().Fonts) {
+				if (FrameworkSettings::EqualsIgnoreCaseAscii(font.Name, a_name)) {
+					return &font;
+				}
+			}
+			return nullptr;
+		}
+
+		[[nodiscard]] bool ReadFontFile(const std::filesystem::path& a_path,
+			std::vector<std::uint8_t>& a_bytes)
+		{
+			std::error_code error;
+			if (!std::filesystem::is_regular_file(a_path, error) || error) {
+				return false;
+			}
+
+			const auto size = std::filesystem::file_size(a_path, error);
+			if (error || size <= minimumFontBytes || size > maximumFontBytes ||
+				size > static_cast<std::uintmax_t>(
+					(std::numeric_limits<int>::max)())) {
+				return false;
+			}
+
+			std::ifstream stream{ a_path, std::ios::binary };
+			if (!stream) {
+				return false;
+			}
+
+			a_bytes.resize(static_cast<std::size_t>(size));
+			stream.read(reinterpret_cast<char*>(a_bytes.data()),
+				static_cast<std::streamsize>(a_bytes.size()));
+			return stream &&
+			       stream.gcount() == static_cast<std::streamsize>(a_bytes.size());
+		}
+
+		void InspectWeightAxis(FontEntry& a_entry,
+			std::span<const std::uint8_t> a_bytes) noexcept
+		{
+			if (a_entry.WeightAxisInspected) {
+				return;
+			}
+			const auto axis = FontVariation::InspectWeightAxis(a_bytes);
+			if (axis) {
+				a_entry.WeightAxis = FontWeightAxis{
+					.Minimum = axis->Minimum,
+					.Default = axis->Default,
+					.Maximum = axis->Maximum
+				};
+			}
+			a_entry.WeightAxisInspected = true;
+		}
+
+		[[nodiscard]] bool HasPrintableAscii(const ImFont& a_font) noexcept
+		{
+			for (ImWchar character = 0x20; character <= 0x7E; ++character) {
+				if (!a_font.FindGlyphNoFallback(character)) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		void CopyAtlasConfiguration(
+			const ImFontAtlas& a_source, ImFontAtlas& a_destination) noexcept
+		{
+			a_destination.Flags = a_source.Flags;
+			a_destination.TexDesiredWidth = a_source.TexDesiredWidth;
+			a_destination.TexGlyphPadding = a_source.TexGlyphPadding;
+			a_destination.FontBuilderIO = a_source.FontBuilderIO;
+			a_destination.FontBuilderFlags = a_source.FontBuilderFlags;
+		}
+
+		void SwapAtlasContents(ImFontAtlas& a_live, ImFontAtlas& a_candidate) noexcept
+		{
+			// This field-for-field swap is intentionally coupled to the vendored
+			// Dear ImGui 1.90.8 ImFontAtlas layout. It installs the already-built
+			// and already-uploaded candidate without mutating the live atlas until
+			// every fallible operation has succeeded, while preserving io.Fonts'
+			// stable address for framework consumers.
+			using std::swap;
+			swap(a_live.Flags, a_candidate.Flags);
+			swap(a_live.TexID, a_candidate.TexID);
+			swap(a_live.TexDesiredWidth, a_candidate.TexDesiredWidth);
+			swap(a_live.TexGlyphPadding, a_candidate.TexGlyphPadding);
+			swap(a_live.TexReady, a_candidate.TexReady);
+			swap(a_live.TexPixelsUseColors, a_candidate.TexPixelsUseColors);
+			swap(a_live.TexPixelsAlpha8, a_candidate.TexPixelsAlpha8);
+			swap(a_live.TexPixelsRGBA32, a_candidate.TexPixelsRGBA32);
+			swap(a_live.TexWidth, a_candidate.TexWidth);
+			swap(a_live.TexHeight, a_candidate.TexHeight);
+			swap(a_live.TexUvScale, a_candidate.TexUvScale);
+			swap(a_live.TexUvWhitePixel, a_candidate.TexUvWhitePixel);
+			a_live.Fonts.swap(a_candidate.Fonts);
+			a_live.CustomRects.swap(a_candidate.CustomRects);
+			a_live.ConfigData.swap(a_candidate.ConfigData);
+			for (std::size_t index = 0; index < std::size(a_live.TexUvLines); ++index) {
+				swap(a_live.TexUvLines[index], a_candidate.TexUvLines[index]);
+			}
+			swap(a_live.FontBuilderIO, a_candidate.FontBuilderIO);
+			swap(a_live.FontBuilderFlags, a_candidate.FontBuilderFlags);
+			swap(a_live.PackIdMouseCursors, a_candidate.PackIdMouseCursors);
+			swap(a_live.PackIdLines, a_candidate.PackIdLines);
+
+			for (auto* font : a_live.Fonts) {
+				font->ContainerAtlas = &a_live;
+			}
+			for (auto* font : a_candidate.Fonts) {
+				font->ContainerAtlas = &a_candidate;
+			}
+		}
+
+		[[nodiscard]] bool BuildAtlasFromSource(
+			ImFontAtlas& a_atlas, const FontSource& a_source, ImFont*& a_font)
+		{
+			a_font = nullptr;
+			a_atlas.Clear();
+
+			ImFontConfig configuration{};
+			configuration.PixelSnapH = false;
+			configuration.FontBuilderFlags = 0;
+			configuration.RasterizerDensity = 1.0F;
+			if (a_source.Bytes.empty()) {
+				configuration.SizePixels = a_source.RasterSize();
+				a_font = a_atlas.AddFontDefault(&configuration);
+			} else {
+				if (a_source.Bytes.size() > static_cast<std::size_t>(
+						(std::numeric_limits<int>::max)())) {
+					return false;
+				}
+				configuration.FontDataOwnedByAtlas = false;
+				a_font = a_atlas.AddFontFromMemoryTTF(
+					const_cast<std::uint8_t*>(a_source.Bytes.data()),
+					static_cast<int>(a_source.Bytes.size()),
+					a_source.RasterSize(),
+					&configuration,
+					a_atlas.GetGlyphRangesDefault());
+			}
+
+			const FontVariation::ScopedWeight weight{ a_source.WeightAxis ?
+				std::optional<float>{ a_source.Settings.FontWeight } : std::nullopt };
+			if (!a_font || !a_atlas.Build() || !HasPrintableAscii(*a_font)) {
+				a_font = nullptr;
+				a_atlas.Clear();
+				return false;
+			}
+			return true;
+		}
+
+		[[nodiscard]] bool TryFileSource(ImFontAtlas& a_atlas, FontEntry& a_entry,
+			const FrameworkSettings::FontSettings& a_settings,
+			FontSource& a_source, ImFont*& a_font)
+		{
+			a_source.Bytes.clear();
+			if (!ReadFontFile(a_entry.Path, a_source.Bytes)) {
+				logger::warn("Could not read font '{}'", a_entry.Name);
+				return false;
+			}
+			InspectWeightAxis(a_entry, a_source.Bytes);
+			a_source.Settings = a_settings;
+			a_source.WeightAxis = a_entry.WeightAxis;
+			if (a_source.WeightAxis) {
+				a_source.Settings.FontWeight = std::clamp(
+					a_source.Settings.FontWeight,
+					a_source.WeightAxis->Minimum,
+					a_source.WeightAxis->Maximum);
+			}
+
+			if (!BuildAtlasFromSource(a_atlas, a_source, a_font)) {
+				logger::warn(
+					"Font '{}' could not build a complete printable-ASCII atlas",
+					a_entry.Name);
+				a_source.Bytes.clear();
+				return false;
+			}
+			a_source.ActiveName = a_entry.Name;
+			return true;
+		}
+
+		[[nodiscard]] bool ResolveAndBuild(ImFontAtlas& a_atlas,
+			const FrameworkSettings::FontSettings& a_settings,
+			FontSource& a_source, ImFont*& a_font)
+		{
+			a_source = FontSource{};
+			const std::string_view configuredName{ a_settings.PrimaryFont.data() };
+			const auto tryName = [&](std::string_view a_name) {
+				auto* font = FindFont(a_name);
+				return font && TryFileSource(
+					a_atlas, *font, a_settings, a_source, a_font);
+			};
+
+			const bool configuredFound = FindFont(configuredName) != nullptr;
+			if (configuredFound && tryName(configuredName)) {
+				return true;
+			}
+			a_source.FallbackReason = configuredFound ?
+				"Configured font could not be built; using a fallback." :
+				"Configured font was not found; using a fallback.";
+
+			for (const auto fallbackName :
+				{ preferredFallbackFont, secondaryFallbackFont }) {
+				if (FrameworkSettings::EqualsIgnoreCaseAscii(
+						configuredName, fallbackName)) {
+					continue;
+				}
+				if (tryName(fallbackName)) {
+					logger::warn(
+						"{} Active fallback: '{}'",
+						a_source.FallbackReason,
+						a_source.ActiveName);
+					return true;
+				}
+			}
+
+			a_source.Settings = a_settings;
+			a_source.WeightAxis.reset();
+			a_source.Bytes.clear();
+			a_source.ActiveName = "ImGui embedded fallback";
+			if (!BuildAtlasFromSource(a_atlas, a_source, a_font)) {
+				logger::critical("Even ImGui's embedded font atlas could not be built");
+				return false;
+			}
+			logger::warn(
+				"{} Active fallback: ImGui embedded font.",
+				a_source.FallbackReason);
+			return true;
+		}
+
+		void CommitActive(FontSource&& a_source)
+		{
+			auto& state = GetState();
+			state.ActiveSource = std::move(a_source);
+			const auto& active = *state.ActiveSource;
+			if (active.WeightAxis) {
+				logger::info(
+					"Loaded ImGui font '{}' at weight {:.0f}, {:.1f} logical px, "
+					"{:.0f}% UI scale, {:.1f} raster px (FreeType native hinting)",
+					active.ActiveName,
+					active.Settings.FontWeight,
+					active.Settings.FontSizeMedium,
+					active.Settings.UIScale * 100.0F,
+					active.RasterSize());
+			} else {
+				logger::info(
+					"Loaded ImGui font '{}' at {:.1f} logical px, {:.0f}% UI scale, "
+					"{:.1f} raster px (FreeType native hinting)",
+					active.ActiveName,
+					active.Settings.FontSizeMedium,
+					active.Settings.UIScale * 100.0F,
+					active.RasterSize());
+			}
+		}
+
+		[[nodiscard]] LiveApplyResult ApplyFailed(std::string_view a_message)
+		{
+			auto& error = GetState().LastApplyError;
+			error = a_message;
+			logger::error("{}", error);
+			return LiveApplyResult::Failed;
+		}
+
+		[[nodiscard]] bool GetAtlasPixels(ImFontAtlas& a_atlas,
+			unsigned char*& a_pixels, int& a_width, int& a_height) noexcept
+		{
+			a_pixels = nullptr;
+			a_width = 0;
+			a_height = 0;
+			a_atlas.GetTexDataAsRGBA32(&a_pixels, &a_width, &a_height);
+			return a_pixels && a_width > 0 && a_height > 0 &&
+			       static_cast<std::uint64_t>(a_width) *
+				       static_cast<std::uint64_t>(a_height) * 4 <=
+				       (std::numeric_limits<std::size_t>::max)();
+		}
+
+	}
+
+	bool BuildDefaultAtlas(ImGuiIO& a_io)
+	{
+		RefreshFonts();
+		FontSource source;
+		ImFont* font{};
+		if (!ResolveAndBuild(*a_io.Fonts, FrameworkSettings::GetFontSettings(),
+				source, font)) {
+			return false;
+		}
+
+		a_io.FontDefault = font;
+		a_io.FontGlobalScale = 1.0F;
+		CommitActive(std::move(source));
+		return true;
+	}
+
+	bool RequestAtlasRebuild(
+		const FrameworkSettings::FontSettings& a_settings) noexcept
+	{
+		if (!FrameworkSettings::ValidateFontSettings(a_settings)) {
+			return false;
+		}
+
+		auto& state = GetState();
+		state.LastApplyError.clear();
+		if (state.ActiveSource && FrameworkSettings::FontSettingsEqual(
+				a_settings, state.ActiveSource->Settings)) {
+			state.PendingSettings.reset();
+			return true;
+		}
+		state.PendingSettings = a_settings;
+		return true;
+	}
+
+	bool HasPendingAtlasRebuild() noexcept
+	{
+		return GetState().PendingSettings.has_value();
+	}
+
+	LiveApplyResult ApplyPendingAtlas(
+		ImGuiIO& a_io, TextureBuilder a_textureBuilder, void* a_userData)
+	{
+		auto& state = GetState();
+		if (!state.PendingSettings) {
+			return LiveApplyResult::NoRequest;
+		}
+
+		const auto requested = *state.PendingSettings;
+		state.PendingSettings.reset();
+
+		auto* context = ImGui::GetCurrentContext();
+		if (!context || &context->IO != &a_io || !a_io.Fonts ||
+			context->WithinFrameScope || a_io.Fonts->Locked ||
+			!context->FontStack.empty()) {
+			return ApplyFailed("Could not apply the requested font at a safe "
+				"ImGui frame boundary; the previous font remains active.");
+		}
+
+		ImFontAtlas candidateAtlas;
+		CopyAtlasConfiguration(*a_io.Fonts, candidateAtlas);
+		RefreshFonts();
+
+		FontSource candidateSource;
+		ImFont* candidateFont{};
+		if (!ResolveAndBuild(candidateAtlas, requested, candidateSource,
+				candidateFont)) {
+			return ApplyFailed("Could not build the requested font; the previous "
+				"font remains active.");
+		}
+
+		unsigned char* candidatePixels{};
+		int candidateWidth{};
+		int candidateHeight{};
+		if (!GetAtlasPixels(candidateAtlas, candidatePixels, candidateWidth,
+				candidateHeight)) {
+			return ApplyFailed("Could not read the requested font atlas; the "
+				"previous font remains active.");
+		}
+
+		TextureBuildResult textureResult{};
+		if (!a_textureBuilder || !a_textureBuilder(candidatePixels, candidateWidth,
+				candidateHeight, textureResult, a_userData) ||
+			textureResult.TextureID == 0) {
+			return ApplyFailed("Could not upload the requested font; the previous "
+				"font remains active.");
+		}
+
+		candidateAtlas.SetTexID(reinterpret_cast<ImTextureID>(textureResult.TextureID));
+		SwapAtlasContents(*a_io.Fonts, candidateAtlas);
+		a_io.FontDefault = candidateFont;
+		a_io.FontGlobalScale = 1.0F;
+		ImGui::SetCurrentFont(candidateFont);
+
+		// candidateAtlas now owns the previous generation. Destroy it while the
+		// previous external font bytes are still retained by ActiveSource.
+		candidateAtlas.Clear();
+		CommitActive(std::move(candidateSource));
+		state.LastApplyError.clear();
+		return LiveApplyResult::Applied;
+	}
+
+	std::span<const FontEntry> GetFonts() noexcept
+	{
+		return GetState().Fonts;
+	}
+
+	std::optional<FontWeightAxis> GetWeightAxis(std::size_t a_fontIndex)
+	{
+		auto& fonts = GetState().Fonts;
+		if (a_fontIndex >= fonts.size()) {
+			return std::nullopt;
+		}
+		auto& font = fonts[a_fontIndex];
+		if (!font.WeightAxisInspected) {
+			std::vector<std::uint8_t> bytes;
+			if (!ReadFontFile(font.Path, bytes)) {
+				return std::nullopt;
+			}
+			InspectWeightAxis(font, bytes);
+		}
+		return font.WeightAxis;
+	}
+
+	ActiveFontInfo GetActiveInfo() noexcept
+	{
+		const auto& active = GetState().ActiveSource;
+		const auto* source = active ? &*active : nullptr;
+		if (!source) {
+			return { .Settings = FrameworkSettings::GetFontSettings() };
+		}
+		return { .Settings = source->Settings, .Name = source->ActiveName,
+			.WeightAxis = source->WeightAxis,
+			.FallbackReason = source->FallbackReason,
+			.RasterSize = source->RasterSize() };
+	}
+
+	std::string_view GetLastApplyError() noexcept
+	{
+		return GetState().LastApplyError;
+	}
+}
+
+// ---- Theme manager ------------------------------------------------------------
+
+#include <nlohmann/json.hpp>
+
+#include <cmath>
+
+namespace SFSEMenuFramework::ThemeManager
+{
+	namespace
+	{
+		// Theme discovery, the dark-style baseline, the JSON field schema, and
+		// #RRGGBBAA color behavior directly adapt SKSE Menu Framework 3
+		// include/Theme.h and src/Theme.cpp at commit
+		// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0).
+		// This port adds bounded paths, deterministic discovery, validation,
+		// temporary-style parsing, and next-frame application.
+		constexpr wchar_t relativeThemeDirectory[]{
+			L"Data/SFSE/Plugins/SFSEMenuFrameworkThemes"
+		};
+		constexpr std::uintmax_t maximumThemeBytes = 1024 * 1024;
+		constexpr double maximumStyleMagnitude = 10000.0;
+		constexpr std::size_t NO_THEME =
+			(std::numeric_limits<std::size_t>::max)();
+
+		struct ThemeSelection final
+		{
+			ImGuiStyle  BaseStyle;
+			std::size_t Index{ NO_THEME };
+			float       UIScale{ 1.0F };
+		};
+
+		struct State final
+		{
+			std::vector<ThemeEntry> Themes;
+			std::optional<ThemeSelection> Pending;
+			ThemeSelection Active;
+		};
+
+		[[nodiscard]] State& GetState()
+		{
+			static auto* state = new State();
+			return *state;
+		}
+
+		void RefreshThemes()
+		{
+			auto& state = GetState();
+			state.Pending.reset();
+			state.Active.Index = NO_THEME;
+			DiscoverFiles(relativeThemeDirectory, "theme", false, state.Themes,
+				[](const std::filesystem::path& a_path, std::string& a_name) {
+					if (a_path.extension() != ".json") {
+						return false;
+					}
+					if (!FrameworkSettings::NormalizeMenuStyleName(
+							a_path.stem().native(), a_name)) {
+						logger::warn("Ignoring a theme with an unsupported filename");
+						return false;
+					}
+					return true;
+				});
+		}
+
+		void BuildBaselineStyle(ImGuiStyle& a_style)
+		{
+			ImGui::StyleColorsDark(&a_style);
+			a_style.WindowRounding = 0.0F;
+			a_style.FrameRounding = 0.0F;
+			a_style.GrabRounding = 0.0F;
+			a_style.ScrollbarRounding = 0.0F;
+			a_style.ChildRounding = 0.0F;
+			a_style.PopupRounding = 0.0F;
+			a_style.WindowBorderSize = 1.0F;
+			a_style.ChildBorderSize = 1.0F;
+			a_style.FrameBorderSize = 0.0F;
+			a_style.PopupBorderSize = 1.0F;
+			a_style.TabBarBorderSize = 0.0F;
+			a_style.TabBorderSize = 0.0F;
+			a_style.FramePadding = ImVec2{ 4.0F, 3.0F };
+		}
+
+		void ScaleStyle(ImGuiStyle& a_style, float a_scale) noexcept
+		{
+			if (a_scale == 1.0F) {
+				return;
+			}
+
+			// ScaleAllSizes intentionally truncates most pixel dimensions, but
+			// truncating MouseCursorScale would turn any sub-100% setting into
+			// zero. Restore that one field at its precise scaled value.
+			const auto mouseCursorScale = a_style.MouseCursorScale * a_scale;
+			a_style.ScaleAllSizes(a_scale);
+			a_style.MouseCursorScale = mouseCursorScale;
+		}
+
+		void ApplySelection(const ThemeSelection& a_selection) noexcept
+		{
+			auto style = a_selection.BaseStyle;
+			ScaleStyle(style, a_selection.UIScale);
+			ImGui::GetStyle() = style;
+		}
+
+		[[nodiscard]] const nlohmann::json* FindValue(
+			const nlohmann::json& a_json, std::string_view a_key) noexcept
+		{
+			const auto iterator = a_json.find(a_key);
+			return iterator == a_json.end() ? nullptr : &*iterator;
+		}
+
+		[[nodiscard]] bool ReadValue(
+			const nlohmann::json& a_json, std::string_view a_key, bool& a_result,
+			double = 0.0, double = 0.0)
+		{
+			const auto* value = FindValue(a_json, a_key);
+			if (!value) {
+				return true;
+			}
+			if (!value->is_boolean()) {
+				return false;
+			}
+			a_result = value->get<bool>();
+			return true;
+		}
+
+		[[nodiscard]] bool ReadValue(
+			const nlohmann::json& a_json, std::string_view a_key, float& a_result,
+			double a_minimum = -maximumStyleMagnitude,
+			double a_maximum = maximumStyleMagnitude)
+		{
+			const auto* value = FindValue(a_json, a_key);
+			if (!value) {
+				return true;
+			}
+			if (!value->is_number()) {
+				return false;
+			}
+			const auto number = value->get<double>();
+			if (!std::isfinite(number) || number < a_minimum || number > a_maximum) {
+				return false;
+			}
+			a_result = static_cast<float>(number);
+			return true;
+		}
+
+		[[nodiscard]] bool ReadValue(
+			const nlohmann::json& a_json, std::string_view a_key, ImVec2& a_result,
+			double a_minimum = -maximumStyleMagnitude,
+			double a_maximum = maximumStyleMagnitude)
+		{
+			const auto* value = FindValue(a_json, a_key);
+			if (!value) {
+				return true;
+			}
+			if (!value->is_array() || value->size() != 2 ||
+				!(*value)[0].is_number() || !(*value)[1].is_number()) {
+				return false;
+			}
+			const auto x = (*value)[0].get<double>();
+			const auto y = (*value)[1].get<double>();
+			if (!std::isfinite(x) || !std::isfinite(y) ||
+				x < a_minimum || x > a_maximum ||
+				y < a_minimum || y > a_maximum) {
+				return false;
+			}
+			a_result = { static_cast<float>(x), static_cast<float>(y) };
+			return true;
+		}
+
+		[[nodiscard]] bool ParseColor(
+			std::string_view a_text,
+			ImVec4&          a_result) noexcept
+		{
+			if (a_text.size() != 9 || a_text.front() != '#') {
+				return false;
+			}
+
+			std::uint32_t value{};
+			const auto [end, error] = std::from_chars(
+				a_text.data() + 1, a_text.data() + a_text.size(), value, 16);
+			if (error != std::errc{} || end != a_text.data() + a_text.size()) {
+				return false;
+			}
+
+			constexpr float scale = 1.0F / 255.0F;
+			a_result = ImVec4{
+				static_cast<float>((value >> 24) & 0xFF) * scale,
+				static_cast<float>((value >> 16) & 0xFF) * scale,
+				static_cast<float>((value >> 8) & 0xFF) * scale,
+				static_cast<float>(value & 0xFF) * scale
+			};
+			return true;
+		}
+
+		[[nodiscard]] bool ApplyColors(
+			const nlohmann::json& a_json,
+			ImGuiStyle&           a_style)
+		{
+			const auto iterator = a_json.find("ImGuiCol");
+			if (iterator == a_json.end()) {
+				return true;
+			}
+			if (!iterator->is_object()) {
+				return false;
+			}
+
+			for (const auto& [name, value] : iterator->items()) {
+				if (!value.is_string()) {
+					return false;
+				}
+
+				ImVec4 color{};
+				if (!ParseColor(value.get_ref<const std::string&>(), color)) {
+					return false;
+				}
+
+				for (int index = 0; index < ImGuiCol_COUNT; ++index) {
+					if (name == ImGui::GetStyleColorName(index)) {
+						a_style.Colors[index] = color;
+						break;
+					}
+				}
+			}
+			return true;
+		}
+
+		template <class Value>
+		struct StyleField final
+		{
+			std::string_view Name;
+			Value ImGuiStyle::* Member;
+			double Minimum{ -maximumStyleMagnitude };
+			double Maximum{ maximumStyleMagnitude };
+		};
+		template <class Value, std::size_t Count>
+		[[nodiscard]] bool ReadStyleFields(
+			const nlohmann::json& a_json, ImGuiStyle& a_style,
+			const StyleField<Value> (&a_fields)[Count])
+		{
+			for (const auto& field : a_fields) {
+				if (!ReadValue(a_json, field.Name, a_style.*field.Member,
+						field.Minimum, field.Maximum)) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		[[nodiscard]] bool ApplyJsonFields(
+			const nlohmann::json& a_json,
+			ImGuiStyle&           a_style)
+		{
+			static constexpr StyleField<float> floatFields[]{
+				{ "Alpha", &ImGuiStyle::Alpha, 0.0, 1.0 }, { "DisabledAlpha", &ImGuiStyle::DisabledAlpha, 0.0, 1.0 },
+				{ "WindowRounding", &ImGuiStyle::WindowRounding }, { "WindowBorderSize", &ImGuiStyle::WindowBorderSize },
+				{ "ChildRounding", &ImGuiStyle::ChildRounding }, { "ChildBorderSize", &ImGuiStyle::ChildBorderSize },
+				{ "PopupRounding", &ImGuiStyle::PopupRounding }, { "PopupBorderSize", &ImGuiStyle::PopupBorderSize },
+				{ "FrameRounding", &ImGuiStyle::FrameRounding }, { "FrameBorderSize", &ImGuiStyle::FrameBorderSize },
+				{ "IndentSpacing", &ImGuiStyle::IndentSpacing }, { "ColumnsMinSpacing", &ImGuiStyle::ColumnsMinSpacing },
+				{ "ScrollbarSize", &ImGuiStyle::ScrollbarSize }, { "ScrollbarRounding", &ImGuiStyle::ScrollbarRounding },
+				{ "GrabMinSize", &ImGuiStyle::GrabMinSize }, { "GrabRounding", &ImGuiStyle::GrabRounding },
+				{ "LogSliderDeadzone", &ImGuiStyle::LogSliderDeadzone }, { "TabRounding", &ImGuiStyle::TabRounding },
+				{ "TabBorderSize", &ImGuiStyle::TabBorderSize },
+				{ "TabMinWidthForCloseButton", &ImGuiStyle::TabMinWidthForCloseButton, -maximumStyleMagnitude, static_cast<double>((std::numeric_limits<float>::max)()) },
+				{ "TabBarBorderSize", &ImGuiStyle::TabBarBorderSize }, { "TableAngledHeadersAngle", &ImGuiStyle::TableAngledHeadersAngle, -50.0, 50.0 },
+				{ "SeparatorTextBorderSize", &ImGuiStyle::SeparatorTextBorderSize }, { "MouseCursorScale", &ImGuiStyle::MouseCursorScale, 0.01, 100.0 },
+				{ "CurveTessellationTol", &ImGuiStyle::CurveTessellationTol, 0.01, maximumStyleMagnitude },
+				{ "CircleTessellationMaxError", &ImGuiStyle::CircleTessellationMaxError, 0.01, maximumStyleMagnitude }
+			};
+			static constexpr StyleField<ImVec2> vectorFields[]{
+				{ "WindowPadding", &ImGuiStyle::WindowPadding }, { "WindowMinSize", &ImGuiStyle::WindowMinSize, 1.0 },
+				{ "WindowTitleAlign", &ImGuiStyle::WindowTitleAlign }, { "FramePadding", &ImGuiStyle::FramePadding },
+				{ "ItemSpacing", &ImGuiStyle::ItemSpacing }, { "ItemInnerSpacing", &ImGuiStyle::ItemInnerSpacing },
+				{ "CellPadding", &ImGuiStyle::CellPadding }, { "TouchExtraPadding", &ImGuiStyle::TouchExtraPadding },
+				{ "TableAngledHeadersTextAlign", &ImGuiStyle::TableAngledHeadersTextAlign },
+				{ "ButtonTextAlign", &ImGuiStyle::ButtonTextAlign }, { "SelectableTextAlign", &ImGuiStyle::SelectableTextAlign },
+				{ "SeparatorTextAlign", &ImGuiStyle::SeparatorTextAlign }, { "SeparatorTextPadding", &ImGuiStyle::SeparatorTextPadding },
+				{ "DisplayWindowPadding", &ImGuiStyle::DisplayWindowPadding }, { "DisplaySafeAreaPadding", &ImGuiStyle::DisplaySafeAreaPadding }
+			};
+			static constexpr StyleField<bool> boolFields[]{
+				{ "AntiAliasedLines", &ImGuiStyle::AntiAliasedLines },
+				{ "AntiAliasedLinesUseTex", &ImGuiStyle::AntiAliasedLinesUseTex }, { "AntiAliasedFill", &ImGuiStyle::AntiAliasedFill }
+			};
+
+			return ReadStyleFields(a_json, a_style, floatFields) &&
+				ReadStyleFields(a_json, a_style, vectorFields) &&
+				ReadStyleFields(a_json, a_style, boolFields) &&
+				ApplyColors(a_json, a_style);
+		}
+
+		[[nodiscard]] bool LoadTheme(
+			const ThemeEntry& a_theme,
+			ImGuiStyle&       a_style)
+		{
+			std::error_code error;
+			const auto size = std::filesystem::file_size(a_theme.Path, error);
+			if (error || size == 0 || size > maximumThemeBytes) {
+				logger::warn(
+					"Theme '{}' has an invalid or unreadable file size",
+					a_theme.Name);
+				return false;
+			}
+
+			std::ifstream stream{ a_theme.Path, std::ios::binary };
+			if (!stream) {
+				logger::warn("Could not open theme '{}'", a_theme.Name);
+				return false;
+			}
+
+			const auto json =
+				nlohmann::json::parse(stream, nullptr, false, false);
+			if (json.is_discarded() || !json.is_object()) {
+				logger::warn("Theme '{}' is not valid JSON", a_theme.Name);
+				return false;
+			}
+
+			BuildBaselineStyle(a_style);
+			if (!ApplyJsonFields(json, a_style)) {
+				logger::warn("Theme '{}' contains an invalid style value", a_theme.Name);
+				return false;
+			}
+			return true;
+		}
+
+		[[nodiscard]] std::size_t FindTheme(std::string_view a_name) noexcept
+		{
+			const auto& themes = GetState().Themes;
+			for (std::size_t index = 0; index < themes.size(); ++index) {
+				if (themes[index].Name == a_name) {
+					return index;
+				}
+			}
+			return NO_THEME;
+		}
+
+		[[nodiscard]] bool ApplyImmediately(std::size_t a_index)
+		{
+			auto& state = GetState();
+			if (a_index >= state.Themes.size()) {
+				return false;
+			}
+
+			ThemeSelection selection;
+			if (!LoadTheme(state.Themes[a_index], selection.BaseStyle)) {
+				return false;
+			}
+			selection.Index = a_index;
+			selection.UIScale = state.Active.UIScale;
+			ApplySelection(selection);
+			state.Active = std::move(selection);
+			return true;
+		}
+
+		[[nodiscard]] bool TryFallbackTheme()
+		{
+			for (const auto fallback : { "SKYRIMDEFAULT", "CLASSIC" }) {
+				const auto index = FindTheme(fallback);
+				if (index != NO_THEME && ApplyImmediately(index)) {
+					return true;
+				}
+			}
+			return false;
+		}
+	}
+
+	void Initialize()
+	{
+		auto& state = GetState();
+		state.Active.UIScale = FrameworkSettings::GetFontSettings().UIScale;
+		RefreshThemes();
+
+		const auto configured = FrameworkSettings::GetMenuStyle();
+		const auto configuredIndex = FindTheme(configured.data());
+		if (configuredIndex != NO_THEME && ApplyImmediately(configuredIndex)) {
+			logger::info("Applied ImGui theme '{}'", state.Themes[configuredIndex].Name);
+			return;
+		}
+
+		if (configuredIndex == NO_THEME) {
+			logger::warn(
+				"Configured ImGui theme '{}' was not found",
+				configured.data());
+		}
+		if (TryFallbackTheme()) {
+			logger::info(
+				"Applied fallback ImGui theme '{}'",
+				state.Themes[state.Active.Index].Name);
+			return;
+		}
+
+		BuildBaselineStyle(state.Active.BaseStyle);
+		state.Active.Index = NO_THEME;
+		ApplySelection(state.Active);
+		logger::warn("No valid JSON theme was available; using the built-in dark style");
+	}
+
+	void ApplyPending() noexcept
+	{
+		auto& state = GetState();
+		if (!state.Pending) {
+			return;
+		}
+
+		ApplySelection(*state.Pending);
+		state.Active = std::move(*state.Pending);
+		state.Pending.reset();
+	}
+
+	std::span<const ThemeEntry> GetThemes() noexcept
+	{
+		return GetState().Themes;
+	}
+
+	std::size_t GetSelectedThemeIndex() noexcept
+	{
+		const auto& state = GetState();
+		if (state.Pending) {
+			return state.Pending->Index;
+		}
+		return state.Active.Index;
+	}
+
+	bool QueueTheme(std::size_t a_index)
+	{
+		auto& state = GetState();
+		if (a_index >= state.Themes.size()) {
+			return false;
+		}
+
+		ThemeSelection selection;
+		if (!LoadTheme(state.Themes[a_index], selection.BaseStyle) ||
+			!FrameworkSettings::SetMenuStyle(state.Themes[a_index].Name)) {
+			return false;
+		}
+		selection.Index = a_index;
+		selection.UIScale =
+			state.Pending ? state.Pending->UIScale : state.Active.UIScale;
+		state.Pending = std::move(selection);
+		return true;
+	}
+
+	bool QueueConfiguredTheme()
+	{
+		const auto configured = FrameworkSettings::GetMenuStyle();
+		const auto index = FindTheme(configured.data());
+		return index != NO_THEME && QueueTheme(index);
+	}
+
+	bool QueueUIScale(float a_scale) noexcept
+	{
+		if (!std::isfinite(a_scale) || a_scale < 0.75F || a_scale > 2.0F) {
+			return false;
+		}
+
+		auto& state = GetState();
+		auto selection = state.Pending ? *state.Pending : state.Active;
+		selection.UIScale = a_scale;
+		state.Pending = std::move(selection);
+		return true;
+	}
+}

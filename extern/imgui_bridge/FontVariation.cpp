@@ -13,59 +13,38 @@ namespace SFSEMenuFramework::FontVariation
 {
 	namespace
 	{
-		constexpr FT_ULong weightTag =
-			(static_cast<FT_ULong>('w') << 24) |
-			(static_cast<FT_ULong>('g') << 16) |
-			(static_cast<FT_ULong>('h') << 8) |
-			static_cast<FT_ULong>('t');
+		constexpr FT_ULong weightTag = FT_MAKE_TAG('w', 'g', 'h', 't');
 		constexpr double fixedPointScale = 65536.0;
 
 		thread_local std::optional<float> requestedWeight;
 
-		class LibraryHandle final
+		template <class T, auto Destroy>
+		class Handle final
 		{
 		public:
-			~LibraryHandle()
-			{
+			~Handle() {
 				if (Value) {
-					static_cast<void>(FT_Done_FreeType(Value));
+					static_cast<void>(Destroy(Value));
 				}
 			}
-
-			FT_Library Value{};
+			T Value{};
 		};
-
-		class FaceHandle final
-		{
-		public:
-			~FaceHandle()
-			{
-				if (Value) {
-					static_cast<void>(FT_Done_Face(Value));
-				}
-			}
-
-			FT_Face Value{};
-		};
+		using LibraryHandle = Handle<FT_Library, FT_Done_FreeType>;
+		using FaceHandle = Handle<FT_Face, FT_Done_Face>;
 
 		class MultipleMasterHandle final
 		{
 		public:
 			explicit MultipleMasterHandle(FT_Library a_library) noexcept :
-				library_(a_library)
-			{}
+				Library(a_library) {}
 
-			~MultipleMasterHandle()
-			{
+			~MultipleMasterHandle() {
 				if (Value) {
-					static_cast<void>(FT_Done_MM_Var(library_, Value));
+					static_cast<void>(FT_Done_MM_Var(Library, Value));
 				}
 			}
-
+			FT_Library Library{};
 			FT_MM_Var* Value{};
-
-		private:
-			FT_Library library_{};
 		};
 
 		[[nodiscard]] const FT_Var_Axis* FindWeightAxis(
@@ -83,11 +62,6 @@ namespace SFSEMenuFramework::FontVariation
 			return nullptr;
 		}
 
-		[[nodiscard]] float FromFixed(FT_Fixed a_value) noexcept
-		{
-			return static_cast<float>(
-				static_cast<double>(a_value) / fixedPointScale);
-		}
 	}
 
 	ScopedWeight::ScopedWeight(std::optional<float> a_weight) noexcept :
@@ -95,26 +69,18 @@ namespace SFSEMenuFramework::FontVariation
 	{
 		requestedWeight = a_weight;
 	}
-
-	ScopedWeight::~ScopedWeight()
-	{
-		requestedWeight = previous_;
-	}
+	ScopedWeight::~ScopedWeight() { requestedWeight = previous_; }
 
 	bool ApplyRequestedWeight(FT_Library a_library, FT_Face a_face) noexcept
 	{
-		if (!requestedWeight) {
-			return true;
+		if (!requestedWeight || !a_library || !a_face ||
+			!std::isfinite(*requestedWeight)) {
+			return !requestedWeight;
 		}
-		if (!a_library || !a_face || !std::isfinite(*requestedWeight)) {
-			return false;
-		}
-
 		MultipleMasterHandle variation{ a_library };
 		if (FT_Get_MM_Var(a_face, &variation.Value) != 0 || !variation.Value) {
 			return false;
 		}
-
 		FT_UInt weightIndex{};
 		const auto* weightAxis = FindWeightAxis(*variation.Value, &weightIndex);
 		if (!weightAxis || variation.Value->num_axis == 0 ||
@@ -122,7 +88,6 @@ namespace SFSEMenuFramework::FontVariation
 				(std::numeric_limits<std::size_t>::max)() / sizeof(FT_Fixed)) {
 			return false;
 		}
-
 		auto coordinates = std::unique_ptr<FT_Fixed[]>{
 			new (std::nothrow) FT_Fixed[variation.Value->num_axis]
 		};
@@ -137,9 +102,7 @@ namespace SFSEMenuFramework::FontVariation
 			static_cast<double>(*requestedWeight) * fixedPointScale));
 		coordinates[weightIndex] =
 			std::clamp(scaled, weightAxis->minimum, weightAxis->maximum);
-		return FT_Set_Var_Design_Coordinates(
-			a_face,
-			variation.Value->num_axis,
+		return FT_Set_Var_Design_Coordinates(a_face, variation.Value->num_axis,
 			coordinates.get()) == 0;
 	}
 
@@ -158,30 +121,23 @@ namespace SFSEMenuFramework::FontVariation
 		}
 
 		FaceHandle face;
-		if (FT_New_Memory_Face(
-				library.Value,
-				a_fontBytes.data(),
-				static_cast<FT_Long>(a_fontBytes.size()),
-				0,
-				&face.Value) != 0 ||
+		if (FT_New_Memory_Face(library.Value, a_fontBytes.data(),
+				static_cast<FT_Long>(a_fontBytes.size()), 0, &face.Value) != 0 ||
 			!face.Value) {
 			return std::nullopt;
 		}
-
 		MultipleMasterHandle variation{ library.Value };
-		if (FT_Get_MM_Var(face.Value, &variation.Value) != 0 ||
-			!variation.Value) {
+		if (FT_Get_MM_Var(face.Value, &variation.Value) != 0 || !variation.Value) {
 			return std::nullopt;
 		}
-
 		const auto* axis = FindWeightAxis(*variation.Value);
 		if (!axis || axis->minimum > axis->def || axis->def > axis->maximum) {
 			return std::nullopt;
 		}
-		return WeightAxis{
-			.Minimum = FromFixed(axis->minimum),
-			.Default = FromFixed(axis->def),
-			.Maximum = FromFixed(axis->maximum)
+		const auto fixed = [](FT_Fixed a_value) {
+			return static_cast<float>(static_cast<double>(a_value) / fixedPointScale);
 		};
+		return WeightAxis{
+			fixed(axis->minimum), fixed(axis->def), fixed(axis->maximum) };
 	}
 }

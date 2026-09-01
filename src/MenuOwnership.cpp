@@ -1,7 +1,7 @@
 #include "MenuOwnership.h"
 
+#include "FrameworkRuntime.h"
 #include "Win32Platform.h"
-#include "WindowManager.h"
 
 #include <atomic>
 #include <limits>
@@ -98,26 +98,6 @@ namespace SFSEMenuFramework::MenuOwnership
 				InputDisposition::PassThrough;
 		}
 
-		[[nodiscard]] bool WantsInputOwnership() noexcept
-		{
-			return WindowManager::IsAnyBlockingWindowOpened();
-		}
-
-		[[nodiscard]] bool WantsWindowOpen() noexcept
-		{
-			return WindowManager::IsAnyWindowOpen();
-		}
-
-		[[nodiscard]] bool WantsPauseOwnership(const ReconcileContext& a_context) noexcept
-		{
-			return a_context.PauseAllowed && WindowManager::ShouldPauseGame();
-		}
-
-		[[nodiscard]] bool WantsBlurOwnership() noexcept
-		{
-			return WindowManager::ShouldBlurBackground();
-		}
-
 		void MarkFaulted(OwnershipState& a_state, const char* a_reason)
 		{
 			if (!std::exchange(a_state.Faulted, true)) {
@@ -125,6 +105,14 @@ namespace SFSEMenuFramework::MenuOwnership
 			}
 			WindowManager::CloseAllBlockingWindows();
 			PublishDisposition(ReleaseDisposition(a_state));
+		}
+
+		void LoseInputLayer(OwnershipState& a_state, const char* a_reason)
+		{
+			a_state.InputManager = nullptr;
+			a_state.InputLayer = nullptr;
+			a_state.LayerDisabled = false;
+			MarkFaulted(a_state, a_reason);
 		}
 
 		template <class Owner>
@@ -147,10 +135,7 @@ namespace SFSEMenuFramework::MenuOwnership
 			if (a_state.InputLayer) {
 				if (auto* manager = RE::BSInputEnableManager::GetSingleton();
 					manager && manager != a_state.InputManager) {
-					a_state.InputManager = nullptr;
-					a_state.InputLayer = nullptr;
-					a_state.LayerDisabled = false;
-					MarkFaulted(a_state, "the BSInputEnableManager singleton changed");
+					LoseInputLayer(a_state, "the BSInputEnableManager singleton changed");
 				}
 			}
 			ValidateOwner(
@@ -181,11 +166,7 @@ namespace SFSEMenuFramework::MenuOwnership
 			}
 			if (a_state.InputLayer) {
 				if (inputManager != a_state.InputManager) {
-					a_state.InputManager = nullptr;
-					a_state.InputLayer = nullptr;
-					a_state.LayerDisabled = false;
-					MarkFaulted(
-						a_state,
+					LoseInputLayer(a_state,
 						"the retained input layer no longer belongs to the current manager");
 					return false;
 				}
@@ -219,11 +200,7 @@ namespace SFSEMenuFramework::MenuOwnership
 				return false;
 			}
 			if (manager != a_state.InputManager) {
-				a_state.InputManager = nullptr;
-				a_state.InputLayer = nullptr;
-				a_state.LayerDisabled = false;
-				MarkFaulted(
-					a_state,
+				LoseInputLayer(a_state,
 					"the retained input layer no longer belongs to the current manager");
 				return false;
 			}
@@ -420,17 +397,13 @@ namespace SFSEMenuFramework::MenuOwnership
 			return true;
 		}
 
-		void ReconcileOptionalEffects(
-			OwnershipState& a_state,
-			bool            a_pauseWanted,
-			bool            a_blurWanted)
+		void RecoverFault(OwnershipState& a_state)
 		{
-			static_cast<void>(SetPauseOwned(a_state, a_pauseWanted));
-			if (!a_state.Faulted) {
-				static_cast<void>(SetBlurOwned(a_state, a_blurWanted));
+			if (HasAnyActiveOwnership(a_state)) {
+				static_cast<void>(ReleaseAllOwnership(a_state));
 			}
+			PublishDisposition(ReleaseDisposition(a_state));
 		}
-
 	}
 
 	void Install()
@@ -460,17 +433,14 @@ namespace SFSEMenuFramework::MenuOwnership
 		auto& state = GetState();
 		ValidateOwners(state);
 		if (state.Faulted) {
-			if (HasAnyActiveOwnership(state)) {
-				static_cast<void>(ReleaseAllOwnership(state));
-			}
-			PublishDisposition(ReleaseDisposition(state));
+			RecoverFault(state);
 			return;
 		}
 
-		const bool windowOpen = WantsWindowOpen();
-		const bool wantsInput = WantsInputOwnership();
-		const bool wantsPause = WantsPauseOwnership(a_context);
-		const bool wantsBlur = WantsBlurOwnership();
+		const bool windowOpen = WindowManager::IsAnyWindowOpen();
+		const bool wantsInput = WindowManager::IsAnyBlockingWindowOpened();
+		const bool wantsPause = a_context.PauseAllowed && WindowManager::ShouldPauseGame();
+		const bool wantsBlur = WindowManager::ShouldBlurBackground();
 		if (a_context.Availability == HostAvailability::Transient) {
 			if (HasAnyActiveOwnership(state)) {
 				if (!ReleaseAllOwnership(state)) {
@@ -506,10 +476,7 @@ namespace SFSEMenuFramework::MenuOwnership
 		if (wantsInput && HasAnyCoreOwnership(state) && !HasCoreOwnership(state)) {
 			if (!ReleaseCoreOwnership(state)) {
 				if (state.Faulted) {
-					if (HasAnyActiveOwnership(state)) {
-						static_cast<void>(ReleaseAllOwnership(state));
-					}
-					PublishDisposition(ReleaseDisposition(state));
+					RecoverFault(state);
 				}
 				return;
 			}
@@ -518,10 +485,7 @@ namespace SFSEMenuFramework::MenuOwnership
 		if (wantsInput) {
 			if (!HasCoreOwnership(state) && !AcquireCoreOwnership(state)) {
 				if (state.Faulted) {
-					if (HasAnyActiveOwnership(state)) {
-						static_cast<void>(ReleaseAllOwnership(state));
-					}
-					PublishDisposition(ReleaseDisposition(state));
+					RecoverFault(state);
 				}
 				return;
 			}
@@ -529,12 +493,12 @@ namespace SFSEMenuFramework::MenuOwnership
 			return;
 		}
 
-		ReconcileOptionalEffects(state, wantsPause, wantsBlur);
+		static_cast<void>(SetPauseOwned(state, wantsPause));
+		if (!state.Faulted) {
+			static_cast<void>(SetBlurOwned(state, wantsBlur));
+		}
 		if (state.Faulted) {
-			if (HasAnyActiveOwnership(state)) {
-				static_cast<void>(ReleaseAllOwnership(state));
-			}
-			PublishDisposition(ReleaseDisposition(state));
+			RecoverFault(state);
 			return;
 		}
 

@@ -29,84 +29,54 @@ namespace SFSEMenuFramework
 
 		inline thread_local std::string currentSection;
 
-		[[nodiscard]] constexpr std::uint32_t GetImGuiConfigurationFlags() noexcept
-		{
-			std::uint32_t flags{};
 #if defined(IMGUI_DISABLE) || defined(IMGUI_DISABLE_OBSOLETE_FUNCTIONS) || \
 	defined(IMGUI_DISABLE_OBSOLETE_KEYIO) || defined(IMGUI_DISABLE_DEBUG_TOOLS) || \
-	defined(IMGUI_DISABLE_DEFAULT_ALLOCATORS)
-			flags |= 1U << 0U;
+	defined(IMGUI_DISABLE_DEFAULT_ALLOCATORS) || \
+	defined(IMGUI_USE_BGRA_PACKED_COLOR) || defined(IMGUI_USE_WCHAR32) || \
+	defined(IMGUI_OVERRIDE_DRAWVERT_STRUCT_LAYOUT) || defined(ImTextureID) || \
+	defined(ImDrawIdx) || defined(ImDrawCallback) || defined(IMGUI_USER_CONFIG) || \
+	defined(IMGUI_INCLUDE_IMGUI_USER_H) || defined(IMGUI_ENABLE_FREETYPE) || \
+	defined(IMGUI_ENABLE_FREETYPE_LUNASVG)
+#error SFSE Menu Framework consumers require the pinned default ImGui configuration
 #endif
-#if defined(IMGUI_USE_BGRA_PACKED_COLOR)
-			flags |= 1U << 1U;
-#endif
-#if defined(IMGUI_USE_WCHAR32)
-			flags |= 1U << 2U;
-#endif
-#if defined(IMGUI_OVERRIDE_DRAWVERT_STRUCT_LAYOUT) || defined(ImTextureID) || \
-	defined(ImDrawIdx) || defined(ImDrawCallback)
-			flags |= 1U << 3U;
-#endif
-#if defined(IMGUI_USER_CONFIG) || defined(IMGUI_INCLUDE_IMGUI_USER_H)
-			flags |= 1U << 4U;
-#endif
-#if defined(IMGUI_ENABLE_FREETYPE) || defined(IMGUI_ENABLE_FREETYPE_LUNASVG)
-			flags |= 1U << 5U;
-#endif
-			return flags;
-		}
-
-		static_assert(
-			GetImGuiConfigurationFlags() == 0,
-			"SFSE Menu Framework consumers require the pinned default ImGui configuration");
 
 		[[nodiscard]] inline Model::QueryInterfaceFunction GetQueryInterface() noexcept
 		{
-			const auto module = ::GetModuleHandleW(L"SFSEMenuFramework.dll");
-			if (!module) {
+			if (const auto module = ::GetModuleHandleW(L"SFSEMenuFramework.dll");
+				module) {
+				const auto procedure =
+					::GetProcAddress(module, "SFSEMenuFramework_QueryInterface");
+				static_assert(sizeof(procedure) == sizeof(Model::QueryInterfaceFunction));
+				return procedure ?
+					std::bit_cast<Model::QueryInterfaceFunction>(procedure) : nullptr;
+			} else {
 				return nullptr;
 			}
-
-			const auto procedure =
-				::GetProcAddress(module, "SFSEMenuFramework_QueryInterface");
-			static_assert(sizeof(procedure) == sizeof(Model::QueryInterfaceFunction));
-			return procedure ?
-				std::bit_cast<Model::QueryInterfaceFunction>(procedure) :
-				nullptr;
 		}
 
 		template <class Interface, std::uint32_t Version, auto... RequiredFunctions>
 		[[nodiscard]] inline const Interface* RequestValidatedInterface() noexcept
 		{
-			const auto query = GetQueryInterface();
-			if (!query) {
+			if (const auto query = GetQueryInterface(); !query) {
 				return nullptr;
+			} else {
+				const auto* result = reinterpret_cast<const Interface*>(query(Version));
+				return result && result->StructureSize >= sizeof(Interface) &&
+					result->Version == Version &&
+					((result->*RequiredFunctions) && ...) ? result : nullptr;
 			}
-
-			const auto* frameworkInterface =
-				reinterpret_cast<const Interface*>(query(Version));
-			if (!frameworkInterface ||
-				frameworkInterface->StructureSize < sizeof(Interface) ||
-				frameworkInterface->Version != Version ||
-				(!(frameworkInterface->*RequiredFunctions) || ...)) {
-				return nullptr;
-			}
-
-			return frameworkInterface;
 		}
 
 		[[nodiscard]] inline const Model::Interface* RequestInterface() noexcept
 		{
-			return RequestValidatedInterface<
-				Model::Interface,
+			return RequestValidatedInterface<Model::Interface,
 				Model::INTERFACE_VERSION,
 				&Model::Interface::RegisterPanel>();
 		}
 
 		[[nodiscard]] inline const Model::InterfaceV2* RequestInterfaceV2() noexcept
 		{
-			return RequestValidatedInterface<
-				Model::InterfaceV2,
+			return RequestValidatedInterface<Model::InterfaceV2,
 				Model::INTERFACE_VERSION_2,
 				&Model::InterfaceV2::RegisterPanel,
 				&Model::InterfaceV2::RegisterWindow,
@@ -118,8 +88,7 @@ namespace SFSEMenuFramework
 
 		[[nodiscard]] inline const Model::InterfaceV3* RequestInterfaceV3() noexcept
 		{
-			return RequestValidatedInterface<
-				Model::InterfaceV3,
+			return RequestValidatedInterface<Model::InterfaceV3,
 				Model::INTERFACE_VERSION_3,
 				&Model::InterfaceV3::RegisterPanel,
 				&Model::InterfaceV3::RegisterWindow,
@@ -137,7 +106,7 @@ namespace SFSEMenuFramework
 				.StructureSize = sizeof(Model::ImGuiLayout),
 				.VersionNumber = IMGUI_VERSION_NUM,
 				.SourceRevision = Model::IMGUI_SOURCE_REVISION,
-				.ConfigurationFlags = GetImGuiConfigurationFlags(),
+				.ConfigurationFlags = 0,
 				.IoSize = sizeof(ImGuiIO),
 				.StyleSize = sizeof(ImGuiStyle),
 				.ContextSize = sizeof(ImGuiContext),
@@ -152,8 +121,7 @@ namespace SFSEMenuFramework
 		}
 
 		[[nodiscard]] inline bool InvokeConsumer(
-			const Model::RenderContext* a_context,
-			void*                       a_userData) noexcept
+			const Model::RenderContext* a_context, void* a_userData) noexcept
 		{
 			if (!a_context ||
 				a_context->StructureSize < sizeof(Model::RenderContext) ||
@@ -172,31 +140,21 @@ namespace SFSEMenuFramework
 			ImGuiMemAllocFunc previousAllocate{};
 			ImGuiMemFreeFunc previousFree{};
 			void* previousAllocatorUserData{};
-			ImGui::GetAllocatorFunctions(
-				&previousAllocate,
-				&previousFree,
+			ImGui::GetAllocatorFunctions(&previousAllocate, &previousFree,
 				&previousAllocatorUserData);
-
-			ImGui::SetAllocatorFunctions(
-				a_context->Allocate,
-				a_context->Free,
+			ImGui::SetAllocatorFunctions(a_context->Allocate, a_context->Free,
 				a_context->AllocatorUserData);
 			ImGui::SetCurrentContext(
 				static_cast<ImGuiContext*>(a_context->ImGuiContext));
-
 			static_cast<ConsumerCallback*>(a_userData)->Render();
-
 			ImGui::SetCurrentContext(previousContext);
-			ImGui::SetAllocatorFunctions(
-				previousAllocate,
-				previousFree,
+			ImGui::SetAllocatorFunctions(previousAllocate, previousFree,
 				previousAllocatorUserData);
 			return true;
 		}
 
 		[[nodiscard]] inline Model::PanelRenderResult __stdcall RenderPanel(
-			const Model::RenderContext* a_context,
-			void*                       a_userData) noexcept
+			const Model::RenderContext* a_context, void* a_userData) noexcept
 		{
 			return InvokeConsumer(a_context, a_userData) ?
 				Model::PanelRenderResult::Continue :
@@ -204,15 +162,13 @@ namespace SFSEMenuFramework
 		}
 
 		inline void __stdcall RenderWindow(
-			const Model::RenderContext* a_context,
-			void*                       a_userData) noexcept
+			const Model::RenderContext* a_context, void* a_userData) noexcept
 		{
 			static_cast<void>(InvokeConsumer(a_context, a_userData));
 		}
 
 		[[nodiscard]] inline bool IsValidText(
-			std::string_view a_text,
-			std::uint32_t    a_maximumLength) noexcept
+			std::string_view a_text, std::uint32_t a_maximumLength) noexcept
 		{
 			return !a_text.empty() &&
 			       a_text.size() <= a_maximumLength &&
@@ -249,17 +205,13 @@ namespace SFSEMenuFramework
 			Event& operator=(const Event&) = delete;
 			Event& operator=(Event&&) = delete;
 
-			~Event() noexcept
-			{
-				if (Handle == 0) {
-					return;
+			~Event() noexcept {
+				if (Handle != 0) {
+					if (const auto* api = Detail::RequestInterfaceV3()) {
+						api->UnregisterEvent(Handle);
+					}
+					Handle = 0;
 				}
-
-				const auto* frameworkInterface = Detail::RequestInterfaceV3();
-				if (frameworkInterface) {
-					frameworkInterface->UnregisterEvent(Handle);
-				}
-				Handle = 0;
 			}
 
 		private:
@@ -267,9 +219,7 @@ namespace SFSEMenuFramework
 				EventCallback,
 				float) noexcept;
 
-			explicit Event(EventHandle a_handle) noexcept :
-				Handle(a_handle)
-			{}
+			explicit Event(EventHandle a_handle) noexcept : Handle(a_handle) {}
 
 			EventHandle Handle{ 0 };
 		};
@@ -287,9 +237,7 @@ namespace SFSEMenuFramework
 
 	[[nodiscard]] inline bool SetSection(std::string_view a_section)
 	{
-		if (!Detail::IsValidText(
-				a_section,
-				Model::MAXIMUM_PANEL_TEXT_LENGTH)) {
+		if (!Detail::IsValidText(a_section, Model::MAXIMUM_PANEL_TEXT_LENGTH)) {
 			return false;
 		}
 
@@ -311,17 +259,14 @@ namespace SFSEMenuFramework
 		}
 
 		if (!a_renderFunction ||
-			!Detail::IsValidText(
-				Detail::currentSection,
+			!Detail::IsValidText(Detail::currentSection,
 				Model::MAXIMUM_PANEL_TEXT_LENGTH) ||
-			!Detail::IsValidText(
-				a_title,
-				Model::MAXIMUM_PANEL_TEXT_LENGTH)) {
+			!Detail::IsValidText(a_title, Model::MAXIMUM_PANEL_TEXT_LENGTH)) {
 			return Model::RegistrationResult::InvalidArgument;
 		}
 
-		const auto* frameworkInterface = Detail::RequestInterface();
-		if (!frameworkInterface) {
+		const auto* api = Detail::RequestInterface();
+		if (!api) {
 			return Model::RegistrationResult::InterfaceUnavailable;
 		}
 
@@ -335,8 +280,8 @@ namespace SFSEMenuFramework
 				return Model::RegistrationResult::InvalidArgument;
 			}
 
-			auto* consumerPanel =
-				new (std::nothrow) Detail::ConsumerCallback{ a_renderFunction };
+			auto* consumerPanel = new (std::nothrow)
+				Detail::ConsumerCallback{ a_renderFunction };
 			if (!consumerPanel) {
 				return Model::RegistrationResult::OutOfMemory;
 			}
@@ -352,8 +297,7 @@ namespace SFSEMenuFramework
 				.UserData = consumerPanel
 			};
 
-			const auto result =
-				frameworkInterface->RegisterPanel(&registration, a_handle);
+			const auto result = api->RegisterPanel(&registration, a_handle);
 			if (result != Model::RegistrationResult::Success) {
 				delete consumerPanel;
 			}
@@ -373,13 +317,13 @@ namespace SFSEMenuFramework
 			return nullptr;
 		}
 
-		const auto* frameworkInterface = Detail::RequestInterfaceV2();
-		if (!frameworkInterface) {
+		const auto* api = Detail::RequestInterfaceV2();
+		if (!api) {
 			return nullptr;
 		}
 
-		auto* consumerWindow =
-			new (std::nothrow) Detail::ConsumerCallback{ a_renderFunction };
+		auto* consumerWindow = new (std::nothrow)
+			Detail::ConsumerCallback{ a_renderFunction };
 		if (!consumerWindow) {
 			return nullptr;
 		}
@@ -393,7 +337,7 @@ namespace SFSEMenuFramework
 			.BlockUserInput = static_cast<std::uint8_t>(a_doesWindowPauseGame)
 		};
 		Model::WindowInterface* window{};
-		const auto result = frameworkInterface->RegisterWindow(&registration, &window);
+		const auto result = api->RegisterWindow(&registration, &window);
 		if (result != Model::RegistrationResult::Success) {
 			delete consumerWindow;
 			return nullptr;
@@ -412,8 +356,8 @@ namespace SFSEMenuFramework
 			return nullptr;
 		}
 
-		const auto* frameworkInterface = Detail::RequestInterfaceV3();
-		if (!frameworkInterface) {
+		const auto* api = Detail::RequestInterfaceV3();
+		if (!api) {
 			return nullptr;
 		}
 
@@ -424,45 +368,40 @@ namespace SFSEMenuFramework
 			.Priority = a_priority
 		};
 		Model::EventHandle handle{};
-		const auto result = frameworkInterface->RegisterEvent(
-			&registration,
-			&handle);
+		const auto result = api->RegisterEvent(&registration, &handle);
 		if (result != Model::RegistrationResult::Success || handle == 0) {
 			return nullptr;
 		}
 
 		auto* event = new (std::nothrow) Model::Event(handle);
 		if (!event) {
-			frameworkInterface->UnregisterEvent(handle);
+			api->UnregisterEvent(handle);
 		}
 		return event;
 	}
 
 	[[nodiscard]] inline Model::WindowInterface* GetMainWindow() noexcept
 	{
-		const auto* frameworkInterface = Detail::RequestInterfaceV2();
-		return frameworkInterface ? frameworkInterface->GetMainWindow() : nullptr;
+		const auto* api = Detail::RequestInterfaceV2();
+		return api ? api->GetMainWindow() : nullptr;
 	}
 
 	[[nodiscard]] inline bool IsAnyBlockingWindowOpened() noexcept
 	{
-		const auto* frameworkInterface = Detail::RequestInterfaceV2();
-		return frameworkInterface ?
-		           frameworkInterface->IsAnyBlockingWindowOpened() :
-		           false;
+		const auto* api = Detail::RequestInterfaceV2();
+		return api ? api->IsAnyBlockingWindowOpened() : false;
 	}
 
 	inline void SetHotkeyEnabled(bool a_enabled) noexcept
 	{
-		const auto* frameworkInterface = Detail::RequestInterfaceV2();
-		if (frameworkInterface) {
-			frameworkInterface->SetHotkeyEnabled(a_enabled);
+		if (const auto* api = Detail::RequestInterfaceV2()) {
+			api->SetHotkeyEnabled(a_enabled);
 		}
 	}
 
 	[[nodiscard]] inline bool IsHotkeyEnabled() noexcept
 	{
-		const auto* frameworkInterface = Detail::RequestInterfaceV2();
-		return frameworkInterface ? frameworkInterface->IsHotkeyEnabled() : false;
+		const auto* api = Detail::RequestInterfaceV2();
+		return api ? api->IsHotkeyEnabled() : false;
 	}
 }

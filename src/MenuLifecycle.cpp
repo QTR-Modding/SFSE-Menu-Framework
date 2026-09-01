@@ -1,12 +1,12 @@
 #include "MenuLifecycle.h"
 
 #include "D3D12Renderer.h"
-#include "FrameworkSettings.h"
+#include "Config.h"
 #include "InputCapture.h"
-#include "McpWindow.h"
 #include "MenuOwnership.h"
+#include "UI.h"
 #include "Win32Platform.h"
-#include "WindowManager.h"
+#include "FrameworkRuntime.h"
 
 #include <atomic>
 
@@ -78,6 +78,14 @@ namespace SFSEMenuFramework::MenuLifecycle
 			}
 		}
 
+		void CloseEarlyInput(const char* a_reason) noexcept
+		{
+			logger::critical("{}; closing all blocking framework windows", a_reason);
+			WindowManager::CloseAllBlockingWindows();
+			static_cast<void>(D3D12Renderer::SetPlatformInputEnabled(false));
+			InputCapture::SetModal(false);
+		}
+
 		void ReconcileFrameworkOnlyHostWindow() noexcept
 		{
 			const bool renderEnabled =
@@ -105,21 +113,12 @@ namespace SFSEMenuFramework::MenuLifecycle
 			// native input behind an invisible menu.
 			InputCapture::SetModal(true);
 			if (!InputCapture::IsModal()) {
-				logger::critical(
-					"Early native input capture could not be armed; closing all blocking framework windows");
-				WindowManager::CloseAllBlockingWindows();
-				static_cast<void>(
-					D3D12Renderer::SetPlatformInputEnabled(false));
+				CloseEarlyInput("Early native input capture could not be armed");
 				return;
 			}
 
 			if (!D3D12Renderer::SetPlatformInputEnabled(true, generation)) {
-				logger::critical(
-					"Early relative mouse routing could not be armed; closing all blocking framework windows");
-				WindowManager::CloseAllBlockingWindows();
-				static_cast<void>(
-					D3D12Renderer::SetPlatformInputEnabled(false));
-				InputCapture::SetModal(false);
+				CloseEarlyInput("Early relative mouse routing could not be armed");
 				return;
 			}
 			if (!earlyInteractionLogged.test_and_set(std::memory_order_relaxed)) {
@@ -131,7 +130,6 @@ namespace SFSEMenuFramework::MenuLifecycle
 
 		void ReconcileHostWindow() noexcept
 		{
-			InputCapture::FlushDiagnostics();
 			if (!postDataLoadReady.load(std::memory_order_acquire)) {
 				ReconcileFrameworkOnlyHostWindow();
 				return;

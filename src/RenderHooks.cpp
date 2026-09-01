@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <d3d12.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cwchar>
@@ -35,10 +36,7 @@ namespace SFSEMenuFramework::RenderHooks
 			ID3D12PipelineState*);
 		using SetDescriptorHeapsFunction = D3D12Renderer::SetDescriptorHeapsFunction;
 
-		constexpr std::size_t resetIndex = 10;
-		constexpr std::size_t clearStateIndex = 11;
-		constexpr std::size_t resourceBarrierIndex = 26;
-		constexpr std::size_t setDescriptorHeapsIndex = 28;
+		constexpr std::array<std::size_t, 4> commandListSlots{ 10, 11, 26, 28 };
 		constexpr GUID        streamlineNativeInterface{
 			0xADEC44E2,
 			0x61F0,
@@ -64,7 +62,6 @@ namespace SFSEMenuFramework::RenderHooks
 		struct RegionState final
 		{
 			bool           Active{ false };
-			bool           SawValidCandidate{ false };
 			bool           SawOrdinaryTarget{ false };
 			bool           SawCopyTarget{ false };
 			bool           FrameStarted{ false };
@@ -79,7 +76,6 @@ namespace SFSEMenuFramework::RenderHooks
 			std::array<ComPtr<ID3D12DescriptorHeap>, 2> Heaps;
 			UINT                                       Count{ 0 };
 			std::uint64_t                              Epoch{ 0 };
-			bool                                       Valid{ false };
 		};
 
 		struct CommandListEpochEntry final
@@ -94,7 +90,6 @@ namespace SFSEMenuFramework::RenderHooks
 
 		std::atomic<HookState>      scaleformState{ HookState::Uninitialized };
 		std::atomic<HookState>      commandListState{ HookState::Uninitialized };
-		std::atomic<bool>           drawEnabled{ false };
 		std::atomic<PreviousRegion> previousRegion{ PreviousRegion::Unknown };
 
 		std::atomic<RenderPassFunction>         beginOriginal{ nullptr };
@@ -150,32 +145,26 @@ namespace SFSEMenuFramework::RenderHooks
 			return reinterpret_cast<std::uintptr_t>(a_function);
 		}
 
-		[[nodiscard]] bool IsReadableAddress(std::uintptr_t a_address)
+		[[nodiscard]] bool HasMemoryAccess(
+			std::uintptr_t a_address,
+			bool           a_executable,
+			std::size_t    a_size = 1)
 		{
-			if (!a_address || a_address % alignof(std::uintptr_t) != 0) {
+			if (!a_address) {
 				return false;
 			}
-
 			MEMORY_BASIC_INFORMATION memory{};
 			if (::VirtualQuery(reinterpret_cast<const void*>(a_address), &memory, sizeof(memory)) == 0 ||
-				memory.State != MEM_COMMIT || (memory.Protect & PAGE_GUARD) != 0 ||
-				(memory.Protect & 0xFF) == PAGE_NOACCESS) {
-				return false;
-			}
-
-			const auto regionEnd = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
-			return a_address + sizeof(std::uintptr_t) <= regionEnd;
-		}
-
-		[[nodiscard]] bool IsExecutableAddress(std::uintptr_t a_address)
-		{
-			MEMORY_BASIC_INFORMATION memory{};
-			if (!a_address ||
-				::VirtualQuery(reinterpret_cast<const void*>(a_address), &memory, sizeof(memory)) == 0 ||
 				memory.State != MEM_COMMIT || (memory.Protect & PAGE_GUARD) != 0) {
 				return false;
 			}
-
+			const auto regionEnd = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+			if (a_address > regionEnd || a_size > regionEnd - a_address) {
+				return false;
+			}
+			if (!a_executable) {
+				return (memory.Protect & 0xFF) != PAGE_NOACCESS;
+			}
 			switch (memory.Protect & 0xFF) {
 			case PAGE_EXECUTE:
 			case PAGE_EXECUTE_READ:
@@ -192,60 +181,67 @@ namespace SFSEMenuFramework::RenderHooks
 			std::size_t                            a_index)
 		{
 			const auto address = a_vtable.address() + sizeof(std::uintptr_t) * a_index;
-			if (!IsReadableAddress(address)) {
+			if (address % alignof(std::uintptr_t) != 0 ||
+				!HasMemoryAccess(address, false, sizeof(std::uintptr_t))) {
 				return 0;
 			}
 			return *reinterpret_cast<const std::uintptr_t*>(address);
 		}
 
-		struct AddressModule final
-		{
-			HMODULE Module{};
-			wchar_t Path[MAX_PATH]{};
-		};
+		using CommandTargets = std::array<std::uintptr_t, commandListSlots.size()>;
 
-		[[nodiscard]] bool GetAddressModule(std::uintptr_t a_address, AddressModule& a_result)
+		[[nodiscard]] CommandTargets ReadCommandTargets(
+			const REL::Relocation<std::uintptr_t>& a_vtable)
 		{
-			if (!IsExecutableAddress(a_address)) {
+			CommandTargets result{};
+			for (std::size_t index = 0; index < result.size(); ++index) {
+				result[index] = ReadVtableSlot(a_vtable, commandListSlots[index]);
+			}
+			return result;
+		}
+
+		template <class Predicate>
+		[[nodiscard]] bool AllTargets(const CommandTargets& a_targets, Predicate a_predicate)
+		{
+			return std::ranges::all_of(a_targets, a_predicate);
+		}
+
+		[[nodiscard]] bool GetModulePath(std::uintptr_t a_address, wchar_t (&a_path)[MAX_PATH])
+		{
+			if (!HasMemoryAccess(a_address, true)) {
 				return false;
 			}
-
+			HMODULE module{};
 			if (!::GetModuleHandleExW(
 					GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
 						GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 					reinterpret_cast<LPCWSTR>(a_address),
-					&a_result.Module)) {
+					&module)) {
 				return false;
 			}
-
-			const auto length = ::GetModuleFileNameW(a_result.Module, a_result.Path, MAX_PATH);
-			if (length == 0 || length >= MAX_PATH) {
-				return false;
-			}
-			return true;
+			const auto length = ::GetModuleFileNameW(module, a_path, MAX_PATH);
+			return length != 0 && length < MAX_PATH;
 		}
 
 		[[nodiscard]] bool IsNativeD3D12Target(std::uintptr_t a_address)
 		{
-			AddressModule owner{};
-			if (!GetAddressModule(a_address, owner)) {
+			wchar_t path[MAX_PATH]{};
+			if (!GetModulePath(a_address, path)) {
 				return false;
 			}
-
-			const auto* fileName = std::wcsrchr(owner.Path, L'\\');
-			fileName = fileName ? fileName + 1 : owner.Path;
+			const auto* fileName = std::wcsrchr(path, L'\\');
+			fileName = fileName ? fileName + 1 : path;
 			return ::_wcsicmp(fileName, L"d3d12.dll") == 0 ||
 			       ::_wcsicmp(fileName, L"d3d12core.dll") == 0;
 		}
 
 		[[nodiscard]] bool IsAdjacentStreamlineTarget(std::uintptr_t a_address)
 		{
-			AddressModule owner{};
-			if (!GetAddressModule(a_address, owner)) {
+			wchar_t ownerPath[MAX_PATH]{};
+			if (!GetModulePath(a_address, ownerPath)) {
 				return false;
 			}
-
-			auto* ownerFileName = std::wcsrchr(owner.Path, L'\\');
+			auto* ownerFileName = std::wcsrchr(ownerPath, L'\\');
 			if (!ownerFileName || ::_wcsicmp(ownerFileName + 1, L"sl.interposer.dll") != 0) {
 				return false;
 			}
@@ -262,7 +258,7 @@ namespace SFSEMenuFramework::RenderHooks
 				return false;
 			}
 			*executableFileName = L'\0';
-			return ::_wcsicmp(owner.Path, executablePath) == 0;
+			return ::_wcsicmp(ownerPath, executablePath) == 0;
 		}
 
 		template <class T>
@@ -302,47 +298,6 @@ namespace SFSEMenuFramework::RenderHooks
 			       leftIdentity.Get() == rightIdentity.Get();
 		}
 
-		[[nodiscard]] bool WriteVtableSlot(
-			REL::Relocation<std::uintptr_t>& a_vtable,
-			std::size_t                      a_index,
-			std::uintptr_t                   a_expected,
-			std::uintptr_t                   a_replacement,
-			std::uintptr_t&                  a_previous,
-			bool&                            a_attempted)
-		{
-			if (ReadVtableSlot(a_vtable, a_index) != a_expected) {
-				return false;
-			}
-
-			a_attempted = true;
-			a_previous = a_vtable.write_vfunc(a_index, a_replacement);
-			return a_previous == a_expected &&
-			       ReadVtableSlot(a_vtable, a_index) == a_replacement;
-		}
-
-		[[nodiscard]] bool RestoreVtableSlot(
-			REL::Relocation<std::uintptr_t>& a_vtable,
-			std::size_t                      a_index,
-			std::uintptr_t                   a_ours,
-			std::uintptr_t                   a_previous,
-			bool                             a_attempted)
-		{
-			if (!a_attempted) {
-				return true;
-			}
-
-			const auto current = ReadVtableSlot(a_vtable, a_index);
-			if (current == a_previous) {
-				return true;
-			}
-			if (current != a_ours) {
-				return false;
-			}
-
-			a_vtable.write_vfunc(a_index, a_previous);
-			return ReadVtableSlot(a_vtable, a_index) == a_previous;
-		}
-
 		struct VtableHook final
 		{
 			REL::Relocation<std::uintptr_t>* Vtable;
@@ -351,18 +306,38 @@ namespace SFSEMenuFramework::RenderHooks
 			std::uintptr_t                   Replacement;
 			std::uintptr_t                   Previous{};
 			bool                             Attempted{};
+
+			[[nodiscard]] bool Commit()
+			{
+				if (ReadVtableSlot(*Vtable, Index) != Expected) {
+					return false;
+				}
+				Attempted = true;
+				Previous = Vtable->write_vfunc(Index, Replacement);
+				return Previous == Expected && ReadVtableSlot(*Vtable, Index) == Replacement;
+			}
+
+			[[nodiscard]] bool RollBack()
+			{
+				if (!Attempted) {
+					return true;
+				}
+				const auto current = ReadVtableSlot(*Vtable, Index);
+				if (current == Previous) {
+					return true;
+				}
+				if (current != Replacement) {
+					return false;
+				}
+				Vtable->write_vfunc(Index, Previous);
+				return ReadVtableSlot(*Vtable, Index) == Previous;
+			}
 		};
 
 		[[nodiscard]] bool CommitHooks(std::span<VtableHook> a_hooks)
 		{
 			for (auto& hook : a_hooks) {
-				if (!WriteVtableSlot(
-						*hook.Vtable,
-						hook.Index,
-						hook.Expected,
-						hook.Replacement,
-						hook.Previous,
-						hook.Attempted)) {
+				if (!hook.Commit()) {
 					return false;
 				}
 			}
@@ -373,13 +348,7 @@ namespace SFSEMenuFramework::RenderHooks
 		{
 			bool restored = true;
 			for (auto hook = a_hooks.rbegin(); hook != a_hooks.rend(); ++hook) {
-				restored = RestoreVtableSlot(
-							   *hook->Vtable,
-							   hook->Index,
-							   hook->Replacement,
-							   hook->Previous,
-							   hook->Attempted) &&
-				           restored;
+				restored = hook->RollBack() && restored;
 			}
 			return restored;
 		}
@@ -389,62 +358,46 @@ namespace SFSEMenuFramework::RenderHooks
 			regionState = {};
 		}
 
-		[[nodiscard]] CommandListEpochEntry* GetCommandListEpochEntry(
-			ID3D12GraphicsCommandList* a_commandList) noexcept
+		[[nodiscard]] std::uint64_t CommandListEpoch(
+			ID3D12GraphicsCommandList* a_commandList,
+			bool                       a_advance = false) noexcept
 		{
 			if (!a_commandList) {
-				return nullptr;
+				return 0;
 			}
-
 			const auto start =
 				(reinterpret_cast<std::uintptr_t>(a_commandList) >> 4) &
 				(commandListEpochCapacity - 1);
 			for (std::size_t offset = 0; offset < commandListEpochCapacity; ++offset) {
 				auto& entry = commandListEpochs[(start + offset) & (commandListEpochCapacity - 1)];
 				auto* current = entry.CommandList.load(std::memory_order_acquire);
-				if (current == a_commandList) {
-					return &entry;
-				}
 				if (!current) {
 					auto* expected = static_cast<ID3D12GraphicsCommandList*>(nullptr);
-					if (entry.CommandList.compare_exchange_strong(
-							expected,
-							a_commandList,
-							std::memory_order_acq_rel,
-							std::memory_order_acquire) ||
-						expected == a_commandList) {
-						return &entry;
-					}
+					entry.CommandList.compare_exchange_strong(
+						expected,
+						a_commandList,
+						std::memory_order_acq_rel,
+						std::memory_order_acquire);
+					current = expected ? expected : a_commandList;
+				}
+				if (current == a_commandList) {
+					return a_advance ?
+						entry.Epoch.fetch_add(1, std::memory_order_acq_rel) + 1 :
+						entry.Epoch.load(std::memory_order_acquire);
 				}
 			}
-
-			return nullptr;
-		}
-
-		[[nodiscard]] std::uint64_t ReadCommandListEpoch(
-			ID3D12GraphicsCommandList* a_commandList) noexcept
-		{
-			const auto* entry = GetCommandListEpochEntry(a_commandList);
-			return entry ? entry->Epoch.load(std::memory_order_acquire) : 0;
-		}
-
-		void AdvanceCommandListEpoch(ID3D12GraphicsCommandList* a_commandList) noexcept
-		{
-			if (auto* entry = GetCommandListEpochEntry(a_commandList)) {
-				entry->Epoch.fetch_add(1, std::memory_order_acq_rel);
-			}
+			return 0;
 		}
 
 		[[nodiscard]] bool CopyHeapSnapshot(
 			ID3D12GraphicsCommandList*             a_commandList,
 			D3D12Renderer::DescriptorHeapSnapshot& a_snapshot) noexcept
 		{
-			if (!descriptorHeapState.Valid ||
-				descriptorHeapState.CommandList.Get() != a_commandList) {
+			if (!descriptorHeapState.Count || descriptorHeapState.CommandList.Get() != a_commandList) {
 				return false;
 			}
 
-			const auto epoch = ReadCommandListEpoch(a_commandList);
+			const auto epoch = CommandListEpoch(a_commandList);
 			if (!epoch || descriptorHeapState.Epoch != epoch) {
 				descriptorHeapState = {};
 				return false;
@@ -455,7 +408,7 @@ namespace SFSEMenuFramework::RenderHooks
 			for (UINT index = 0; index < descriptorHeapState.Count; ++index) {
 				a_snapshot.Heaps[index] = descriptorHeapState.Heaps[index].Get();
 			}
-			if (ReadCommandListEpoch(a_commandList) != epoch) {
+			if (CommandListEpoch(a_commandList) != epoch) {
 				descriptorHeapState = {};
 				a_snapshot = {};
 				return false;
@@ -509,7 +462,6 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 			++regionState.CandidateCount;
 
-			regionState.SawValidCandidate = true;
 			regionState.SawOrdinaryTarget = regionState.SawOrdinaryTarget || ordinaryTarget;
 			regionState.SawCopyTarget = regionState.SawCopyTarget || copyTarget;
 
@@ -530,17 +482,12 @@ namespace SFSEMenuFramework::RenderHooks
 				return;
 			}
 
-			const auto setHeaps = setDescriptorHeapsOriginal.load(std::memory_order_acquire);
-			if (!setHeaps) {
-				return;
-			}
-
 			internalD3D = true;
 			D3D12Renderer::Render(
 				a_commandList,
 				a_barrier.Transition.pResource,
 				heapSnapshot,
-				setHeaps);
+				setDescriptorHeapsOriginal.load(std::memory_order_acquire));
 			internalD3D = false;
 		}
 
@@ -550,9 +497,6 @@ namespace SFSEMenuFramework::RenderHooks
 			const D3D12_RESOURCE_BARRIER* a_barriers) noexcept
 		{
 			const auto original = resourceBarrierOriginal.load(std::memory_order_acquire);
-			if (!original) {
-				return;
-			}
 
 			if (internalD3D) {
 				selfTestSeen |= resourceBarrierSeen;
@@ -560,22 +504,30 @@ namespace SFSEMenuFramework::RenderHooks
 				return;
 			}
 
-			if (drawEnabled.load(std::memory_order_acquire) && regionState.Active &&
+			if (commandListState.load(std::memory_order_acquire) == HookState::Ready &&
+				regionState.Active &&
 				a_commandList && a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT &&
 				a_barriers) {
-				if (regionState.SawValidCandidate) {
-					if (regionState.BarrierCallsAfterFirstCandidate >= 4) {
-						original(a_commandList, a_barrierCount, a_barriers);
-						return;
+				if (!regionState.CandidateCount ||
+					regionState.BarrierCallsAfterFirstCandidate < 4) {
+					regionState.BarrierCallsAfterFirstCandidate += regionState.CandidateCount != 0;
+					for (UINT index = 0; index < a_barrierCount; ++index) {
+						InspectBarrierCandidate(a_commandList, a_barriers[index]);
 					}
-					++regionState.BarrierCallsAfterFirstCandidate;
-				}
-				for (UINT index = 0; index < a_barrierCount; ++index) {
-					InspectBarrierCandidate(a_commandList, a_barriers[index]);
 				}
 			}
 
 			original(a_commandList, a_barrierCount, a_barriers);
+		}
+
+		void InvalidateHeapCapture(ID3D12GraphicsCommandList* a_commandList) noexcept
+		{
+			if (a_commandList && a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+				static_cast<void>(CommandListEpoch(a_commandList, true));
+			}
+			if (descriptorHeapState.CommandList.Get() == a_commandList) {
+				descriptorHeapState = {};
+			}
 		}
 
 		HRESULT STDMETHODCALLTYPE ResetThunk(
@@ -584,9 +536,6 @@ namespace SFSEMenuFramework::RenderHooks
 			ID3D12PipelineState*        a_initialState) noexcept
 		{
 			const auto original = resetOriginal.load(std::memory_order_acquire);
-			if (!original) {
-				return E_FAIL;
-			}
 
 			if (internalD3D) {
 				selfTestSeen |= resetSeen;
@@ -595,12 +544,7 @@ namespace SFSEMenuFramework::RenderHooks
 
 			const auto result = original(a_commandList, a_allocator, a_initialState);
 			if (SUCCEEDED(result)) {
-				if (a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT) {
-					AdvanceCommandListEpoch(a_commandList);
-				}
-				if (descriptorHeapState.CommandList.Get() == a_commandList) {
-					descriptorHeapState = {};
-				}
+				InvalidateHeapCapture(a_commandList);
 			}
 			return result;
 		}
@@ -610,9 +554,6 @@ namespace SFSEMenuFramework::RenderHooks
 			ID3D12PipelineState*        a_pipelineState) noexcept
 		{
 			const auto original = clearStateOriginal.load(std::memory_order_acquire);
-			if (!original) {
-				return;
-			}
 
 			if (internalD3D) {
 				selfTestSeen |= clearStateSeen;
@@ -621,12 +562,7 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 
 			original(a_commandList, a_pipelineState);
-			if (a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT) {
-				AdvanceCommandListEpoch(a_commandList);
-			}
-			if (descriptorHeapState.CommandList.Get() == a_commandList) {
-				descriptorHeapState = {};
-			}
+			InvalidateHeapCapture(a_commandList);
 		}
 
 		void STDMETHODCALLTYPE SetDescriptorHeapsThunk(
@@ -635,9 +571,6 @@ namespace SFSEMenuFramework::RenderHooks
 			ID3D12DescriptorHeap* const* a_heaps) noexcept
 		{
 			const auto original = setDescriptorHeapsOriginal.load(std::memory_order_acquire);
-			if (!original) {
-				return;
-			}
 
 			original(a_commandList, a_heapCount, a_heaps);
 			if (internalD3D) {
@@ -648,7 +581,7 @@ namespace SFSEMenuFramework::RenderHooks
 			const bool directCommandList =
 				a_commandList && a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT;
 			if (directCommandList) {
-				AdvanceCommandListEpoch(a_commandList);
+				static_cast<void>(CommandListEpoch(a_commandList, true));
 			}
 			DescriptorHeapState nextState;
 			if (!directCommandList || !a_heaps || a_heapCount == 0 ||
@@ -656,7 +589,7 @@ namespace SFSEMenuFramework::RenderHooks
 				descriptorHeapState = {};
 				return;
 			}
-			const auto epoch = ReadCommandListEpoch(a_commandList);
+			const auto epoch = CommandListEpoch(a_commandList);
 			if (!epoch) {
 				descriptorHeapState = {};
 				return;
@@ -673,8 +606,7 @@ namespace SFSEMenuFramework::RenderHooks
 			nextState.CommandList = a_commandList;
 			nextState.Count = a_heapCount;
 			nextState.Epoch = epoch;
-			nextState.Valid = true;
-			if (ReadCommandListEpoch(a_commandList) != epoch) {
+			if (CommandListEpoch(a_commandList) != epoch) {
 				descriptorHeapState = {};
 				return;
 			}
@@ -700,13 +632,12 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 
 			auto fail = []() noexcept {
-				drawEnabled.store(false, std::memory_order_release);
 				commandListState.store(HookState::Failed, std::memory_order_release);
 				return false;
 			};
 
 			auto* renderer = RE::CreationRendererPrivate::Renderer::GetSingleton();
-			if (!renderer || !renderer->GetDevice() || !renderer->GetGraphicsQueue()) {
+			if (!renderer || !renderer->GetDevice()) {
 				commandListState.store(HookState::Uninitialized, std::memory_order_release);
 				return false;
 			}
@@ -715,21 +646,6 @@ namespace SFSEMenuFramework::RenderHooks
 			auto*                borrowedDevice = reinterpret_cast<ID3D12Device*>(renderer->GetDevice());
 			if (FAILED(borrowedDevice->QueryInterface(IID_PPV_ARGS(device.GetAddressOf())))) {
 				logger::critical("Could not acquire the Starfield DirectX 12 device");
-				return fail();
-			}
-
-			ComPtr<ID3D12CommandQueue> graphicsQueue;
-			auto*                      borrowedQueue = reinterpret_cast<ID3D12CommandQueue*>(renderer->GetGraphicsQueue());
-			if (FAILED(borrowedQueue->QueryInterface(IID_PPV_ARGS(graphicsQueue.GetAddressOf()))) ||
-				graphicsQueue->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_DIRECT) {
-				logger::critical("Could not acquire Starfield's direct graphics queue");
-				return fail();
-			}
-
-			ComPtr<ID3D12Device> queueDevice;
-			if (FAILED(graphicsQueue->GetDevice(IID_PPV_ARGS(queueDevice.GetAddressOf()))) ||
-				!HasSameComIdentity(queueDevice.Get(), device.Get())) {
-				logger::critical("Starfield's graphics queue and renderer device do not match");
 				return fail();
 			}
 
@@ -766,22 +682,9 @@ namespace SFSEMenuFramework::RenderHooks
 				REL::Relocation<std::uintptr_t> proxyVtable{
 					reinterpret_cast<std::uintptr_t>(proxyRawVtable)
 				};
-				const auto proxyResetTarget = ReadVtableSlot(proxyVtable, resetIndex);
-				const auto proxyClearStateTarget = ReadVtableSlot(proxyVtable, clearStateIndex);
-				const auto proxyBarrierTarget = ReadVtableSlot(proxyVtable, resourceBarrierIndex);
-				const auto proxyHeapTarget = ReadVtableSlot(proxyVtable, setDescriptorHeapsIndex);
-				if (!IsAdjacentStreamlineTarget(proxyResetTarget) ||
-					!IsAdjacentStreamlineTarget(proxyClearStateTarget) ||
-					!IsAdjacentStreamlineTarget(proxyBarrierTarget) ||
-					!IsAdjacentStreamlineTarget(proxyHeapTarget)) {
-					logger::critical(
-						"The Streamline native-interface query came from unsupported command-list targets: "
-						"Reset=0x{:X}, ClearState=0x{:X}, ResourceBarrier=0x{:X}, "
-						"SetDescriptorHeaps=0x{:X}",
-						proxyResetTarget,
-						proxyClearStateTarget,
-						proxyBarrierTarget,
-						proxyHeapTarget);
+				const auto proxyTargets = ReadCommandTargets(proxyVtable);
+				if (!AllTargets(proxyTargets, IsAdjacentStreamlineTarget)) {
+					logger::critical("Unsupported NVIDIA Streamline command-list vtable");
 					return fail();
 				}
 			}
@@ -814,46 +717,34 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 
 			REL::Relocation<std::uintptr_t> vtable{ reinterpret_cast<std::uintptr_t>(rawVtable) };
-			const auto                      resetTarget = ReadVtableSlot(vtable, resetIndex);
-			const auto                      clearStateTarget = ReadVtableSlot(vtable, clearStateIndex);
-			const auto                      barrierTarget = ReadVtableSlot(vtable, resourceBarrierIndex);
-			const auto                      heapTarget = ReadVtableSlot(vtable, setDescriptorHeapsIndex);
-			if (!IsNativeD3D12Target(resetTarget) || !IsNativeD3D12Target(clearStateTarget) ||
-				!IsNativeD3D12Target(barrierTarget) ||
-				!IsNativeD3D12Target(heapTarget) ||
-				resetTarget == FunctionAddress(&ResetThunk) ||
-				clearStateTarget == FunctionAddress(&ClearStateThunk) ||
-				barrierTarget == FunctionAddress(&ResourceBarrierThunk) ||
-				heapTarget == FunctionAddress(&SetDescriptorHeapsThunk)) {
-				logger::critical(
-					"Unsupported native D3D12 command-list targets: "
-					"Reset=0x{:X}, ClearState=0x{:X}, ResourceBarrier=0x{:X}, "
-					"SetDescriptorHeaps=0x{:X}",
-					resetTarget,
-					clearStateTarget,
-					barrierTarget,
-					heapTarget);
+			const auto targets = ReadCommandTargets(vtable);
+			const CommandTargets replacements{
+				FunctionAddress(&ResetThunk),
+				FunctionAddress(&ClearStateThunk),
+				FunctionAddress(&ResourceBarrierThunk),
+				FunctionAddress(&SetDescriptorHeapsThunk)
+			};
+			bool targetsValid = AllTargets(targets, IsNativeD3D12Target);
+			for (std::size_t index = 0; index < targets.size(); ++index) {
+				targetsValid = targetsValid && targets[index] != replacements[index];
+			}
+			if (!targetsValid) {
+				logger::critical("Unsupported native D3D12 command-list targets");
 				return fail();
 			}
 
-			resetOriginal.store(
-				reinterpret_cast<ResetFunction>(resetTarget),
-				std::memory_order_release);
-			clearStateOriginal.store(
-				reinterpret_cast<ClearStateFunction>(clearStateTarget),
-				std::memory_order_release);
+			resetOriginal.store(reinterpret_cast<ResetFunction>(targets[0]), std::memory_order_release);
+			clearStateOriginal.store(reinterpret_cast<ClearStateFunction>(targets[1]), std::memory_order_release);
 			resourceBarrierOriginal.store(
-				reinterpret_cast<ResourceBarrierFunction>(barrierTarget),
-				std::memory_order_release);
+				reinterpret_cast<ResourceBarrierFunction>(targets[2]), std::memory_order_release);
 			setDescriptorHeapsOriginal.store(
-				reinterpret_cast<SetDescriptorHeapsFunction>(heapTarget),
-				std::memory_order_release);
+				reinterpret_cast<SetDescriptorHeapsFunction>(targets[3]), std::memory_order_release);
 
 			std::array<VtableHook, 4> hooks{
-				VtableHook{ &vtable, resetIndex, resetTarget, FunctionAddress(&ResetThunk) },
-				VtableHook{ &vtable, clearStateIndex, clearStateTarget, FunctionAddress(&ClearStateThunk) },
-				VtableHook{ &vtable, resourceBarrierIndex, barrierTarget, FunctionAddress(&ResourceBarrierThunk) },
-				VtableHook{ &vtable, setDescriptorHeapsIndex, heapTarget, FunctionAddress(&SetDescriptorHeapsThunk) }
+				VtableHook{ &vtable, commandListSlots[0], targets[0], replacements[0] },
+				VtableHook{ &vtable, commandListSlots[1], targets[1], replacements[1] },
+				VtableHook{ &vtable, commandListSlots[2], targets[2], replacements[2] },
+				VtableHook{ &vtable, commandListSlots[3], targets[3], replacements[3] }
 			};
 			if (!CommitHooks(hooks)) {
 				const bool restored = RollBackHooks(hooks);
@@ -900,7 +791,6 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 
 			commandListState.store(HookState::Ready, std::memory_order_release);
-			drawEnabled.store(true, std::memory_order_release);
 			logger::info("D3D12 command-list hooks installed and self-tested");
 			return true;
 		}
@@ -915,10 +805,7 @@ namespace SFSEMenuFramework::RenderHooks
 				static_cast<void>(EnsureCommandListHooks());
 			}
 
-			if (const auto original = beginOriginal.load(std::memory_order_acquire)) {
-				original(a_pass, a_context, a_executionData);
-			}
-
+			beginOriginal.load(std::memory_order_acquire)(a_pass, a_context, a_executionData);
 		}
 
 		void EndThunk(
@@ -926,10 +813,7 @@ namespace SFSEMenuFramework::RenderHooks
 			RE::CreationRendererPrivate::RenderPassContext*       a_context,
 			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept
 		{
-			if (const auto original = endOriginal.load(std::memory_order_acquire)) {
-				original(a_pass, a_context, a_executionData);
-			}
-
+			endOriginal.load(std::memory_order_acquire)(a_pass, a_context, a_executionData);
 			regionState = {};
 			regionState.Active = true;
 			regionState.Previous = previousRegion.load(std::memory_order_acquire);
@@ -941,7 +825,7 @@ namespace SFSEMenuFramework::RenderHooks
 			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept
 		{
 			if (regionState.Active) {
-				if (regionState.SawValidCandidate) {
+				if (regionState.CandidateCount) {
 					previousRegion.store(
 						regionState.SawCopyTarget ? PreviousRegion::FrameGeneration : PreviousRegion::Normal,
 						std::memory_order_release);
@@ -949,9 +833,7 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 			ResetRegion();
 
-			if (const auto original = compositeOriginal.load(std::memory_order_acquire)) {
-				original(a_pass, a_context, a_executionData);
-			}
+			compositeOriginal.load(std::memory_order_acquire)(a_pass, a_context, a_executionData);
 		}
 
 		[[nodiscard]] bool InstallScaleformHooks()
@@ -969,8 +851,8 @@ namespace SFSEMenuFramework::RenderHooks
 			const auto beginTarget = expectedBegin.address();
 			const auto endTarget = expectedEnd.address();
 			const auto compositeTarget = expectedComposite.address();
-			if (!IsExecutableAddress(beginTarget) || !IsExecutableAddress(endTarget) ||
-				!IsExecutableAddress(compositeTarget) ||
+			if (!HasMemoryAccess(beginTarget, true) || !HasMemoryAccess(endTarget, true) ||
+				!HasMemoryAccess(compositeTarget, true) ||
 				ReadVtableSlot(beginVtable, slot) != beginTarget ||
 				ReadVtableSlot(endVtable, slot) != endTarget ||
 				ReadVtableSlot(compositeVtable, slot) != compositeTarget) {
@@ -994,9 +876,6 @@ namespace SFSEMenuFramework::RenderHooks
 				logger::critical(
 					"Failed to commit the Scaleform render-pass hooks; rollback {}",
 					restored ? "succeeded" : "was incomplete, so the DLL must remain loaded");
-				if (!restored) {
-					scaleformState.store(HookState::Failed, std::memory_order_release);
-				}
 				return false;
 			}
 
