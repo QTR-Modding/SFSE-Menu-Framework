@@ -60,17 +60,11 @@ namespace
 		return a_node.Panel.load(std::memory_order_acquire);
 	}
 
+	[[nodiscard]] bool HasEnabledChild(const MenuNode& a_node);
+
 	[[nodiscard]] bool HasEnabledPanel(const MenuNode& a_node)
 	{
-		if (IsPanelEnabled(GetPanel(a_node))) {
-			return true;
-		}
-		const auto children = a_node.Children.load(std::memory_order_acquire);
-		return children && std::ranges::any_of(
-			*children,
-			[](const auto& a_child) {
-				return a_child && HasEnabledPanel(*a_child);
-			});
+		return IsPanelEnabled(GetPanel(a_node)) || HasEnabledChild(a_node);
 	}
 
 	[[nodiscard]] bool HasEnabledChild(const MenuNode& a_node)
@@ -104,22 +98,20 @@ namespace
 		return close;
 	}
 
-	[[nodiscard]] bool SetRootMenuArchived(
+	void SetRootMenuArchived(
 		std::string_view a_menuName,
 		bool             a_archived)
 	{
-		const bool saved =
-			SFSEMenuFramework::RootMenuConfig::SetArchived(
+		menuConfigSaveFailed =
+			!SFSEMenuFramework::RootMenuConfig::SetArchived(
 				a_menuName,
 				a_archived);
-		menuConfigSaveFailed = !saved;
 		if (a_archived && selectedNode &&
 			selectedNode->FullPath.starts_with(a_menuName) &&
 			selectedNode->FullPath.size() > a_menuName.size() &&
 			selectedNode->FullPath[a_menuName.size()] == '/') {
 			selectedNode.reset();
 		}
-		return saved;
 	}
 
 	void RenderRootMenuButtons(
@@ -252,10 +244,7 @@ namespace
 		for (const auto& root : archivedMenus) {
 			ImGui::PushID(root->Name.c_str());
 			if (ImGui::MenuItem(root->Name.c_str())) {
-				menuConfigSaveFailed =
-					!SFSEMenuFramework::RootMenuConfig::SetArchived(
-						root->Name,
-						false);
+				SetRootMenuArchived(root->Name, false);
 			}
 			ImGui::PopID();
 		}
@@ -291,8 +280,7 @@ namespace
 		ImGui::TextUnformatted(pendingArchiveMenu.c_str());
 		ImGui::Separator();
 		if (ImGui::Button("Yes")) {
-			static_cast<void>(
-				SetRootMenuArchived(pendingArchiveMenu, true));
+			SetRootMenuArchived(pendingArchiveMenu, true);
 			pendingArchiveMenu.clear();
 			ImGui::CloseCurrentPopup();
 		}
@@ -688,20 +676,6 @@ namespace SFSEMenuFramework::SettingsWindow
 			return clicked;
 		}
 
-		[[nodiscard]] bool MatchesLiveSettings(
-			const FrameworkSettings::FontSettings& a_settings) noexcept
-		{
-			return FrameworkSettings::FontSettingsEqual(
-				a_settings, FontManager::GetActiveInfo().Settings, 0.0001F, true);
-		}
-
-		[[nodiscard]] bool QueueLiveFontSettings(
-			const FrameworkSettings::FontSettings& a_settings) noexcept
-		{
-			return FrameworkSettings::ValidateFontSettings(a_settings) &&
-				FontManager::RequestAtlasRebuild(a_settings);
-		}
-
 		void FinishFontEdit(
 			const FrameworkSettings::FontSettings& a_settings,
 			bool                                   a_changed)
@@ -711,15 +685,16 @@ namespace SFSEMenuFramework::SettingsWindow
 					!FrameworkSettings::ValidateFontSettings(a_settings);
 			}
 			if (ImGui::IsItemDeactivatedAfterEdit()) {
-				fontSettingsInvalid = !QueueLiveFontSettings(a_settings);
+				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(a_settings);
 			}
 		}
 
 		void RenderFontSettings(bool& a_saveFailed)
 		{
 			static FrameworkSettings::FontSettings pending{};
+			const auto active = FontManager::GetActiveInfo();
 			if (fontSettingsRefreshRequested) {
-				pending = FontManager::GetActiveInfo().Settings;
+				pending = active.Settings;
 				fontSettingsRefreshRequested = false;
 				fontSettingsInvalid = false;
 			}
@@ -731,7 +706,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			if (ImGui::Combo("##FontRendering", &rendering, renderingNames.data(),
 					static_cast<int>(renderingNames.size()))) {
 				pending.Rendering = static_cast<FrameworkSettings::FontRendering>(rendering);
-				fontSettingsInvalid = !QueueLiveFontSettings(pending);
+				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(pending);
 			}
 			switch (pending.Rendering) {
 			case FrameworkSettings::FontRendering::Light:
@@ -781,7 +756,7 @@ namespace SFSEMenuFramework::SettingsWindow
 								pending.FontWeight = std::clamp(
 									pending.FontWeight, weightAxis->Minimum, weightAxis->Maximum);
 							}
-							fontSettingsInvalid = !QueueLiveFontSettings(pending);
+							fontSettingsInvalid = !FontManager::RequestAtlasRebuild(pending);
 						}
 					}
 					if (selected) {
@@ -824,7 +799,6 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 			FinishFontEdit(pending, uiScaleEdited);
 
-			const auto active = FontManager::GetActiveInfo();
 			const auto activeScalePercent =
 				static_cast<int>(std::lround(active.Settings.UIScale * 100.0F));
 			const auto activeRendering = FrameworkSettings::GetFontRenderingName(
@@ -850,9 +824,13 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 
 			const bool pendingValid = FrameworkSettings::ValidateFontSettings(pending);
+			const auto matchesLive = [&] {
+				return FrameworkSettings::FontSettingsEqual(
+					pending, active.Settings, 0.0001F, true);
+			};
 			const bool canSave = pendingValid && !fontSettingsInvalid &&
 				!FontManager::HasPendingAtlasRebuild() &&
-				MatchesLiveSettings(pending);
+				matchesLive();
 			ImGui::BeginDisabled(!canSave);
 			if (ImGui::Button("Save")) {
 				const auto previous = FrameworkSettings::GetFontSettings();
@@ -871,7 +849,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			ImGui::SameLine();
 			if (ImGui::Button("Reset font settings")) {
 				pending = FrameworkSettings::GetDefaultFontSettings();
-				fontSettingsInvalid = !QueueLiveFontSettings(pending);
+				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(pending);
 			}
 
 			if (fontSettingsInvalid || !pendingValid) {
@@ -889,7 +867,7 @@ namespace SFSEMenuFramework::SettingsWindow
 				ImGui::TextColored(
 					ImVec4{ 1.0F, 0.35F, 0.35F, 1.0F }, "%.*s",
 					static_cast<int>(applyError.size()), applyError.data());
-			} else if (pendingValid && !MatchesLiveSettings(pending)) {
+			} else if (pendingValid && !matchesLive()) {
 				ImGui::TextDisabled("Finish editing to apply the live preview.");
 			} else if (!FrameworkSettings::FontSettingsEqual(
 				pending, configured, 0.0001F, true)) {

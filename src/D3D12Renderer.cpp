@@ -20,6 +20,20 @@
 
 namespace SFSEMenuFramework::D3D12Renderer
 {
+	bool HasSameDeviceIdentity(
+		ID3D12Device* a_left, ID3D12Device* a_right) noexcept
+	{
+		if (!a_left || !a_right) {
+			return false;
+		}
+
+		Microsoft::WRL::ComPtr<IUnknown> leftIdentity;
+		Microsoft::WRL::ComPtr<IUnknown> rightIdentity;
+		return SUCCEEDED(a_left->QueryInterface(IID_PPV_ARGS(leftIdentity.GetAddressOf()))) &&
+		       SUCCEEDED(a_right->QueryInterface(IID_PPV_ARGS(rightIdentity.GetAddressOf()))) &&
+		       leftIdentity.Get() == rightIdentity.Get();
+	}
+
 	namespace
 	{
 		using Microsoft::WRL::ComPtr;
@@ -89,19 +103,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 		{
 			static auto* mutex = new std::recursive_mutex();
 			return *mutex;
-		}
-
-		[[nodiscard]] bool HasSameComIdentity(IUnknown* a_left, IUnknown* a_right)
-		{
-			if (!a_left || !a_right) {
-				return false;
-			}
-
-			ComPtr<IUnknown> leftIdentity;
-			ComPtr<IUnknown> rightIdentity;
-			return SUCCEEDED(a_left->QueryInterface(IID_PPV_ARGS(leftIdentity.GetAddressOf()))) &&
-			       SUCCEEDED(a_right->QueryInterface(IID_PPV_ARGS(rightIdentity.GetAddressOf()))) &&
-			       leftIdentity.Get() == rightIdentity.Get();
 		}
 
 		[[nodiscard]] bool CheckResult(HRESULT a_result, const char* a_operation) noexcept
@@ -601,7 +602,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 		auto& rendererState = GetRendererState();
 		if (!rendererState.Context ||
-			!HasSameComIdentity(rendererState.Device.Get(), commandListDevice.Get())) {
+			!HasSameDeviceIdentity(rendererState.Device.Get(), commandListDevice.Get())) {
 			return;
 		}
 

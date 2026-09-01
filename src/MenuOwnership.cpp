@@ -325,26 +325,20 @@ namespace SFSEMenuFramework::MenuOwnership
 		[[nodiscard]] bool ReleaseCoreOwnership(OwnershipState& a_state)
 		{
 			if (!HasAnyCoreOwnership(a_state)) {
-				inputDisposition.store(
-					InputDisposition::PassThrough,
-					std::memory_order_release);
+				PublishDisposition(InputDisposition::PassThrough);
 				return true;
 			}
 
-			inputDisposition.store(ReleaseDisposition(a_state), std::memory_order_release);
+			PublishDisposition(ReleaseDisposition(a_state));
 			const bool cursorReleased = ReleaseCursor(a_state);
 			const bool layerReleased = SetLayerDisabled(a_state, false);
 			if (a_state.Faulted) {
-				inputDisposition.store(
-					ReleaseDisposition(a_state),
-					std::memory_order_release);
+				PublishDisposition(ReleaseDisposition(a_state));
 				return false;
 			}
 			const bool released = cursorReleased && layerReleased &&
 			                      !HasAnyCoreOwnership(a_state);
-			inputDisposition.store(
-				ReleaseDisposition(a_state),
-				std::memory_order_release);
+			PublishDisposition(ReleaseDisposition(a_state));
 			return released;
 		}
 
@@ -376,8 +370,7 @@ namespace SFSEMenuFramework::MenuOwnership
 
 			if (!EnsureRetainedLayer(a_state) || !SetLayerDisabled(a_state, true)) {
 				if (!a_state.Faulted) {
-					const auto disposition = ReleaseDisposition(a_state);
-					PublishDisposition(disposition);
+					PublishDisposition(ReleaseDisposition(a_state));
 				}
 				return false;
 			}

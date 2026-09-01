@@ -78,12 +78,11 @@ namespace SFSEMenuFramework::MenuLifecycle
 			}
 		}
 
-		void CloseEarlyInput(const char* a_reason) noexcept
+		void AbortBlockingInteraction(const char* a_reason) noexcept
 		{
 			logger::critical("{}; closing all blocking framework windows", a_reason);
 			WindowManager::CloseAllBlockingWindows();
 			static_cast<void>(D3D12Renderer::SetPlatformInputEnabled(false));
-			InputCapture::SetModal(false);
 		}
 
 		void ReconcileFrameworkOnlyHostWindow() noexcept
@@ -113,12 +112,14 @@ namespace SFSEMenuFramework::MenuLifecycle
 			// native input behind an invisible menu.
 			InputCapture::SetModal(true);
 			if (!InputCapture::IsModal()) {
-				CloseEarlyInput("Early native input capture could not be armed");
+				AbortBlockingInteraction("Early native input capture could not be armed");
+				InputCapture::SetModal(false);
 				return;
 			}
 
 			if (!D3D12Renderer::SetPlatformInputEnabled(true, generation)) {
-				CloseEarlyInput("Early relative mouse routing could not be armed");
+				AbortBlockingInteraction("Early relative mouse routing could not be armed");
+				InputCapture::SetModal(false);
 				return;
 			}
 			if (!earlyInteractionLogged.test_and_set(std::memory_order_relaxed)) {
@@ -157,11 +158,8 @@ namespace SFSEMenuFramework::MenuLifecycle
 			if (availability == MenuOwnership::HostAvailability::Interactive &&
 				blockingWindowOpen &&
 				(disposition != InputDisposition::RouteToMenu || !platformInputReady)) {
-				logger::critical(
-					"Blocking menu ownership could not be completed; closing all blocking framework windows");
-				WindowManager::CloseAllBlockingWindows();
-				static_cast<void>(
-					D3D12Renderer::SetPlatformInputEnabled(false));
+				AbortBlockingInteraction(
+					"Blocking menu ownership could not be completed");
 				MenuOwnership::ReleaseOnHostWindowThread();
 				InputCapture::SetModal(
 					MenuOwnership::GetInputDisposition() != InputDisposition::PassThrough);
@@ -169,11 +167,8 @@ namespace SFSEMenuFramework::MenuLifecycle
 			}
 
 			if (suppressNativeInput && !InputCapture::IsModal()) {
-				logger::critical(
-					"Menu ownership was acquired without operational native capture; closing all blocking framework windows");
-				WindowManager::CloseAllBlockingWindows();
-				static_cast<void>(
-					D3D12Renderer::SetPlatformInputEnabled(false));
+				AbortBlockingInteraction(
+					"Menu ownership was acquired without operational native capture");
 				MenuOwnership::ReleaseOnHostWindowThread();
 			}
 		}

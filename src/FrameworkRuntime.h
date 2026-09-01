@@ -45,7 +45,6 @@ namespace SFSEMenuFramework
 	public:
 		struct Panel final
 		{
-			Model::PanelHandle         Handle{ 0 };
 			void*                      OwnerModule{ nullptr };
 			std::string                Id;
 			std::string                Section;

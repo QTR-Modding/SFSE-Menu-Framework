@@ -285,19 +285,6 @@ namespace SFSEMenuFramework::RenderHooks
 			return true;
 		}
 
-		[[nodiscard]] bool HasSameComIdentity(IUnknown* a_left, IUnknown* a_right)
-		{
-			if (!a_left || !a_right) {
-				return false;
-			}
-
-			ComPtr<IUnknown> leftIdentity;
-			ComPtr<IUnknown> rightIdentity;
-			return SUCCEEDED(a_left->QueryInterface(IID_PPV_ARGS(leftIdentity.GetAddressOf()))) &&
-			       SUCCEEDED(a_right->QueryInterface(IID_PPV_ARGS(rightIdentity.GetAddressOf()))) &&
-			       leftIdentity.Get() == rightIdentity.Get();
-		}
-
 		struct VtableHook final
 		{
 			REL::Relocation<std::uintptr_t>* Vtable;
@@ -701,7 +688,8 @@ namespace SFSEMenuFramework::RenderHooks
 				device.Get(),
 				nativeRendererDevice);
 			auto* expectedHookDevice = rendererDeviceProxy ? nativeRendererDevice.Get() : device.Get();
-			if (!HasSameComIdentity(hookDevice.Get(), expectedHookDevice)) {
+			if (!D3D12Renderer::HasSameDeviceIdentity(
+					hookDevice.Get(), expectedHookDevice)) {
 				logger::critical("The native D3D12 command list and renderer device do not match");
 				return fail();
 			}

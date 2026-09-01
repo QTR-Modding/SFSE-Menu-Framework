@@ -501,8 +501,7 @@ namespace SFSEMenuFramework
 				})) {
 				return Model::RegistrationResult::DuplicateId;
 			}
-			panel->Handle = registry->NextHandle++;
-			const auto registeredHandle = panel->Handle;
+			const auto registeredHandle = registry->NextHandle++;
 			AddToMenuTree(*registry, panel);
 			registry->Panels.push_back(std::move(panel));
 			if (a_handle) {

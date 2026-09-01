@@ -19,6 +19,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 		UINT                                 Count{ 0 };
 	};
 
+	[[nodiscard]] bool HasSameDeviceIdentity(
+		ID3D12Device* a_left, ID3D12Device* a_right) noexcept;
 	[[nodiscard]] bool Initialize(ID3D12Device* a_device);
 	[[nodiscard]] bool SetPlatformInputEnabled(
 		bool a_enabled,
