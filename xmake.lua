@@ -19,14 +19,26 @@ end
 
 includes(path.join(os.projectdir(), "lib", "commonlibsf"))
 
+add_requires("nlohmann_json 3.11.3")
+add_requires("freetype 2.14.1", {
+    configs = {
+        bzip2 = false,
+        harfbuzz = false,
+        png = false,
+        shared = false,
+        woff2 = false,
+        zlib = false
+    }
+})
+
 local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
-local plugin_version = "0.1.1"
+local plugin_version = "0.10.0"
 local plugin_author = "Quantumyilmaz"
 
 set_project(plugin_name)
 set_version(plugin_version)
-set_license("GPL-3.0-or-later")
+set_license("GPL-3.0-only")
 set_languages("c++23")
 set_warnings("allextra")
 set_encodings("utf-8")
@@ -44,7 +56,10 @@ target("imgui", function()
         "extern/imgui/imgui_draw.cpp",
         "extern/imgui/imgui_tables.cpp",
         "extern/imgui/imgui_widgets.cpp",
-        "extern/imgui/backends/imgui_impl_dx12.cpp"
+        "extern/imgui/backends/imgui_impl_dx12.cpp",
+        "extern/imgui/backends/imgui_impl_win32.cpp",
+        "extern/imgui_bridge/FontVariation.cpp",
+        "extern/imgui_bridge/imgui_freetype_bridge.cpp"
     )
     add_headerfiles(
         "extern/imgui/imconfig.h",
@@ -53,9 +68,15 @@ target("imgui", function()
         "extern/imgui/imstb_rectpack.h",
         "extern/imgui/imstb_textedit.h",
         "extern/imgui/imstb_truetype.h",
-        "extern/imgui/backends/imgui_impl_dx12.h"
+        "extern/imgui/backends/imgui_impl_dx12.h",
+        "extern/imgui/backends/imgui_impl_win32.h",
+        "extern/imgui/misc/freetype/imgui_freetype.h",
+        "extern/imgui_bridge/FontVariation.h"
     )
+    add_defines("IMGUI_ENABLE_FREETYPE")
     add_includedirs("extern/imgui", { public = true })
+    add_includedirs("extern/imgui_bridge", { public = true })
+    add_packages("freetype", { public = true })
     add_syslinks("d3dcompiler", { public = true })
 end)
 
@@ -73,12 +94,27 @@ target(dll_name, function()
     })
 
     set_version(plugin_version)
-    set_license("GPL-3.0-or-later")
+    set_license("GPL-3.0-only")
     set_pcxxheader("src/PCH.h")
 
     add_deps("imgui")
+	add_packages("nlohmann_json")
     add_defines("_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING")
+    add_syslinks("comctl32")
     add_files("src/**.cpp")
     add_headerfiles("src/**.h", "include/**.h")
     add_includedirs("src", "include")
+    add_installfiles(
+        "public/SFSE/Plugins/SFSEMenuFrameworkThemes/*.json",
+        { prefixdir = "SFSE/Plugins/SFSEMenuFrameworkThemes" }
+    )
+    add_installfiles(
+        "public/SFSE/Plugins/Fonts/*",
+        { prefixdir = "SFSE/Plugins/Fonts" }
+    )
+    add_installfiles("COPYING", "EXCEPTIONS", "THIRD_PARTY_NOTICES.md")
+
+    before_install(function(target)
+        target:remove("installfiles", target:symbolfile())
+    end)
 end)

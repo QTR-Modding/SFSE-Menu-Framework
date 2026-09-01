@@ -1,5 +1,29 @@
-#include "McpWindow.h"
-#include "RenderHooks.h"
+#include "api/PluginInterface.h"
+#include "lifecycle/MenuLifecycle.h"
+#include "rendering/RenderHooks.h"
+
+#include <SFSEMenuFramework/API.h>
+
+#include <atomic>
+
+namespace
+{
+	std::atomic<bool> earlyLifecycleReady{ false };
+
+	void OnSFSEMessage(SFSE::MessagingInterface::Message* a_message)
+	{
+		if (!a_message || a_message->type != SFSE::MessagingInterface::kPostDataLoad) {
+			return;
+		}
+		if (!earlyLifecycleReady.load(std::memory_order_acquire)) {
+			return;
+		}
+
+		if (!SFSEMenuFramework::MenuLifecycle::ActivatePostDataLoad()) {
+			logger::critical("Post-data-load menu ownership activation failed");
+		}
+	}
+}
 
 SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 {
@@ -18,16 +42,43 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
-	if (!SFSEMenuFramework::McpWindow::Install()) {
-		logger::critical("Failed to register the built-in Mod Control Panel window");
+	const auto* taskInterface = SFSE::GetTaskInterface();
+	if (!taskInterface) {
+		logger::critical("The SFSE task interface is unavailable");
+		return false;
+	}
+
+	const auto* messagingInterface = SFSE::GetMessagingInterface();
+	if (!messagingInterface) {
+		logger::critical("The SFSE messaging interface is unavailable");
+		return false;
+	}
+
+	if (!messagingInterface->RegisterListener(OnSFSEMessage)) {
+		logger::critical("Failed to register the SFSE post-data-load listener");
 		return false;
 	}
 
 	if (!SFSEMenuFramework::RenderHooks::Install()) {
-		logger::critical("Failed to install the Scaleform render-pass hooks");
-		return false;
+		logger::critical(
+			"Failed to install the Scaleform render-pass hooks; the plugin will remain loaded but inactive");
+		return true;
 	}
 
-	logger::info("Empty Mod Control Panel window registered");
+	if (!SFSEMenuFramework::MenuLifecycle::InstallEarly(*taskInterface)) {
+		logger::critical(
+			"Failed to install the early menu lifecycle; the plugin will remain loaded but inactive");
+		return true;
+	}
+
+	earlyLifecycleReady.store(true, std::memory_order_release);
+	SFSEMenuFramework::PluginInterface::Publish();
+
+	logger::info("Menu input ownership waiting for SFSE post-data-load");
+	logger::info(
+		"External consumer interface v{} available",
+		SFSEMenuFramework::Model::INTERFACE_VERSION);
+	logger::info(
+		"Mod Control Panel starts closed and can open before SFSE post-data-load once rendering is ready");
 	return true;
 }
