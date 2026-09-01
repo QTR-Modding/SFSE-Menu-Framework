@@ -6,11 +6,11 @@ The public consumer API lives separately under `include/SFSEMenuFramework`.
 The implementation is organized by responsibility:
 
 - `api`: exported interface tables and the single DLL query entry point.
-- `runtime`: event dispatch, panel registration, window registration, and consumer validation.
+- `runtime`: lifecycle/HUD dispatch, panel/window registration, callback snapshots, and consumer validation.
 - `config`: framework settings, persistence, and root-menu visibility.
 - `appearance`: font discovery/rasterization and theme discovery/application.
 - `ui`: the framework control panel and settings window.
-- `input`: the game-input capture hook and keyboard suppression handoff.
+- `input`: the game-input capture hook, consumer input callbacks, and keyboard suppression handoff.
 - `lifecycle`: framework startup and ownership of game input, cursor, pause, and blur.
 - `platform/win32`: host-window discovery, subclassing, and keyboard/pointer routing.
 - `rendering`: D3D12/ImGui lifetime and render-hook installation.
@@ -26,6 +26,8 @@ Some files remain larger when one shared lock or lifetime makes a split harder t
   font-atlas resource retirement, descriptor-heap restoration, and frame
   lifecycle as one GPU transaction.
 - `input/InputCapture.cpp` owns one input-device hook and its lossless keyboard-edge token protocol.
+- `input/InputEventManager.cpp` and `runtime/HudManager.cpp` own the two
+  unregisterable SKSE Menu Framework-style consumer callback registries.
 - `lifecycle/MenuOwnership.cpp` owns the balanced acquisition and release of game input, cursor, pause, and blur.
 
 Within `platform/win32`, `Win32Platform.cpp` owns host-window discovery and

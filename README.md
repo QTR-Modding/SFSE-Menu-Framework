@@ -155,6 +155,53 @@ recorded framework frame; a listener explicitly removed between them is skipped
 for `kAfterRender`. Lifecycle callbacks run outside an active consumer ImGui
 frame and must not issue ImGui commands.
 
+Consumers can also use the SKSE Menu Framework-style native-input and
+persistent-HUD callbacks:
+
+```cpp
+SFSEMenuFramework::Model::InputEvent* inputEvent{};
+SFSEMenuFramework::Model::HudElement* hudElement{};
+
+bool __stdcall OnInput(RE::InputEvent* event) noexcept
+{
+    return ShouldConsume(event);
+}
+
+void __stdcall RenderHud() noexcept
+{
+    ImGui::GetForegroundDrawList()->AddText(
+        ImVec2(20.0F, 20.0F), IM_COL32_WHITE, "My HUD");
+}
+
+void RegisterInputAndHud()
+{
+    inputEvent = SFSEMenuFramework::AddInputEvent(&OnInput);
+    hudElement = SFSEMenuFramework::AddHudElement(&RenderHud);
+}
+```
+
+Input callbacks run synchronously on Starfield's native input-processing
+thread, in registration order, after the framework's own open/close handling.
+Every listener sees an event even when an earlier listener consumes it; any
+`true` result stops only that native event before later game receivers. The
+event pointer is callback-lifetime only and must not be retained, relinked, or
+freed. Consumer input callbacks are skipped while a recent completed frame
+reports an active ImGui item, matching SKSE Menu Framework behavior during
+normal rendering. The observation expires after 250 milliseconds without
+another completed frame so stale UI state cannot suppress callbacks
+indefinitely. That activity decision is fixed for an entire native input batch.
+Opening a blocking consumer window takes ownership after the framework has
+rendered and reconciled the window, but the callback's current native batch is
+suppressed immediately to match SKSE Menu Framework.
+
+HUD callbacks run on the render thread after `ImGui::NewFrame` and before
+framework windows. They continue while the Mod Control Panel is closed and
+share the same context, allocator, fonts, scale, and theme as other consumer
+render callbacks. Deleting either returned RAII object from another thread
+waits for its executing callback to finish and prevents another invocation;
+self-deletion lets the current invocation return normally. Registrations are
+usable from `kPostLoad`, before `kPostDataLoad`.
+
 Call panel and window registration from the SFSE `kPostLoad` message so it works
 regardless of DLL load order. Consumer projects must compile the four Dear ImGui
 core sources at version 1.90.8, commit
@@ -164,8 +211,10 @@ unmodified. Registration validates the public and internal ImGui layouts and
 rejects known non-default configuration families; the source-revision token is
 the consumer's declaration that it compiled the pinned core sources. The SDK
 header binds the consumer's ImGui copy to the framework context and allocator
-	for each callback. Render callbacks must be `noexcept` and must balance every
-	ImGui `Begin`/`End` and `Push`/`Pop` operation.
+for each callback. No callback may let an exception escape the framework's
+`noexcept` host boundary. Input callbacks run outside the render thread and
+must not call ImGui. Render callbacks must balance every ImGui `Begin`/`End`
+and `Push`/`Pop` operation.
 The ImGui context and `ImGui::GetIO().Fonts` atlas address remain stable across
 live font changes, but cached `ImFont*` values do not. Consumers must reacquire
 font pointers inside every render callback.
@@ -201,9 +250,9 @@ available under its [MIT license](extern/imgui/LICENSE.txt).
 
 This project is a Starfield port of
 [SKSE Menu Framework 3 by SkyrimThiago at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775).
-Its MCP shell, window and event APIs, settings presentation, theme schema and
-assets, font discovery and fallback flow, and modal-menu behavior are directly
-adapted under GPL-3.0-only.
+Its MCP shell, window, event, input-event, and persistent-HUD APIs, settings
+presentation, theme schema and assets, font discovery and fallback flow, and
+modal-menu behavior are directly adapted under GPL-3.0-only.
 
 The DirectX 12 renderer, pre-`kPostDataLoad` Raw Input bridge, stable
 registration snapshots, live atlas transaction, and variable-font controls are

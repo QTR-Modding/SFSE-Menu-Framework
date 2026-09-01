@@ -1,6 +1,7 @@
 #include "input/InputCapture.h"
 
 #include "config/FrameworkSettings.h"
+#include "input/InputEventManager.h"
 #include "runtime/WindowManager.h"
 
 #include <RE/B/BSInputDeviceManagerInput.h>
@@ -334,10 +335,13 @@ namespace SFSEMenuFramework::InputCapture
 				a_queueHead && TryClaimKeyboardSuppression(a_queueHead);
 
 			bool stateChanged{};
-			const bool captureBatch = modal.load(std::memory_order_acquire);
-			if (captureBatch || IsOperational()) {
+			const bool modalAtBatchStart =
+				modal.load(std::memory_order_acquire);
+			if (modalAtBatchStart || IsOperational()) {
 				auto event = a_queueHead;
 				std::size_t eventCount{};
+				// Match SKSE Menu Framework ordering: its own open/close edge is
+				// decided before any consumer sees the native event batch.
 				while (event && eventCount < maximumInputEvents) {
 					if (event->eventType == RE::InputEvent::EventType::kButton) {
 						const auto& button =
@@ -353,17 +357,40 @@ namespace SFSEMenuFramework::InputCapture
 					// Partial capture is not a safe modal state. Fail open for future
 					// batches and let the lifecycle owner close or suspend the menu.
 					FaultCaptureOnEventLimit();
-				} else if (captureBatch || keyboardEdgeMatched || stateChanged) {
-					// SKSE Menu Framework sends an empty queue on an actual open/close
-					// edge. During ordinary modal capture it retains only PrintScreen.
-					// Marking the shared Starfield events stopped gives later receivers
-					// the corresponding behavior without rewriting the linked queue.
-					const bool preservePrintScreen =
-						captureBatch && !keyboardEdgeMatched && !stateChanged;
+				} else {
+					// SKSE Menu Framework tests ImGui activity once for the whole
+					// native batch. Keep that decision stable if rendering publishes a
+					// new frame while Starfield is walking this queue.
+					const bool dispatchConsumerInput =
+						InputEventManager::IsDispatchEnabled();
+					// Every registered callback sees the event in registration order.
+					// A true result consumes only that event; Starfield represents
+					// consumption with kStop instead of Skyrim's queue relinking.
 					for (event = a_queueHead; event; event = event->next) {
-						if (!preservePrintScreen || !IsPrintScreen(*event)) {
-							auto* mutableEvent = const_cast<RE::InputEvent*>(event);
+						auto* mutableEvent = const_cast<RE::InputEvent*>(event);
+						if (dispatchConsumerInput &&
+							InputEventManager::Dispatch(mutableEvent)) {
 							mutableEvent->status = RE::InputEvent::Status::kStop;
+						}
+					}
+
+					const bool captureBatch = modalAtBatchStart ||
+						modal.load(std::memory_order_acquire) ||
+						WindowManager::IsAnyBlockingWindowOpened();
+					if (captureBatch || keyboardEdgeMatched || stateChanged) {
+						// SKSE Menu Framework sends an empty queue on an actual
+						// open/close edge. During ordinary modal capture it retains
+						// only PrintScreen. Marking the shared Starfield events
+						// stopped gives later receivers the corresponding behavior.
+						const bool preservePrintScreen =
+							captureBatch && !keyboardEdgeMatched && !stateChanged;
+						for (event = a_queueHead; event; event = event->next) {
+							if (!preservePrintScreen || !IsPrintScreen(*event)) {
+								auto* mutableEvent =
+									const_cast<RE::InputEvent*>(event);
+								mutableEvent->status =
+									RE::InputEvent::Status::kStop;
+							}
 						}
 					}
 				}

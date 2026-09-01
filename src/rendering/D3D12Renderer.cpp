@@ -2,8 +2,10 @@
 
 #include "appearance/FontManager.h"
 #include "appearance/ThemeManager.h"
+#include "input/InputEventManager.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/EventManager.h"
+#include "runtime/HudManager.h"
 #include "runtime/WindowManager.h"
 
 #include <backends/imgui_impl_dx12.h>
@@ -282,6 +284,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 		void ResetInitialization(RendererState& a_state)
 		{
+			InputEventManager::SetImGuiItemActive(false);
 			if (Win32Platform::HasLiveBackend()) {
 				logger::critical(
 					"Refusing to destroy an ImGui context while the Win32 backend is live");
@@ -560,6 +563,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 			rendererReady.load(std::memory_order_acquire) &&
 			Win32Platform::IsInitialized() && Win32Platform::IsHostWindowUsable();
 		const bool enable = a_enabled && canEnable;
+		if (!enable) {
+			InputEventManager::SetImGuiItemActive(false);
+		}
 		const bool applied = Win32Platform::UpdateInputState(
 			enable,
 			enable ? a_earlyRawMouseGeneration : 0);
@@ -634,6 +640,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		ImGui::SetCurrentContext(rendererState.Context);
 		auto& io = ImGui::GetIO();
 		if (!Win32Platform::PrepareFrame()) {
+			InputEventManager::SetImGuiItemActive(false);
 			return;
 		}
 		ImGui_ImplDX12_NewFrame();
@@ -690,8 +697,10 @@ namespace SFSEMenuFramework::D3D12Renderer
 			.Free = free,
 			.AllocatorUserData = allocatorUserData
 		};
+		HudManager::Render(renderContext);
 		const auto renderedGeneration =
 			WindowManager::RenderOpenWindows(renderContext);
+		InputEventManager::SetImGuiItemActive(ImGui::IsAnyItemActive());
 		ImGui::Render();
 
 		D3D12_RENDER_TARGET_VIEW_DESC renderTargetView{};

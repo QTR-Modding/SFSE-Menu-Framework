@@ -74,9 +74,11 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 
 	logger::info("Menu input ownership waiting for SFSE post-data-load");
 	logger::info(
-		"External panel interface v{} and consumer-window interface v{} available",
+		"External panel v{}, window v{}, lifecycle v{}, and input/HUD v{} interfaces available",
 		SFSEMenuFramework::Model::INTERFACE_VERSION,
-		SFSEMenuFramework::Model::INTERFACE_VERSION_2);
+		SFSEMenuFramework::Model::INTERFACE_VERSION_2,
+		SFSEMenuFramework::Model::INTERFACE_VERSION_3,
+		SFSEMenuFramework::Model::INTERFACE_VERSION_4);
 	logger::info(
 		"Mod Control Panel starts closed and can open before SFSE post-data-load once rendering is ready");
 	return true;

@@ -6,7 +6,8 @@ SFSE Menu Framework directly adapts implementation behavior and assets from
 [SKSE Menu Framework 3 by SkyrimThiago at commit
 `928e01ab459822a8d233ab99f0419ea1de23c775`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775).
 
-The theme loader behavior and `classic.json`, `modern.json`, and
+The consumer input-event and persistent-HUD registration/dispatch behavior,
+theme loader behavior and `classic.json`, `modern.json`, and
 `skyrimDefault.json`, together with the font discovery, fallback, and live
 rebuild request sequence, are used under GNU GPL version 3. The complete
 license is included in

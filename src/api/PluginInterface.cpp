@@ -1,4 +1,6 @@
+#include "input/InputEventManager.h"
 #include "runtime/EventManager.h"
+#include "runtime/HudManager.h"
 #include "runtime/PanelRegistry.h"
 #include "runtime/WindowManager.h"
 
@@ -40,6 +42,22 @@ namespace
 		.RegisterEvent = &EventManager::Register,
 		.UnregisterEvent = &EventManager::Unregister
 	};
+	const Model::InterfaceV4 interfaceV4{
+		.StructureSize = sizeof(Model::InterfaceV4),
+		.Version = Model::INTERFACE_VERSION_4,
+		.RegisterPanel = &PanelRegistry::Register,
+		.RegisterWindow = &WindowManager::RegisterWindow,
+		.GetMainWindow = &GetMainWindowAPI,
+		.IsAnyBlockingWindowOpened = &WindowManager::IsAnyBlockingWindowOpened,
+		.SetHotkeyEnabled = &WindowManager::SetHotkeyEnabled,
+		.IsHotkeyEnabled = &WindowManager::IsHotkeyEnabled,
+		.RegisterEvent = &EventManager::Register,
+		.UnregisterEvent = &EventManager::Unregister,
+		.RegisterInputEvent = &InputEventManager::Register,
+		.UnregisterInputEvent = &InputEventManager::Unregister,
+		.RegisterHudElement = &HudManager::Register,
+		.UnregisterHudElement = &HudManager::Unregister
+	};
 }
 
 extern "C" __declspec(dllexport)
@@ -54,6 +72,8 @@ extern "C" __declspec(dllexport)
 		return reinterpret_cast<const Interface*>(&interfaceV2);
 	case INTERFACE_VERSION_3:
 		return reinterpret_cast<const Interface*>(&interfaceV3);
+	case INTERFACE_VERSION_4:
+		return reinterpret_cast<const Interface*>(&interfaceV4);
 	default:
 		return nullptr;
 	}

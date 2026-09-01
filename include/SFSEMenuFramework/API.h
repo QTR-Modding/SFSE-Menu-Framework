@@ -4,17 +4,25 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace RE
+{
+	class InputEvent;
+}
+
 namespace SFSEMenuFramework::Model
 {
 	inline constexpr std::uint32_t INTERFACE_VERSION = 1;
 	inline constexpr std::uint32_t INTERFACE_VERSION_2 = 2;
 	inline constexpr std::uint32_t INTERFACE_VERSION_3 = 3;
+	inline constexpr std::uint32_t INTERFACE_VERSION_4 = 4;
 	inline constexpr std::uint32_t IMGUI_SOURCE_REVISION = 0x6F7B5D0E;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_ID_LENGTH = 255;
 	inline constexpr std::uint32_t MAXIMUM_PANEL_TEXT_LENGTH = 255;
 
 	using PanelHandle = std::uint64_t;
 	using EventHandle = std::uint64_t;
+	using InputEventHandle = std::uint64_t;
+	using HudElementHandle = std::uint64_t;
 
 	enum class RegistrationResult : std::uint32_t
 	{
@@ -91,6 +99,11 @@ namespace SFSEMenuFramework::Model
 		const RenderContext*,
 		void*) noexcept;
 	using EventCallback = void(__stdcall*)(EventType) noexcept;
+	using InputEventCallback = bool(__stdcall*)(RE::InputEvent*);
+	using HudElementCallback = void(__stdcall*)();
+	using HudElementRenderFunction = void(__stdcall*)(
+		const RenderContext*,
+		void*) noexcept;
 
 	class WindowInterface
 	{
@@ -131,6 +144,22 @@ namespace SFSEMenuFramework::Model
 		std::uint32_t Reserved{ 0 };
 	};
 
+	struct InputEventRegistration final
+	{
+		std::uint32_t      StructureSize{ sizeof(InputEventRegistration) };
+		std::uint32_t      InterfaceVersion{ INTERFACE_VERSION_4 };
+		InputEventCallback Callback{ nullptr };
+	};
+
+	struct HudElementRegistration final
+	{
+		std::uint32_t            StructureSize{ sizeof(HudElementRegistration) };
+		std::uint32_t            InterfaceVersion{ INTERFACE_VERSION_4 };
+		ImGuiLayout              ImGui{};
+		HudElementRenderFunction Render{ nullptr };
+		void*                    UserData{ nullptr };
+	};
+
 	using RegisterPanelFunction = RegistrationResult(__stdcall*)(
 		const PanelRegistration*,
 		PanelHandle*) noexcept;
@@ -145,6 +174,16 @@ namespace SFSEMenuFramework::Model
 		const EventRegistration*,
 		EventHandle*) noexcept;
 	using UnregisterEventFunction = void(__stdcall*)(EventHandle) noexcept;
+	using RegisterInputEventFunction = RegistrationResult(__stdcall*)(
+		const InputEventRegistration*,
+		InputEventHandle*) noexcept;
+	using UnregisterInputEventFunction = void(__stdcall*)(
+		InputEventHandle) noexcept;
+	using RegisterHudElementFunction = RegistrationResult(__stdcall*)(
+		const HudElementRegistration*,
+		HudElementHandle*) noexcept;
+	using UnregisterHudElementFunction = void(__stdcall*)(
+		HudElementHandle) noexcept;
 
 	struct Interface final
 	{
@@ -179,6 +218,24 @@ namespace SFSEMenuFramework::Model
 		UnregisterEventFunction           UnregisterEvent{ nullptr };
 	};
 
+	struct InterfaceV4 final
+	{
+		std::uint32_t                     StructureSize{ sizeof(InterfaceV4) };
+		std::uint32_t                     Version{ INTERFACE_VERSION_4 };
+		RegisterPanelFunction             RegisterPanel{ nullptr };
+		RegisterWindowFunction            RegisterWindow{ nullptr };
+		GetMainWindowFunction             GetMainWindow{ nullptr };
+		IsAnyBlockingWindowOpenedFunction IsAnyBlockingWindowOpened{ nullptr };
+		SetHotkeyEnabledFunction          SetHotkeyEnabled{ nullptr };
+		IsHotkeyEnabledFunction           IsHotkeyEnabled{ nullptr };
+		RegisterEventFunction             RegisterEvent{ nullptr };
+		UnregisterEventFunction           UnregisterEvent{ nullptr };
+		RegisterInputEventFunction        RegisterInputEvent{ nullptr };
+		UnregisterInputEventFunction      UnregisterInputEvent{ nullptr };
+		RegisterHudElementFunction        RegisterHudElement{ nullptr };
+		UnregisterHudElementFunction      UnregisterHudElement{ nullptr };
+	};
+
 	using QueryInterfaceFunction = const Interface* (__stdcall*)(std::uint32_t) noexcept;
 
 	static_assert(sizeof(void*) == 8);
@@ -188,8 +245,11 @@ namespace SFSEMenuFramework::Model
 	static_assert(sizeof(PanelRegistration) == 128);
 	static_assert(sizeof(WindowRegistration) == 88);
 	static_assert(sizeof(EventRegistration) == 24);
+	static_assert(sizeof(InputEventRegistration) == 16);
+	static_assert(sizeof(HudElementRegistration) == 80);
 	static_assert(sizeof(Interface) == 16);
 	static_assert(sizeof(InterfaceV2) == 56);
 	static_assert(sizeof(InterfaceV3) == 72);
+	static_assert(sizeof(InterfaceV4) == 104);
 	static_assert(std::atomic<bool>::is_always_lock_free);
 }

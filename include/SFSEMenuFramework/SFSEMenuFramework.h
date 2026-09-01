@@ -27,6 +27,11 @@ namespace SFSEMenuFramework
 			RenderFunction Render{ nullptr };
 		};
 
+		struct HudConsumerCallback final
+		{
+			Model::HudElementCallback Render{ nullptr };
+		};
+
 		inline thread_local std::string currentSection;
 
 #if defined(IMGUI_DISABLE) || defined(IMGUI_DISABLE_OBSOLETE_FUNCTIONS) || \
@@ -100,6 +105,24 @@ namespace SFSEMenuFramework
 				&Model::InterfaceV3::UnregisterEvent>();
 		}
 
+		[[nodiscard]] inline const Model::InterfaceV4* RequestInterfaceV4() noexcept
+		{
+			return RequestValidatedInterface<Model::InterfaceV4,
+				Model::INTERFACE_VERSION_4,
+				&Model::InterfaceV4::RegisterPanel,
+				&Model::InterfaceV4::RegisterWindow,
+				&Model::InterfaceV4::GetMainWindow,
+				&Model::InterfaceV4::IsAnyBlockingWindowOpened,
+				&Model::InterfaceV4::SetHotkeyEnabled,
+				&Model::InterfaceV4::IsHotkeyEnabled,
+				&Model::InterfaceV4::RegisterEvent,
+				&Model::InterfaceV4::UnregisterEvent,
+				&Model::InterfaceV4::RegisterInputEvent,
+				&Model::InterfaceV4::UnregisterInputEvent,
+				&Model::InterfaceV4::RegisterHudElement,
+				&Model::InterfaceV4::UnregisterHudElement>();
+		}
+
 		[[nodiscard]] inline Model::ImGuiLayout GetImGuiLayout() noexcept
 		{
 			return Model::ImGuiLayout{
@@ -120,6 +143,7 @@ namespace SFSEMenuFramework
 			};
 		}
 
+		template <class Consumer>
 		[[nodiscard]] inline bool InvokeConsumer(
 			const Model::RenderContext* a_context, void* a_userData) noexcept
 		{
@@ -130,6 +154,10 @@ namespace SFSEMenuFramework
 				!a_context->Allocate ||
 				!a_context->Free ||
 				!a_userData) {
+				return false;
+			}
+			const auto render = static_cast<Consumer*>(a_userData)->Render;
+			if (!render) {
 				return false;
 			}
 
@@ -146,7 +174,7 @@ namespace SFSEMenuFramework
 				a_context->AllocatorUserData);
 			ImGui::SetCurrentContext(
 				static_cast<ImGuiContext*>(a_context->ImGuiContext));
-			static_cast<ConsumerCallback*>(a_userData)->Render();
+			render();
 			ImGui::SetCurrentContext(previousContext);
 			ImGui::SetAllocatorFunctions(previousAllocate, previousFree,
 				previousAllocatorUserData);
@@ -156,7 +184,7 @@ namespace SFSEMenuFramework
 		[[nodiscard]] inline Model::PanelRenderResult __stdcall RenderPanel(
 			const Model::RenderContext* a_context, void* a_userData) noexcept
 		{
-			return InvokeConsumer(a_context, a_userData) ?
+			return InvokeConsumer<ConsumerCallback>(a_context, a_userData) ?
 				Model::PanelRenderResult::Continue :
 				Model::PanelRenderResult::Failed;
 		}
@@ -164,7 +192,15 @@ namespace SFSEMenuFramework
 		inline void __stdcall RenderWindow(
 			const Model::RenderContext* a_context, void* a_userData) noexcept
 		{
-			static_cast<void>(InvokeConsumer(a_context, a_userData));
+			static_cast<void>(
+				InvokeConsumer<ConsumerCallback>(a_context, a_userData));
+		}
+
+		inline void __stdcall RenderHudElement(
+			const Model::RenderContext* a_context, void* a_userData) noexcept
+		{
+			static_cast<void>(
+				InvokeConsumer<HudConsumerCallback>(a_context, a_userData));
 		}
 
 		[[nodiscard]] inline bool IsValidText(
@@ -189,11 +225,17 @@ namespace SFSEMenuFramework
 	namespace Model
 	{
 		class Event;
+		class InputEvent;
+		class HudElement;
 	}
 
 	[[nodiscard]] Model::Event* AddEvent(
 		Model::EventCallback a_callback,
 		float                a_priority = 0.0F) noexcept;
+	[[nodiscard]] Model::InputEvent* AddInputEvent(
+		Model::InputEventCallback a_callback) noexcept;
+	[[nodiscard]] Model::HudElement* AddHudElement(
+		Model::HudElementCallback a_callback) noexcept;
 
 	namespace Model
 	{
@@ -223,6 +265,71 @@ namespace SFSEMenuFramework
 
 			EventHandle Handle{ 0 };
 		};
+
+		class InputEvent final
+		{
+		public:
+			InputEvent(const InputEvent&) = delete;
+			InputEvent(InputEvent&&) = delete;
+			InputEvent& operator=(const InputEvent&) = delete;
+			InputEvent& operator=(InputEvent&&) = delete;
+
+			~InputEvent() noexcept
+			{
+				if (Handle != 0) {
+					if (const auto* api = Detail::RequestInterfaceV4()) {
+						api->UnregisterInputEvent(Handle);
+					}
+					Handle = 0;
+				}
+			}
+
+		private:
+			friend InputEvent* ::SFSEMenuFramework::AddInputEvent(
+				InputEventCallback) noexcept;
+
+			explicit InputEvent(InputEventHandle a_handle) noexcept :
+				Handle(a_handle)
+			{}
+
+			InputEventHandle Handle{ 0 };
+		};
+
+		class HudElement final
+		{
+		public:
+			HudElement(const HudElement&) = delete;
+			HudElement(HudElement&&) = delete;
+			HudElement& operator=(const HudElement&) = delete;
+			HudElement& operator=(HudElement&&) = delete;
+
+			~HudElement() noexcept
+			{
+				if (Handle != 0) {
+					if (const auto* api = Detail::RequestInterfaceV4()) {
+						api->UnregisterHudElement(Handle);
+					}
+					Handle = 0;
+				}
+				delete CallbackState;
+				CallbackState = nullptr;
+			}
+
+		private:
+			friend HudElement* ::SFSEMenuFramework::AddHudElement(
+				HudElementCallback) noexcept;
+
+			HudElement(
+				HudElementHandle                            a_handle,
+				::SFSEMenuFramework::Detail::HudConsumerCallback* a_callbackState) noexcept :
+				Handle(a_handle),
+				CallbackState(a_callbackState)
+			{}
+
+			HudElementHandle Handle{ 0 };
+			::SFSEMenuFramework::Detail::HudConsumerCallback*
+				CallbackState{ nullptr };
+		};
 	}
 
 	[[nodiscard]] inline bool IsInstalled() noexcept
@@ -233,6 +340,16 @@ namespace SFSEMenuFramework
 	[[nodiscard]] inline bool IsEventAPIAvailable() noexcept
 	{
 		return Detail::RequestInterfaceV3() != nullptr;
+	}
+
+	[[nodiscard]] inline bool IsInputEventAPIAvailable() noexcept
+	{
+		return Detail::RequestInterfaceV4() != nullptr;
+	}
+
+	[[nodiscard]] inline bool IsHudElementAPIAvailable() noexcept
+	{
+		return Detail::RequestInterfaceV4() != nullptr;
 	}
 
 	[[nodiscard]] inline bool SetSection(std::string_view a_section)
@@ -378,6 +495,77 @@ namespace SFSEMenuFramework
 			api->UnregisterEvent(handle);
 		}
 		return event;
+	}
+
+	[[nodiscard]] inline Model::InputEvent* AddInputEvent(
+		Model::InputEventCallback a_callback) noexcept
+	{
+		if (!a_callback) {
+			return nullptr;
+		}
+
+		const auto* api = Detail::RequestInterfaceV4();
+		if (!api) {
+			return nullptr;
+		}
+
+		const Model::InputEventRegistration registration{
+			.StructureSize = sizeof(Model::InputEventRegistration),
+			.InterfaceVersion = Model::INTERFACE_VERSION_4,
+			.Callback = a_callback
+		};
+		Model::InputEventHandle handle{};
+		const auto result = api->RegisterInputEvent(&registration, &handle);
+		if (result != Model::RegistrationResult::Success || handle == 0) {
+			return nullptr;
+		}
+
+		auto* inputEvent = new (std::nothrow) Model::InputEvent(handle);
+		if (!inputEvent) {
+			api->UnregisterInputEvent(handle);
+		}
+		return inputEvent;
+	}
+
+	[[nodiscard]] inline Model::HudElement* AddHudElement(
+		Model::HudElementCallback a_callback) noexcept
+	{
+		if (!a_callback) {
+			return nullptr;
+		}
+
+		const auto* api = Detail::RequestInterfaceV4();
+		if (!api) {
+			return nullptr;
+		}
+
+		auto* callbackState = new (std::nothrow)
+			Detail::HudConsumerCallback{ a_callback };
+		if (!callbackState) {
+			return nullptr;
+		}
+
+		const Model::HudElementRegistration registration{
+			.StructureSize = sizeof(Model::HudElementRegistration),
+			.InterfaceVersion = Model::INTERFACE_VERSION_4,
+			.ImGui = Detail::GetImGuiLayout(),
+			.Render = &Detail::RenderHudElement,
+			.UserData = callbackState
+		};
+		Model::HudElementHandle handle{};
+		const auto result = api->RegisterHudElement(&registration, &handle);
+		if (result != Model::RegistrationResult::Success || handle == 0) {
+			delete callbackState;
+			return nullptr;
+		}
+
+		auto* hudElement =
+			new (std::nothrow) Model::HudElement(handle, callbackState);
+		if (!hudElement) {
+			api->UnregisterHudElement(handle);
+			delete callbackState;
+		}
+		return hudElement;
 	}
 
 	[[nodiscard]] inline Model::WindowInterface* GetMainWindow() noexcept
