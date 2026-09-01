@@ -107,7 +107,7 @@ The exception text is reproduced verbatim:
 
 SFSE Menu Framework links the
 [QTR CommonLibSF fork at commit
-`7b71b944285771c1478faa5568bf2a3fe1b70471`](https://github.com/QTR-Modding/commonlibsf/tree/7b71b944285771c1478faa5568bf2a3fe1b70471),
+`72c9fc34099d7e8ebd95008b05287f82725ac955`](https://github.com/QTR-Modding/commonlibsf/tree/72c9fc34099d7e8ebd95008b05287f82725ac955),
 including fork modifications by Quantumyilmaz, and its pinned
 [commonlib-shared dependency at commit
 `5470284e964d5510aa001dca3e0bb5548b6356a4`](https://github.com/libxse/commonlib-shared/tree/5470284e964d5510aa001dca3e0bb5548b6356a4).
