@@ -1,3 +1,4 @@
+#include "api/PluginInterface.h"
 #include "lifecycle/MenuLifecycle.h"
 #include "rendering/RenderHooks.h"
 
@@ -71,6 +72,7 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 	}
 
 	earlyLifecycleReady.store(true, std::memory_order_release);
+	SFSEMenuFramework::PluginInterface::Publish();
 
 	logger::info("Menu input ownership waiting for SFSE post-data-load");
 	logger::info(

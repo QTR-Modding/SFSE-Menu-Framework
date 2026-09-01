@@ -92,10 +92,13 @@ namespace
 		std::string_view a_menuName,
 		bool             a_archived)
 	{
-		menuConfigSaveFailed =
-			!SFSEMenuFramework::RootMenuConfig::SetArchived(
-				a_menuName,
-				a_archived);
+		const bool saved = SFSEMenuFramework::RootMenuConfig::SetArchived(
+			a_menuName,
+			a_archived);
+		menuConfigSaveFailed = !saved;
+		if (!saved) {
+			return;
+		}
 		if (a_archived && selectedNode &&
 			selectedNode->FullPath.starts_with(a_menuName) &&
 			selectedNode->FullPath.size() > a_menuName.size() &&
@@ -180,7 +183,7 @@ namespace
 		}
 
 		const bool nodeOpen = ImGui::TreeNodeEx(
-			a_node->FullPath.c_str(),
+			a_node.get(),
 			flags,
 			"%s",
 			a_node->Name.c_str());

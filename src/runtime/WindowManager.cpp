@@ -27,6 +27,7 @@ namespace
 		WindowRenderFunction       BuiltInRender{ nullptr };
 		Model::WindowRenderFunction ExternalRender{ nullptr };
 		void*                      UserData{ nullptr };
+		bool                       PauseGameWhenBlocking{ false };
 		bool                       WasBlockingOpen{ false };
 	};
 
@@ -85,6 +86,11 @@ namespace
 					std::memory_order_acquire);
 				state.AnyOpen |= open;
 				state.AnyBlocking |= blocking;
+				if (blocking) {
+					state.PauseGame |= window->ExternalRender ?
+						window->PauseGameWhenBlocking :
+						window->Interface.PauseGame.load(std::memory_order_acquire);
+				}
 				state.BlockingOpenEdges += blocking && !window->WasBlockingOpen;
 				window->WasBlockingOpen = blocking;
 			}
@@ -92,7 +98,6 @@ namespace
 		const auto* main = a_registry.MainWindow.load(std::memory_order_acquire);
 		state.MainOpen = main && main->IsOpen.load(std::memory_order_acquire);
 		if (state.AnyBlocking) {
-			state.PauseGame = !main || main->PauseGame.load(std::memory_order_acquire);
 			state.BlurBackground = !main ||
 				main->BlurBackground.load(std::memory_order_acquire);
 		}
@@ -221,6 +226,7 @@ namespace SFSEMenuFramework
 			auto window = std::make_unique<Window>();
 			window->ExternalRender = a_registration->Render;
 			window->UserData = a_registration->UserData;
+			window->PauseGameWhenBlocking = a_registration->BlockUserInput != 0;
 			window->Interface.BlockUserInput.store(
 				a_registration->BlockUserInput != 0, std::memory_order_relaxed);
 			*a_window = PublishWindow(*registry, std::move(window));

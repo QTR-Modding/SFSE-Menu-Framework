@@ -121,8 +121,11 @@ void RegisterWindow()
 `AddWindow` returns a stable process-lifetime `WindowInterface`, matching the
 original framework's assignment model. `IsOpen` and `BlockUserInput` are atomic
 and may be changed directly. Every open blocking window participates in the
-same cursor, input, pause, and blur ownership; nonblocking windows continue to
-render without taking Starfield input. `GetMainWindow`,
+same cursor, input, and blur ownership; nonblocking windows continue to render
+without taking Starfield input. The second `AddWindow` argument records whether
+that consumer window pauses Starfield while it is open and blocking; it is
+independent of the MCP's `Freeze time while menu is open` setting. Changing
+`BlockUserInput` later does not change that stored pause policy. `GetMainWindow`,
 `IsAnyBlockingWindowOpened`, `SetHotkeyEnabled`, and `IsHotkeyEnabled` are also
 available. The configured hotkey controls only the main Mod Control Panel;
 `Escape` can still close it while hotkeys are disabled. Opening or re-blocking

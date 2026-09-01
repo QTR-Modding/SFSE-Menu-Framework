@@ -1,3 +1,4 @@
+#include "api/PluginInterface.h"
 #include "appearance/FontManager.h"
 #include "input/InputEventManager.h"
 #include "runtime/EventManager.h"
@@ -5,6 +6,7 @@
 #include "runtime/PanelRegistry.h"
 #include "runtime/WindowManager.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <string_view>
@@ -12,6 +14,7 @@
 namespace
 {
 	using namespace SFSEMenuFramework;
+	std::atomic<bool> consumerInterfaceReady{ false };
 
 	[[nodiscard]] Model::WindowInterface* __stdcall GetMainWindowAPI() noexcept
 	{
@@ -55,10 +58,20 @@ namespace
 	};
 }
 
+namespace SFSEMenuFramework::PluginInterface
+{
+	void Publish() noexcept
+	{
+		consumerInterfaceReady.store(true, std::memory_order_release);
+	}
+}
+
 extern "C" __declspec(dllexport)
 	const SFSEMenuFramework::Model::Interface* __stdcall
 	SFSEMenuFramework_QueryInterface(std::uint32_t a_version) noexcept
 {
 	using namespace SFSEMenuFramework::Model;
-	return a_version == INTERFACE_VERSION ? &consumerInterface : nullptr;
+	return a_version == INTERFACE_VERSION &&
+			consumerInterfaceReady.load(std::memory_order_acquire) ?
+		&consumerInterface : nullptr;
 }

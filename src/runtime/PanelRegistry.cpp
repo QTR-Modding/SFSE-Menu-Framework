@@ -36,7 +36,7 @@ namespace SFSEMenuFramework
 			return a_text.Data && a_text.Size && a_text.Size <= a_maximumLength &&
 				!std::memchr(a_text.Data, '\0', a_text.Size);
 		}
-		void AddToMenuTree(
+		[[nodiscard]] bool AddToMenuTree(
 			PanelRegistryState&                          a_registry,
 			const PanelRegistry::PanelPointer& a_panel)
 		{
@@ -69,8 +69,11 @@ namespace SFSEMenuFramework
 				children = &node->Children;
 			}
 			if (firstMissing == parts.size()) {
+				if (node->Panel.load(std::memory_order_acquire)) {
+					return false;
+				}
 				node->Panel.store(a_panel, std::memory_order_release);
-				return;
+				return true;
 			}
 			// Allocate the complete missing branch before publishing its root.
 			// A failed allocation therefore cannot expose partial empty nodes.
@@ -96,6 +99,7 @@ namespace SFSEMenuFramework
 			                std::make_shared<PanelRegistry::MenuTree>();
 			next->push_back(std::move(branch));
 			children->store(std::move(next), std::memory_order_release);
+			return true;
 		}
 	}
 
@@ -154,8 +158,10 @@ namespace SFSEMenuFramework
 				})) {
 				return Model::RegistrationResult::DuplicateId;
 			}
+			if (!AddToMenuTree(*registry, panel)) {
+				return Model::RegistrationResult::DuplicatePath;
+			}
 			const auto registeredHandle = registry->NextHandle++;
-			AddToMenuTree(*registry, panel);
 			registry->Panels.push_back(std::move(panel));
 			if (a_handle) {
 				*a_handle = registeredHandle;

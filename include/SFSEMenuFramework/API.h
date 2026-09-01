@@ -33,7 +33,8 @@ namespace SFSEMenuFramework::Model
 		DuplicateId,
 		RegistryFull,
 		OutOfMemory,
-		InternalError
+		InternalError,
+		DuplicatePath
 	};
 
 	enum class PanelRenderResult : std::uint32_t

@@ -19,6 +19,12 @@ namespace SFSEMenuFramework::RootMenuConfig
 		constexpr char configPath[]{ "Data/SFSE/Plugins/SFSEMenuFrameworkMenuConfig.json" };
 
 		using MenuNames = std::set<std::string, std::less<>>;
+		enum class MenuList
+		{
+			Favorites,
+			Archived
+		};
+
 		MenuNames favoriteMenus;
 		MenuNames archivedMenus;
 
@@ -36,12 +42,14 @@ namespace SFSEMenuFramework::RootMenuConfig
 			}
 		}
 
-		[[nodiscard]] bool Save() noexcept
+		[[nodiscard]] bool Save(
+			const MenuNames& a_favoriteMenus,
+			const MenuNames& a_archivedMenus) noexcept
 		{
 			try {
 				const nlohmann::json config{
-					{ "favorites", favoriteMenus },
-					{ "archived", archivedMenus }
+					{ "favorites", a_favoriteMenus },
+					{ "archived", a_archivedMenus }
 				};
 
 				std::ofstream file{ configPath, std::ios::trunc };
@@ -68,13 +76,26 @@ namespace SFSEMenuFramework::RootMenuConfig
 		}
 
 		[[nodiscard]] bool SetMenuState(
-			MenuNames& a_menuNames, std::string_view a_menuName, bool a_enabled) noexcept
+			MenuNames&       a_menuNames,
+			std::string_view a_menuName,
+			bool             a_enabled,
+			MenuList         a_list) noexcept
 		{
 			try {
+				MenuNames candidate = a_menuNames;
 				const bool changed = a_enabled ?
-					a_menuNames.emplace(a_menuName).second :
-					a_menuNames.erase(a_menuName) > 0;
-				return !changed || Save();
+					candidate.emplace(a_menuName).second :
+					candidate.erase(a_menuName) > 0;
+				if (!changed) {
+					return true;
+				}
+				const bool saved = a_list == MenuList::Favorites ?
+					Save(candidate, archivedMenus) :
+					Save(favoriteMenus, candidate);
+				if (saved) {
+					a_menuNames.swap(candidate);
+				}
+				return saved;
 			} catch (const std::exception& exception) {
 				logger::error(
 					"Could not update root menu configuration '{}': {}",
@@ -130,10 +151,12 @@ namespace SFSEMenuFramework::RootMenuConfig
 	bool IsArchived(std::string_view a_menuName) noexcept { return archivedMenus.contains(a_menuName); }
 	bool SetFavorite(std::string_view a_menuName, bool a_favorite) noexcept
 	{
-		return SetMenuState(favoriteMenus, a_menuName, a_favorite);
+		return SetMenuState(
+			favoriteMenus, a_menuName, a_favorite, MenuList::Favorites);
 	}
 	bool SetArchived(std::string_view a_menuName, bool a_archived) noexcept
 	{
-		return SetMenuState(archivedMenus, a_menuName, a_archived);
+		return SetMenuState(
+			archivedMenus, a_menuName, a_archived, MenuList::Archived);
 	}
 }
