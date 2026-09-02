@@ -25,6 +25,8 @@ namespace SFSEMenuFramework::Fonts
 			const FrameworkSettings::FontSettings& a_settings) noexcept
 		{
 			a_atlas.Clear();
+			// Keep SDK-native atlas methods on the host's FreeType builder.
+			a_atlas.FontBuilderIO = ImGuiFreeType::GetBuilderForFreeType();
 			a_atlas.Flags &= ~ImFontAtlasFlags_NoPowerOfTwoHeight;
 			a_atlas.TexDesiredWidth = 0;
 			a_atlas.FontBuilderFlags = 0;

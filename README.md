@@ -1,289 +1,132 @@
 # SFSE Menu Framework
 
-SFSE Menu Framework is a native Starfield Script Extender plugin for building ImGui menus directly in C++.
+SFSE Menu Framework is a native Starfield Script Extender plugin that lets
+other C++ SFSE plugins add ImGui pages and windows without owning a renderer,
+input hook, ImGui context, or ImGui implementation.
 
 ## Requirements
 
 - Starfield 1.16.244
-- [SFSE](https://sfse.silverlock.org/)
-- Address Library for SFSE Plugins matching Starfield 1.16.244
-- [Xmake](https://xmake.io/) 3.0.9 or newer
-- A C++23-capable MSVC toolchain
+- SFSE 0.2.21
+- Address Library for Starfield 1.16.244
 
-## Controls
+Building also requires Xmake 3.0.9 or newer and a C++23-capable MSVC toolchain.
+
+## Controls and appearance
 
 - Press `F1` once to open or close the Mod Control Panel.
 - On a gamepad, double-press Start to open it; one press closes it.
-- Press `Escape` while the panel is open to return to the game.
+- Press `Escape` while it is open to return control to Starfield.
 
-Menu style, bindings, toggle modes, pause, background blur, font rendering mode,
-font face, variable font weight, logical font size, manual UI scale, and optional
-language glyph ranges are configurable through
-`Options > Open Settings` and
-`Data/SFSE/Plugins/SFSEMenuFramework.ini`.
-The bundled `CLASSIC`, `MODERN`, `SKYRIMDEFAULT`, and `STARFIELD` themes live in
-`Data/SFSE/Plugins/SFSEMenuFrameworkThemes`. Additional JSON themes using
-the same schema appear in the selector after the next game restart.
-The framework defaults to the `STARFIELD` theme and bundled Space Grotesk
-variable face at weight 300, 40 logical px, 100% UI scale, and FreeType
-auto-hinting. The variable face supports live weights from 300 through 700.
-Jost 400 Book and Jost 500 Medium are bundled as fallback faces.
-Jost 400 Book is also merged behind a selected primary to fill missing default
-text glyphs without replacing glyphs the primary already provides.
-ASCII-named direct-child `.ttf` and `.otf` files placed in
-`Data/SFSE/Plugins/Fonts` appear in the selector and become available to
-consumer callbacks after the next game restart. The three bundled Font Awesome
-faces are reserved for the icon API and do not clutter the primary-font selector.
-An adjacent, same-stem JSON file can override one face's logical size; for
-`Example.ttf`, `Example.json` may contain `{ "fontSize": 22.0 }`. The
-case-sensitive `fontSize` value must be a positive finite JSON number. It is
-multiplied by the current UI scale, and an override above the 96 raster-pixel
-safety limit is ignored.
-Font rendering mode, face, variable weight, font size, UI scale, and glyph-range
-previews apply live; weight, size, and scale commit when their controls are
-released, and `Save` persists the current preview.
-If the selected font is missing or cannot build the framework tries the
-bundled Jost faces and then ImGui's embedded font. Custom font files are
-trusted local mod assets. A standard OpenType `wght` axis is detected
-automatically; other variation axes, color fonts, CFF2, and otherwise
-specialized OpenType features are not controlled by the framework.
-The main window follows SKSE Menu Framework's shell: slash-delimited entries
-form a collapsible navigation tree, the search box filters top-level mod
-sections, and favorite sections sort before the remaining alphabetical list.
-Sections can also be archived and restored through `Options`; that state is
-stored in
-`Data/SFSE/Plugins/SFSEMenuFrameworkMenuConfig.json`.
-`Options > Resume Game` leaves the ImGui windows visible while returning
-control to Starfield. Close and reopen the MCP to make it modal again.
-Built-in window placement is retained across restarts in
-`Data/SFSE/Plugins/SFSEMenuFramework.imgui.ini`; `Reset Windows` replaces that
-saved placement with the centered defaults.
-The panel can open during startup as soon as Starfield's window and renderer are
-ready. As soon as the open panel has produced its first visible frame, its ImGui
-software cursor, relative mouse movement, mouse buttons and wheel, keyboard,
-gamepad, and bounded native-input routing are active even before SFSE
-`kPostDataLoad`. Starfield cursor, control-layer, pause, and blur ownership
-activate after `kPostDataLoad`.
+`Options > Open Settings` controls the theme, input bindings, toggle modes,
+pause and blur preferences, font face, variable weight, logical size, UI
+scale, rendering mode, and optional language glyph ranges. Appearance changes
+preview live and `Save` persists them.
 
-## C++ consumer API
+The default appearance uses the `STARFIELD` theme, Space Grotesk variable font
+at weight 300, 40 logical pixels, 100% UI scale, and FreeType auto-hinting.
+Jost Book and Medium are bundled as fallbacks. Additional direct-child `.ttf`
+and `.otf` files in `Data/SFSE/Plugins/Fonts` become available after restart.
+Additional theme JSON files using the bundled schema belong in
+`Data/SFSE/Plugins/SFSEMenuFrameworkThemes`.
 
-An SFSE plugin can register a page without installing its own renderer, window
-hook, or input hook:
+Slash-delimited registrations form a collapsible navigation tree. Top-level
+sections can be searched, favorited, archived, and restored. Menu state and
+window placement are stored under `Data/SFSE/Plugins`.
+
+The panel can open as soon as Starfield's window and renderer are ready, before
+`kPostDataLoad`. Consumer callbacks that use game data must gate that work at
+their own appropriate SFSE lifecycle boundary.
+
+## C++ client API
+
+Clients use the separate MIT-licensed, header-only
+[SFSE-MCP](https://github.com/QTR-Modding/SFSE-MCP) package:
 
 ```cpp
-#include <SFSEMenuFramework/SFSEMenuFramework.h>
+#include <SFSEMCP/SFSEMenuFramework.hpp>
 
-void __stdcall RenderSettings() noexcept
+void __stdcall DrawSettings()
 {
-    ImGui::TextUnformatted("Hello from my SFSE plugin");
+    ImGuiMCP::TextUnformatted("Hello from Starfield");
+    if (ImGuiMCP::Button("Increment")) {
+        // Handle the button.
+    }
 }
 
 void RegisterMenu()
 {
-    if (!SFSEMenuFramework::IsInstalled() ||
-        !SFSEMenuFramework::SetSection("My Plugin")) {
-        return;
-    }
-
-    SFSEMenuFramework::AddSectionItem("Settings/General", &RenderSettings);
+    SFSEMenuFramework::SetSection("My Plugin");
+    SFSEMenuFramework::AddSectionItem("Settings/General", &DrawSettings);
 }
 ```
 
-The title passed to `AddSectionItem` may contain `/` separators. Combined
-with the current section, it recreates SKSE Menu Framework's arbitrary-depth
-menu path without changing the binary interface. Use `SetSection` for the
-top-level menu name and place nested path separators in `AddSectionItem`.
-Sections cannot contain `/`; title separators must occur only between nonempty
-path components. Malformed paths are rejected rather than normalized. Menu
-names containing `##` or `###` are displayed literally.
+Register during SFSE `kPostLoad`. The framework exports
+`SFSEPlugin_Preload` so its DLL and symbols are mapped before ordinary client
+plugins load.
 
-The consumer interface is published before the first rendered frame so plugins
-can register once during SFSE `kPostLoad`. `IsInstalled()` reports that this ABI
-is present, not that the first renderer frame has completed. Renderer-dependent
-registrations are accepted while initialization is pending; after a permanent
-failure, new panel, window, lifecycle-event, and HUD registrations return
-`InterfaceUnavailable`. Input-event registration and all unregister operations
-remain available because they do not depend on frame rendering.
+The client compiles and links no Dear ImGui implementation. Every `ImGuiMCP`
+wrapper resolves an `ig*` export from `SFSEMenuFramework.dll`, and the
+framework executes the call against its own ImGui context.
 
-Consumers can also register a separate, resizable ImGui window with the same
-SKSE Menu Framework-style control surface:
+### Standalone windows
 
 ```cpp
-SFSEMenuFramework::Model::WindowInterface* window{};
+MENU_WINDOW window{};
 
-void __stdcall RenderWindow() noexcept
+void __stdcall DrawWindow()
 {
     bool open = window->IsOpen.load();
-    ImGui::Begin("My Plugin Window", &open);
-    ImGui::TextUnformatted("Consumer-owned window");
-    ImGui::End();
+    if (ImGuiMCP::Begin("My Plugin Window", &open)) {
+        ImGuiMCP::TextUnformatted("Standalone content");
+    }
+    ImGuiMCP::End();
     window->IsOpen.store(open);
 }
 
 void RegisterWindow()
 {
-    window = SFSEMenuFramework::AddWindow(&RenderWindow, true);
-    if (window) {
-        window->IsOpen.store(true);
-    }
+    window = SFSEMenuFramework::AddWindow(&DrawWindow, true);
 }
 ```
 
-`AddWindow` returns a stable process-lifetime `WindowInterface`, matching the
-original framework's assignment model. `IsOpen` and `BlockUserInput` are atomic
-and may be changed directly. Every open blocking window participates in the
-same cursor, input, and blur ownership; nonblocking windows continue to render
-without taking Starfield input. The second `AddWindow` argument records whether
-that consumer window pauses Starfield while it is open and blocking; it is
-independent of the MCP's `Freeze time while menu is open` setting. Changing
-`BlockUserInput` later does not change that stored pause policy. `GetMainWindow`,
-`IsAnyBlockingWindowOpened`, `SetHotkeyEnabled`, and `IsHotkeyEnabled` are also
-available. The configured hotkey controls only the main Mod Control Panel;
-`Escape` can still close it while hotkeys are disabled. Opening or re-blocking
-a framework-rendered ImGui window can currently center the software cursor
-once; subsequent mouse movement remains unrestricted.
+`WindowInterface::IsOpen` and `BlockUserInput` are atomic. The second
+`AddWindow` parameter is named `blockUserInput` because it initializes
+`BlockUserInput`; correcting the old parameter name does not affect C++ call
+compatibility. The `AddWindowWithView` signature is retained; Starfield creates a
+normal framework window and ignores `viewName` because the pinned Skyrim host
+never implemented the view-specific export.
 
-Consumers can subscribe to the same lifecycle events exposed by SKSE Menu
-Framework:
+### Lifecycle, input, and HUD callbacks
 
-```cpp
-SFSEMenuFramework::Model::Event* lifecycleEvent{};
+`AddEvent` exposes `kOpenMenu`, `kCloseMenu`, `kBeforeRender`, and
+`kAfterRender`. Higher priorities run first. `AddInputEvent` can consume a
+native `RE::InputEvent` by returning `true`. `AddHudElement` renders every
+framework frame before windows. Delete the returned registration object to
+unregister it.
 
-void __stdcall OnFrameworkEvent(
-    SFSEMenuFramework::Model::EventType type) noexcept
-{
-    // kOpenMenu, kCloseMenu, kBeforeRender, or kAfterRender
-}
+HUD, page, and window callbacks run with the framework's ImGui context active.
+Input callbacks do not run on the render path and must not call ImGui. No
+callback may let an exception cross the framework boundary.
 
-void RegisterEvents()
-{
-    lifecycleEvent = SFSEMenuFramework::AddEvent(&OnFrameworkEvent, 10.0F);
-}
-```
+Lifecycle event callbacks run on the render thread, but outside an active ImGui
+frame: `kBeforeRender` is dispatched before `ImGui::NewFrame()` and
+`kAfterRender` after `ImGui::Render()`. They must not call `ImGuiMCP`.
 
-Higher priorities run first; equal priorities retain registration order.
-Deleting the returned `Event` unregisters it. Deletion from another thread
-waits for an executing callback to finish and prevents any later callback from
-starting; self-deletion lets that current callback return normally.
-`kOpenMenu` and `kCloseMenu` report framework-routed main Mod Control Panel
-state edges only. Consumer-owned windows do not emit them, and directly storing
-through `GetMainWindow()->IsOpen` bypasses lifecycle delivery. Consumers should
-treat the main window's `IsOpen` as read-only and must not race direct stores
-against the framework's controls. All four callbacks run on the render thread.
-Queued open/close edges are drained before
-the following framework frame's `kBeforeRender`. They are ordered edge history,
-not state snapshots: if the MCP changes again before delivery, query
-`GetMainWindow()->IsOpen` separately for its current state. `kBeforeRender`
-and `kAfterRender` use the same listener snapshot around each successfully
-recorded framework frame; a listener explicitly removed between them is skipped
-for `kAfterRender`. Lifecycle callbacks run outside an active consumer ImGui
-frame and must not issue ImGui commands.
+`LoadTexture` and `DisposeTexture` remain in SFSE-MCP for source
+compatibility, but texture support is intentionally deferred. This host does
+not currently export them, so loading returns a null texture and disposal is a
+no-op.
 
-Consumers can also use the SKSE Menu Framework-style native-input and
-persistent-HUD callbacks:
+### Fonts and icons
 
-```cpp
-SFSEMenuFramework::Model::InputEvent* inputEvent{};
-SFSEMenuFramework::Model::HudElement* hudElement{};
-
-bool __stdcall OnInput(RE::InputEvent* event) noexcept
-{
-    return ShouldConsume(event);
-}
-
-void __stdcall RenderHud() noexcept
-{
-    ImGui::GetForegroundDrawList()->AddText(
-        ImVec2(20.0F, 20.0F), IM_COL32_WHITE, "My HUD");
-}
-
-void RegisterInputAndHud()
-{
-    inputEvent = SFSEMenuFramework::AddInputEvent(&OnInput);
-    hudElement = SFSEMenuFramework::AddHudElement(&RenderHud);
-}
-```
-
-Input callbacks run synchronously on Starfield's native input-processing
-thread, in registration order, after the framework's own open/close handling.
-Every listener sees an event even when an earlier listener consumes it; any
-`true` result stops only that native event before later game receivers. The
-event pointer is callback-lifetime only and must not be retained, relinked, or
-freed. Consumer input callbacks are skipped while a recent completed frame
-reports an active ImGui item, matching SKSE Menu Framework behavior during
-normal rendering. The observation expires after 250 milliseconds without
-another completed frame so stale UI state cannot suppress callbacks
-indefinitely. That activity decision is fixed for an entire native input batch.
-Opening a blocking consumer window takes ownership after the framework has
-rendered and reconciled the window, but the callback's current native batch is
-suppressed immediately to match SKSE Menu Framework.
-
-HUD callbacks run on the render thread after `ImGui::NewFrame` and before
-framework windows. They continue while the Mod Control Panel is closed and
-share the same context, allocator, fonts, scale, and theme as other consumer
-render callbacks. Deleting either returned RAII object from another thread
-waits for its executing callback to finish and prevents another invocation;
-self-deletion lets the current invocation return normally. Registrations are
-usable from `kPostLoad`, before `kPostDataLoad`.
-
-Named text and Font Awesome faces can be selected inside any panel, window, or
-HUD render callback:
-
-```cpp
-void __stdcall RenderWithFonts() noexcept
-{
-    SFSEMenuFramework::ScopedFont text{ "Jost-400-Book" };
-    if (text) {
-        ImGui::TextUnformatted("Jost selected by filename stem");
-    }
-
-    SFSEMenuFramework::ScopedFont icon{
-        SFSEMenuFramework::FontAwesome::SolidFont };
-    if (icon) {
-        ImGui::TextUnformatted("\xEF\x83\xA9  Font Awesome solid umbrella");
-    }
-}
-```
-
-`PushFont` accepts a case-insensitive filename or filename stem and returns
-`false` when the face is unavailable or the call is outside an active consumer
-render callback. `PopFont` removes only a matching successful framework push;
-`ScopedFont` is the preferred balanced form. `FontAwesome::PushSolid`,
-`PushRegular`, `PushBrands`, and `Pop` provide the familiar SKSE Menu
-Framework-style convenience names; `FontAwesome::UnicodeToUtf8` converts an
-icon code point to text accepted by ImGui. The framework restores the font-stack
-baseline after each consumer callback so one plugin cannot leak a font into the
-next plugin's UI.
-
-The optional Greek, Cyrillic, Vietnamese, Turkish, Thai, Korean, Japanese,
-Simplified Chinese, and Full Chinese ranges control which glyphs are rasterized.
-They cannot add characters that the selected font file does not contain. The
-two Chinese choices are alternatives; Full uses substantially more atlas memory.
-
-Call panel and window registration from the SFSE `kPostLoad` message so it works
-regardless of DLL load order. Consumer projects must compile the four Dear ImGui
-core sources at version 1.90.8, commit
-`6f7b5d0ee2fe9948ab871a530888a6dc5c960700`, and must not compile or initialize
-an ImGui platform or renderer backend. The pinned `imconfig.h` must remain
-unmodified. Registration validates the public and internal ImGui layouts and
-rejects known non-default configuration families; the source-revision token is
-the consumer's declaration that it compiled the pinned core sources. The SDK
-header binds the consumer's ImGui copy to the framework context and allocator
-for each callback. No callback may let an exception escape the framework's
-`noexcept` host boundary. Input callbacks run outside the render thread and
-must not call ImGui. Render callbacks must balance every ImGui `Begin`/`End`
-and `Push`/`Pop` operation.
-The ImGui context and `ImGui::GetIO().Fonts` atlas address remain stable across
-live font changes, but cached `ImFont*` values do not. Consumers must reacquire
-raw font pointers inside every render callback; the named font API performs that
-lookup against the current generation for every push.
-Because a registered page can render before `kPostDataLoad`, its callback must
-gate any data-dependent engine access at the consumer plugin's own lifecycle
-boundary.
+`SFSEMenuFramework::PushFont` selects a discovered font by filename or stem.
+`FontAwesome::PushSolid`, `PushRegular`, and `PushBrands` select the bundled
+icon faces; pair a successful push with `FontAwesome::Pop`. Cached raw
+`ImFont*` pointers are invalidated by live font rebuilds, so clients should use
+the named font helpers inside each render callback.
 
 ## Build
-
-Clone the repository with its submodules, then build the Release-with-debug-information configuration:
 
 ```powershell
 git clone --recurse-submodules https://github.com/QTR-Modding/SFSE-Menu-Framework.git
@@ -304,18 +147,12 @@ Original SFSE Menu Framework code is licensed under
 [GPL-3.0-only](COPYING) with the
 [Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS).
 SKSE Menu Framework-derived portions remain GPL-3.0-only as detailed in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Dear ImGui remains
-available under its [MIT license](extern/imgui/LICENSE.txt).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 This project is a Starfield port of
 [SKSE Menu Framework 3 by SkyrimThiago at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775).
-Its MCP shell, window, event, input-event, persistent-HUD, and named-font APIs,
-settings presentation, theme schema and assets, font discovery, glyph-range,
-fallback, and icon-composite flow, and modal-menu behavior are directly adapted
-under GPL-3.0-only.
-
-The DirectX 12 renderer, pre-`kPostDataLoad` Raw Input bridge, stable
-registration snapshots, live atlas transaction, and variable-font controls are
-Starfield-specific. Exact source revisions, borrowed implementation boundaries,
-licenses, exceptions, and bundled-asset notices are listed in
+The DirectX 12 renderer, early Raw Input bridge, stable callback snapshots,
+live font-atlas transaction, and variable-font controls are Starfield-specific.
+Exact source revisions, borrowed implementation boundaries, licenses,
+exceptions, and bundled-asset notices are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

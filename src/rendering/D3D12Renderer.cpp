@@ -160,8 +160,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 				"descriptor-heap creation");
 		}
 
-		// Adapted from Dear ImGui 1.90.8 imgui_impl_dx12.cpp at
-		// 6f7b5d0ee2fe9948ab871a530888a6dc5c960700 (MIT). Each live atlas gets
+		// Adapted from Dear ImGui 1.90.8-docking imgui_impl_dx12.cpp at
+		// 6d948ab47ecf984239af01434f3ed03808dbf188 (MIT). Each live atlas gets
 		// its own heap; CompletionSlot keeps its resources alive through GPU use.
 		[[nodiscard]] bool CreateFontTexture(
 			ID3D12Device*              a_device,
@@ -632,12 +632,12 @@ namespace SFSEMenuFramework::D3D12Renderer
 			return;
 		}
 
+		ImGui::SetCurrentContext(rendererState.Context);
 		EventManager::Snapshot lifecycleSnapshot;
 		if (!EventManager::BeginFrame(lifecycleSnapshot)) {
 			return;
 		}
 
-		ImGui::SetCurrentContext(rendererState.Context);
 		auto& io = ImGui::GetIO();
 		if (!Win32Platform::PrepareFrame()) {
 			InputEventManager::SetImGuiItemActive(false);

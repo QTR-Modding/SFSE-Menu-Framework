@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SFSEMenuFramework/API.h>
+#include "api/InternalTypes.h"
 
 #include <atomic>
 #include <cstdint>

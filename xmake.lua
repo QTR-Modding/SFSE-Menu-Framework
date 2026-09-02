@@ -53,14 +53,19 @@ target("imgui", function()
 
     add_files(
         "extern/imgui/imgui.cpp",
-        "extern/imgui/imgui_draw.cpp",
+        "extern/imgui/imgui_demo.cpp",
         "extern/imgui/imgui_tables.cpp",
         "extern/imgui/imgui_widgets.cpp",
-        "extern/imgui/backends/imgui_impl_dx12.cpp",
         "extern/imgui/backends/imgui_impl_win32.cpp",
         "extern/imgui_bridge/FontVariation.cpp",
         "extern/imgui_bridge/imgui_freetype_bridge.cpp"
     )
+    add_files("extern/imgui/imgui_draw.cpp", {
+        defines = "IMGUI_ENABLE_STB_TRUETYPE"
+    })
+    add_files("extern/imgui/backends/imgui_impl_dx12.cpp", {
+        cxflags = "/wd4189"
+    })
     add_headerfiles(
         "extern/imgui/imconfig.h",
         "extern/imgui/imgui.h",
@@ -101,9 +106,14 @@ target(dll_name, function()
 	add_packages("nlohmann_json")
     add_defines("_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING")
     add_syslinks("comctl32")
+    -- Generated from Dear ImGui 1.90.8-docking by cimgui and copied from the
+    -- pinned SKSE Menu Framework reference. Compile it directly into the DLL
+    -- so every CIMGUI_API entry remains present in the export table.
+    add_files("extern/cimgui-generated/cimgui.cpp")
+    add_headerfiles("extern/cimgui-generated/cimgui.h")
     add_files("src/**.cpp")
-    add_headerfiles("src/**.h", "include/**.h")
-    add_includedirs("src", "include")
+    add_headerfiles("src/**.h")
+    add_includedirs("src")
     add_installfiles(
         "public/SFSE/Plugins/SFSEMenuFrameworkThemes/*.json",
         { prefixdir = "SFSE/Plugins/SFSEMenuFrameworkThemes" }

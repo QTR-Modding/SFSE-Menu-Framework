@@ -3,7 +3,6 @@
 #include "runtime/ConsumerValidation.h"
 
 #include <algorithm>
-#include <cstring>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -16,52 +15,33 @@ namespace SFSEMenuFramework
 {
 	namespace
 	{
-		constexpr std::size_t maximumPanelCount = 1024;
+		constexpr std::size_t maximumPanelPathLength = 1024;
 		struct PanelRegistryState final
 		{
-			std::mutex                                 Mutex;
-			std::vector<PanelRegistry::PanelPointer>   Panels;
+			std::mutex                                  Mutex;
 			std::atomic<PanelRegistry::MenuTreePointer> Roots;
-			Model::PanelHandle                          NextHandle{ 1 };
 		};
 		[[nodiscard]] PanelRegistryState* GetPanelRegistryState() noexcept
 		{
 			static auto* registry = new (std::nothrow) PanelRegistryState();
 			return registry;
 		}
-		[[nodiscard]] bool IsValidText(
-			const Model::StringView& a_text,
-			std::uint32_t            a_maximumLength) noexcept
+		[[nodiscard]] bool IsValidPath(std::string_view a_path) noexcept
 		{
-			return a_text.Data && a_text.Size && a_text.Size <= a_maximumLength &&
-				!std::memchr(a_text.Data, '\0', a_text.Size);
-		}
-		[[nodiscard]] bool IsValidSection(
-			const Model::StringView& a_section) noexcept
-		{
-			return IsValidText(a_section, Model::MAXIMUM_PANEL_TEXT_LENGTH) &&
-				!std::memchr(a_section.Data, '/', a_section.Size);
-		}
-		[[nodiscard]] bool IsValidTitlePath(
-			const Model::StringView& a_title) noexcept
-		{
-			if (!IsValidText(a_title, Model::MAXIMUM_PANEL_TEXT_LENGTH)) {
-				return false;
-			}
-			const std::string_view title{ a_title.Data, a_title.Size };
-			return title.front() != '/' && title.back() != '/' &&
-				title.find("//") == std::string_view::npos;
+			return !a_path.empty() &&
+				a_path.size() <= maximumPanelPathLength &&
+				a_path.front() != '/' && a_path.back() != '/' &&
+				a_path.find("//") == std::string_view::npos;
 		}
 		[[nodiscard]] bool AddToMenuTree(
-			PanelRegistryState&                          a_registry,
-			const PanelRegistry::PanelPointer& a_panel)
+			PanelRegistryState&                a_registry,
+			const PanelRegistry::PanelPointer& a_panel,
+			std::string_view                   a_path)
 		{
-			const std::string path = a_panel->Section + '/' + a_panel->Title;
-			const std::string_view pathView{ path };
 			std::vector<std::string_view> parts;
-			for (std::size_t begin = 0; begin < path.size();) {
-				const auto slash = path.find('/', begin);
-				parts.push_back(pathView.substr(
+			for (std::size_t begin = 0; begin < a_path.size();) {
+				const auto slash = a_path.find('/', begin);
+				parts.push_back(a_path.substr(
 					begin,
 					slash == std::string::npos ? slash : slash - begin));
 				if (slash == std::string::npos) {
@@ -98,8 +78,8 @@ namespace SFSEMenuFramework
 				node = std::make_shared<PanelRegistry::MenuNode>();
 				node->Name = parts[index];
 				const auto prefixLength = static_cast<std::size_t>(
-					parts[index].data() - path.data()) + parts[index].size();
-				node->FullPath.assign(path.data(), prefixLength);
+					parts[index].data() - a_path.data()) + parts[index].size();
+				node->FullPath.assign(a_path.data(), prefixLength);
 				if (branch) {
 					auto list = std::make_shared<PanelRegistry::MenuTree>();
 					list->push_back(std::move(branch));
@@ -119,74 +99,34 @@ namespace SFSEMenuFramework
 		}
 	}
 
-	Model::RegistrationResult PanelRegistry::Register(
-		const Model::PanelRegistration* a_registration,
-		Model::PanelHandle*              a_handle) noexcept
+	bool PanelRegistry::RegisterDirect(
+		std::string_view      a_path,
+		DirectRenderFunction a_render) noexcept
 	{
-		if (a_handle) {
-			*a_handle = 0;
+		if (!IsValidPath(a_path) || !a_render) {
+			return false;
 		}
-		if (!a_registration) {
-			return Model::RegistrationResult::InvalidArgument;
-		}
-		if (a_registration->StructureSize < sizeof(Model::PanelRegistration) ||
-			a_registration->ImGui.StructureSize < sizeof(Model::ImGuiLayout)) {
-			return Model::RegistrationResult::StructureTooSmall;
-		}
-		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION) {
-			return Model::RegistrationResult::UnsupportedVersion;
-		}
-		if (!a_registration->Render ||
-			!IsValidText(a_registration->Id, Model::MAXIMUM_PANEL_ID_LENGTH) ||
-			!IsValidSection(a_registration->Section) ||
-			!IsValidTitlePath(a_registration->Title)) {
-			return Model::RegistrationResult::InvalidArgument;
-		}
-		if (!Detail::HasMatchingImGuiLayout(a_registration->ImGui)) {
-			return Model::RegistrationResult::ImGuiMismatch;
-		}
-		void* ownerModule{};
-		if (!Detail::IsExecutableImageFunction(a_registration->Render, &ownerModule)) {
-			return Model::RegistrationResult::InvalidArgument;
+		if (!Detail::IsExecutableImageFunction(a_render)) {
+			return false;
 		}
 		try {
 			auto panel = std::make_shared<Panel>();
-			panel->OwnerModule = ownerModule;
-			panel->Id.assign(a_registration->Id.Data, a_registration->Id.Size);
-			panel->Section.assign(
-				a_registration->Section.Data, a_registration->Section.Size);
-			panel->Title.assign(
-				a_registration->Title.Data, a_registration->Title.Size);
-			panel->Render = a_registration->Render;
-			panel->UserData = a_registration->UserData;
+			panel->Render = a_render;
+
 			auto* registry = GetPanelRegistryState();
 			if (!registry) {
-				return Model::RegistrationResult::OutOfMemory;
+				return false;
 			}
 			std::scoped_lock lock{ registry->Mutex };
-			if (registry->Panels.size() >= maximumPanelCount) {
-				return Model::RegistrationResult::RegistryFull;
+			if (!AddToMenuTree(*registry, panel, a_path)) {
+				logger::warn("Rejected duplicate panel path '{}'", a_path);
+				return false;
 			}
-			registry->Panels.reserve(maximumPanelCount);
-			if (std::ranges::any_of(registry->Panels, [&](const auto& registered) {
-					return registered->OwnerModule == panel->OwnerModule &&
-						registered->Id == panel->Id;
-				})) {
-				return Model::RegistrationResult::DuplicateId;
-			}
-			if (!AddToMenuTree(*registry, panel)) {
-				return Model::RegistrationResult::DuplicatePath;
-			}
-			const auto registeredHandle = registry->NextHandle++;
-			registry->Panels.push_back(std::move(panel));
-			if (a_handle) {
-				*a_handle = registeredHandle;
-			}
-			return Model::RegistrationResult::Success;
+			return true;
 		} catch (const std::bad_alloc&) {
-			return Model::RegistrationResult::OutOfMemory;
+			return false;
 		} catch (const std::system_error&) {
-			return Model::RegistrationResult::InternalError;
+			return false;
 		}
 	}
 
@@ -196,27 +136,12 @@ namespace SFSEMenuFramework
 		return registry ? registry->Roots.load(std::memory_order_acquire) : nullptr;
 	}
 
-	void PanelRegistry::Render(
-		const PanelPointer&         a_panel,
-		const Model::RenderContext& a_context)
+	void PanelRegistry::Render(const PanelPointer& a_panel)
 	{
-		if (!a_panel ||
-			!a_panel->Enabled.load(std::memory_order_acquire) ||
-			!a_panel->Render) {
+		if (!a_panel || !a_panel->Render) {
 			return;
 		}
 		ConsumerFontScope::CallbackScope callbackScope{ "panel" };
-		const auto result = a_panel->Render(&a_context, a_panel->UserData);
-		if (result == Model::PanelRenderResult::Continue) {
-			return;
-		}
-		a_panel->Enabled.store(false, std::memory_order_release);
-		if (result == Model::PanelRenderResult::Failed) {
-			logger::error("Disabled panel '{} / {}' after its render callback failed",
-				a_panel->Section, a_panel->Title);
-		} else {
-			logger::info("Panel '{} / {}' disabled itself",
-				a_panel->Section, a_panel->Title);
-		}
+		a_panel->Render();
 	}
 }

@@ -52,6 +52,7 @@ namespace SFSEMenuFramework::FontManager
 	[[nodiscard]] inline float GetActiveUIScale() noexcept {
 		return GetActiveInfo().Settings.UIScale; }
 	[[nodiscard]] std::string_view GetLastApplyError() noexcept;
+	[[nodiscard]] bool PushDefaultFont() noexcept;
 	[[nodiscard]] bool PushFont(std::string_view) noexcept;
 	[[nodiscard]] bool PopFont() noexcept;
 }
