@@ -126,7 +126,10 @@ namespace SFSEMenuFramework::RenderHooks
 			return std::ranges::all_of(a_targets, a_predicate);
 		}
 
-		[[nodiscard]] bool GetModulePath(std::uintptr_t a_address, wchar_t (&a_path)[MAX_PATH])
+		[[nodiscard]] bool GetModulePath(
+			std::uintptr_t a_address,
+			wchar_t (&a_path)[MAX_PATH],
+			HMODULE* a_module = nullptr)
 		{
 			if (!HasMemoryAccess(a_address, true)) {
 				return false;
@@ -140,7 +143,13 @@ namespace SFSEMenuFramework::RenderHooks
 				return false;
 			}
 			const auto length = ::GetModuleFileNameW(module, a_path, MAX_PATH);
-			return length != 0 && length < MAX_PATH;
+			if (length == 0 || length >= MAX_PATH) {
+				return false;
+			}
+			if (a_module) {
+				*a_module = module;
+			}
+			return true;
 		}
 
 		[[nodiscard]] bool IsNativeD3D12Target(std::uintptr_t a_address)
@@ -155,14 +164,17 @@ namespace SFSEMenuFramework::RenderHooks
 			       ::_wcsicmp(fileName, L"d3d12core.dll") == 0;
 		}
 
-		[[nodiscard]] bool IsAdjacentStreamlineTarget(std::uintptr_t a_address)
+		[[nodiscard]] bool IsGameAdjacentModuleTarget(
+			std::uintptr_t a_address,
+			const wchar_t* a_fileName,
+			HMODULE*       a_module = nullptr)
 		{
 			wchar_t ownerPath[MAX_PATH]{};
-			if (!GetModulePath(a_address, ownerPath)) {
+			if (!GetModulePath(a_address, ownerPath, a_module)) {
 				return false;
 			}
 			auto* ownerFileName = std::wcsrchr(ownerPath, L'\\');
-			if (!ownerFileName || ::_wcsicmp(ownerFileName + 1, L"sl.interposer.dll") != 0) {
+			if (!ownerFileName || ::_wcsicmp(ownerFileName + 1, a_fileName) != 0) {
 				return false;
 			}
 			*ownerFileName = L'\0';
@@ -179,6 +191,53 @@ namespace SFSEMenuFramework::RenderHooks
 			}
 			*executableFileName = L'\0';
 			return ::_wcsicmp(ownerPath, executablePath) == 0;
+		}
+
+		[[nodiscard]] bool IsAdjacentStreamlineTarget(std::uintptr_t a_address)
+		{
+			return IsGameAdjacentModuleTarget(a_address, L"sl.interposer.dll");
+		}
+
+		[[nodiscard]] bool IsVerifiedReShadeProxy(
+			const REL::Relocation<std::uintptr_t>& a_vtable,
+			const CommandTargets&                  a_targets)
+		{
+			const auto queryInterfaceTarget = ReadVtableSlot(a_vtable, 0);
+			HMODULE ownerModule{};
+			if (!IsGameAdjacentModuleTarget(
+					queryInterfaceTarget,
+					L"dxgi.dll",
+					&ownerModule)) {
+				return false;
+			}
+
+			for (const auto target : a_targets) {
+				HMODULE targetModule{};
+				wchar_t targetPath[MAX_PATH]{};
+				if (!GetModulePath(target, targetPath, &targetModule) ||
+					targetModule != ownerModule) {
+					return false;
+				}
+			}
+
+			const auto version = ::GetProcAddress(ownerModule, "ReShadeVersion");
+			if (!version ||
+				!HasMemoryAccess(reinterpret_cast<std::uintptr_t>(version), false)) {
+				return false;
+			}
+
+			constexpr std::array requiredFunctions{
+				"ReShadeRegisterAddon",
+				"ReShadeUnregisterAddon"
+			};
+			for (const auto* exportName : requiredFunctions) {
+				const auto exported = ::GetProcAddress(ownerModule, exportName);
+				if (!exported ||
+					!HasMemoryAccess(reinterpret_cast<std::uintptr_t>(exported), true)) {
+					return false;
+				}
+			}
+			return true;
 		}
 
 		template <class T>
@@ -572,13 +631,20 @@ namespace SFSEMenuFramework::RenderHooks
 			FunctionAddress(&ResourceBarrierThunk),
 			FunctionAddress(&SetDescriptorHeapsThunk)
 		};
-		bool targetsValid = AllTargets(targets, IsNativeD3D12Target);
+		const bool nativeTargets = AllTargets(targets, IsNativeD3D12Target);
+		const bool reShadeProxy =
+			!nativeTargets && IsVerifiedReShadeProxy(vtable, targets);
+		bool targetsValid = nativeTargets || reShadeProxy;
 		for (std::size_t index = 0; index < targets.size(); ++index) {
 			targetsValid = targetsValid && targets[index] != replacements[index];
 		}
 		if (!targetsValid) {
-			logger::critical("Unsupported native D3D12 command-list targets");
+			logger::critical("Unsupported D3D12 command-list targets");
 			return fail();
+		}
+		if (reShadeProxy) {
+			logger::info(
+				"Verified game-adjacent ReShade D3D12 command-list proxy; chaining its vtable");
 		}
 
 		resetOriginal.store(reinterpret_cast<ResetFunction>(targets[0]), std::memory_order_release);
