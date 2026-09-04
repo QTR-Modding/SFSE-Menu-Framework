@@ -10,7 +10,6 @@ namespace SFSEMenuFramework
 		static bool Install();
 
 	private:
-		static void __stdcall Render(
-			const Model::RenderContext& a_context);
+		static void __stdcall Render();
 	};
 }

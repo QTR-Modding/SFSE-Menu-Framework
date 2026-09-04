@@ -4,9 +4,8 @@
 
 namespace SFSEMenuFramework::InputEventManager
 {
-	[[nodiscard]] Model::RegistrationResult Register(
-		const Model::InputEventRegistration* a_registration,
-		Model::InputEventHandle*              a_handle) noexcept;
+	[[nodiscard]] Model::InputEventHandle Register(
+		Model::InputEventCallback a_callback) noexcept;
 	void Unregister(Model::InputEventHandle a_handle) noexcept;
 
 	[[nodiscard]] bool IsDispatchEnabled() noexcept;

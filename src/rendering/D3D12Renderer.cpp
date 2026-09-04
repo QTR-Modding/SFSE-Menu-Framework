@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
-#include <type_traits>
 #include <utility>
 
 #include <wrl/client.h>
@@ -48,7 +47,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 		std::atomic<std::uint64_t> renderedBlockingWindowGeneration{ 0 };
 		std::atomic<std::uint64_t> lastBlockingWindowRenderTick{ 0 };
-		std::atomic<std::uint64_t> nextContextGeneration{ 1 };
 		std::atomic<bool>          rendererReady{ false };
 		thread_local bool          renderInProgress{};
 
@@ -93,7 +91,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 			FontResources                                  ActiveFontResources;
 			std::uint64_t                                  NextFrameIndex{ 0 };
 			ImGuiContext*                                  Context{ nullptr };
-			std::uint64_t                                  ContextGeneration{ 0 };
 			bool                                           InitializationFailed{ false };
 		};
 
@@ -299,7 +296,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 				}
 				ImGui::DestroyContext(a_state.Context);
 				a_state.Context = nullptr;
-				a_state.ContextGeneration = 0;
 			}
 
 			a_state.RenderTargetHeap.Reset();
@@ -485,9 +481,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 				logger::critical("Failed to create the ImGui context");
 				return fail();
 			}
-			a_state.ContextGeneration =
-				nextContextGeneration.fetch_add(1, std::memory_order_relaxed);
-
 			ImGui::SetCurrentContext(a_state.Context);
 			auto& io = ImGui::GetIO();
 			io.IniFilename = imguiIniFilename;
@@ -675,24 +668,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 			Model::EventType::kBeforeRender,
 			lifecycleSnapshot);
 		ImGui::NewFrame();
-		ImGuiMemAllocFunc allocate{};
-		ImGuiMemFreeFunc free{};
-		void* allocatorUserData{};
-		ImGui::GetAllocatorFunctions(&allocate, &free, &allocatorUserData);
-		static_assert(std::is_same_v<Model::ImGuiAllocateFunction, ImGuiMemAllocFunc>);
-		static_assert(std::is_same_v<Model::ImGuiFreeFunction, ImGuiMemFreeFunc>);
-		const Model::RenderContext renderContext{
-			.StructureSize = sizeof(Model::RenderContext),
-			.InterfaceVersion = Model::INTERFACE_VERSION,
-			.ContextGeneration = rendererState.ContextGeneration,
-			.ImGuiContext = rendererState.Context,
-			.Allocate = allocate,
-			.Free = free,
-			.AllocatorUserData = allocatorUserData
-		};
-		HudManager::Render(renderContext);
-		const auto renderedGeneration =
-			WindowManager::RenderOpenWindows(renderContext);
+		HudManager::Render();
+		const auto renderedGeneration = WindowManager::RenderOpenWindows();
 		InputEventManager::SetImGuiItemActive(ImGui::IsAnyItemActive());
 		ImGui::Render();
 

@@ -4,10 +4,9 @@
 
 namespace SFSEMenuFramework::HudManager
 {
-	[[nodiscard]] Model::RegistrationResult Register(
-		const Model::HudElementRegistration* a_registration,
-		Model::HudElementHandle*              a_handle) noexcept;
+	[[nodiscard]] Model::HudElementHandle Register(
+		Model::ClientHudElementRenderFunction a_callback) noexcept;
 	void Unregister(Model::HudElementHandle a_handle) noexcept;
 
-	void Render(const Model::RenderContext& a_context) noexcept;
+	void Render() noexcept;
 }

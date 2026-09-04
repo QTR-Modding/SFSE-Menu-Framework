@@ -5,10 +5,6 @@
 #include "runtime/PanelRegistry.h"
 #include "runtime/WindowManager.h"
 
-#include <imgui.h>
-#include <imgui_internal.h>
-
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -21,9 +17,9 @@ namespace
 {
 	using namespace SFSEMenuFramework;
 
-	using DirectRenderFunction = void(__stdcall*)();
-	using DirectInputEventCallback = bool(__stdcall*)(RE::InputEvent*);
-	using DirectHudElementCallback = void(__stdcall*)();
+	using DirectRenderFunction = Model::ClientWindowRenderFunction;
+	using DirectInputEventCallback = Model::InputEventCallback;
+	using DirectHudElementCallback = Model::ClientHudElementRenderFunction;
 
 	static_assert(sizeof(DirectRenderFunction) == sizeof(void*));
 	static_assert(sizeof(DirectHudElementCallback) == sizeof(void*));
@@ -33,47 +29,6 @@ namespace
 		offsetof(Model::WindowInterface, BlockUserInput) ==
 		sizeof(std::atomic<bool>));
 
-	[[nodiscard]] Model::ImGuiLayout GetHostImGuiLayout() noexcept
-	{
-		return Model::ImGuiLayout{
-			.StructureSize = sizeof(Model::ImGuiLayout),
-			.VersionNumber = IMGUI_VERSION_NUM,
-			.SourceRevision = Model::IMGUI_SOURCE_REVISION,
-			.ConfigurationFlags = 0,
-			.IoSize = sizeof(ImGuiIO),
-			.StyleSize = sizeof(ImGuiStyle),
-			.ContextSize = sizeof(ImGuiContext),
-			.Vec2Size = sizeof(ImVec2),
-			.Vec4Size = sizeof(ImVec4),
-			.DrawVertSize = sizeof(ImDrawVert),
-			.DrawIdxSize = sizeof(ImDrawIdx),
-			.DrawCmdSize = sizeof(ImDrawCmd),
-			.TextureIdSize = sizeof(ImTextureID),
-			.WcharSize = sizeof(ImWchar)
-		};
-	}
-
-	void __stdcall RenderWindow(
-		const Model::RenderContext*,
-		void* a_callback) noexcept
-	{
-		const auto callback =
-			std::bit_cast<DirectRenderFunction>(a_callback);
-		if (callback) {
-			callback();
-		}
-	}
-
-	void __stdcall RenderHudElement(
-		const Model::RenderContext*,
-		void* a_callback) noexcept
-	{
-		const auto callback =
-			std::bit_cast<DirectHudElementCallback>(a_callback);
-		if (callback) {
-			callback();
-		}
-	}
 }
 
 extern "C" __declspec(dllexport) void AddSectionItem(
@@ -94,18 +49,7 @@ extern "C" __declspec(dllexport)
 	if (!a_render) {
 		return nullptr;
 	}
-	const Model::WindowRegistration registration{
-		.StructureSize = sizeof(Model::WindowRegistration),
-		.InterfaceVersion = Model::INTERFACE_VERSION,
-		.ImGui = GetHostImGuiLayout(),
-		.Render = &RenderWindow,
-		.UserData = std::bit_cast<void*>(a_render),
-		.BlockUserInput = 1
-	};
-	Model::WindowInterface* window{};
-	return WindowManager::RegisterWindow(&registration, &window) ==
-			Model::RegistrationResult::Success ?
-		window : nullptr;
+	return WindowManager::AddExternalWindow(a_render);
 }
 
 extern "C" __declspec(dllexport)
@@ -154,16 +98,8 @@ extern "C" __declspec(dllexport) void Pop()
 extern "C" __declspec(dllexport) std::int64_t RegisterInputEvent(
 	DirectInputEventCallback a_callback)
 {
-	using namespace SFSEMenuFramework;
-	const Model::InputEventRegistration registration{
-		.StructureSize = sizeof(Model::InputEventRegistration),
-		.InterfaceVersion = Model::INTERFACE_VERSION,
-		.Callback = a_callback
-	};
-	Model::InputEventHandle handle{};
-	return InputEventManager::Register(&registration, &handle) ==
-			Model::RegistrationResult::Success ?
-		static_cast<std::int64_t>(handle) : 0;
+	return static_cast<std::int64_t>(
+		SFSEMenuFramework::InputEventManager::Register(a_callback));
 }
 
 extern "C" __declspec(dllexport) void UnregisterInputEvent(
@@ -175,21 +111,8 @@ extern "C" __declspec(dllexport) void UnregisterInputEvent(
 extern "C" __declspec(dllexport) std::int64_t RegisterHudElement(
 	DirectHudElementCallback a_callback)
 {
-	using namespace SFSEMenuFramework;
-	if (!a_callback) {
-		return 0;
-	}
-	const Model::HudElementRegistration registration{
-		.StructureSize = sizeof(Model::HudElementRegistration),
-		.InterfaceVersion = Model::INTERFACE_VERSION,
-		.ImGui = GetHostImGuiLayout(),
-		.Render = &RenderHudElement,
-		.UserData = std::bit_cast<void*>(a_callback)
-	};
-	Model::HudElementHandle handle{};
-	return HudManager::Register(&registration, &handle) ==
-			Model::RegistrationResult::Success ?
-		static_cast<std::int64_t>(handle) : 0;
+	return static_cast<std::int64_t>(
+		SFSEMenuFramework::HudManager::Register(a_callback));
 }
 
 extern "C" __declspec(dllexport) void UnregisterHudElement(
@@ -207,17 +130,8 @@ extern "C" __declspec(dllexport) std::int64_t RegisterEventPriority(
 	SFSEMenuFramework::Model::EventCallback a_callback,
 	float a_priority)
 {
-	using namespace SFSEMenuFramework;
-	const Model::EventRegistration registration{
-		.StructureSize = sizeof(Model::EventRegistration),
-		.InterfaceVersion = Model::INTERFACE_VERSION,
-		.Callback = a_callback,
-		.Priority = a_priority
-	};
-	Model::EventHandle handle{};
-	return EventManager::Register(&registration, &handle) ==
-			Model::RegistrationResult::Success ?
-		static_cast<std::int64_t>(handle) : 0;
+	return static_cast<std::int64_t>(
+		SFSEMenuFramework::EventManager::Register(a_callback, a_priority));
 }
 
 extern "C" __declspec(dllexport) std::int64_t RegisterEvent(

@@ -1,13 +1,9 @@
 #pragma once
 
-#include "api/InternalTypes.h"
-
 #include <bit>
 
 namespace SFSEMenuFramework::Detail
 {
-	[[nodiscard]] bool HasMatchingImGuiLayout(
-		const Model::ImGuiLayout& a_layout) noexcept;
 	[[nodiscard]] bool IsExecutableImageAddress(
 		const void* a_address, void** a_ownerModule = nullptr) noexcept;
 

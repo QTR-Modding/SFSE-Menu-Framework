@@ -14,19 +14,16 @@ namespace SFSEMenuFramework
 		std::atomic<bool> BlurBackground{ true };
 	};
 
-	using WindowRenderFunction =
-		void(__stdcall*)(const Model::RenderContext&);
+	using WindowRenderFunction = void(__stdcall*)();
 
 	class WindowManager final
 	{
 	public:
 		static WindowInterface* AddWindow(
 			WindowRenderFunction a_renderFunction);
-		[[nodiscard]] static Model::RegistrationResult RegisterWindow(
-			const Model::WindowRegistration* a_registration,
-			Model::WindowInterface**          a_window) noexcept;
-		[[nodiscard]] static std::uint64_t RenderOpenWindows(
-			const Model::RenderContext& a_context);
+		[[nodiscard]] static Model::WindowInterface* AddExternalWindow(
+			Model::ClientWindowRenderFunction a_renderFunction) noexcept;
+		[[nodiscard]] static std::uint64_t RenderOpenWindows();
 		static bool SetMainWindow(WindowInterface* a_window) noexcept;
 		[[nodiscard]] static WindowInterface* GetMainWindow() noexcept;
 		static void SetMainWindowRenderEnabled(bool a_enabled) noexcept;

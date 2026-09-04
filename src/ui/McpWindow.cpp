@@ -548,8 +548,7 @@ bool SFSEMenuFramework::McpWindow::Install()
 	return true;
 }
 
-void __stdcall SFSEMenuFramework::McpWindow::Render(
-	const Model::RenderContext&)
+void __stdcall SFSEMenuFramework::McpWindow::Render()
 {
 	ObserveMainOpenSession();
 	const auto* viewport = ImGui::GetMainViewport();
