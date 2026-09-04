@@ -709,12 +709,6 @@ namespace SFSEMenuFramework::RenderHooks
 		return true;
 	}
 
-	bool HasTerminalRendererFailure() noexcept
-	{
-		return commandListState.load(std::memory_order_acquire) ==
-		       HookState::Failed;
-	}
-
 	void Detail::ResetRegion() noexcept
 	{
 		regionState = {};

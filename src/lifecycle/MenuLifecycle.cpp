@@ -88,7 +88,6 @@ namespace SFSEMenuFramework::MenuLifecycle
 		void ReconcileFrameworkOnlyHostWindow() noexcept
 		{
 			const bool renderEnabled =
-				Win32Platform::IsInitialized() &&
 				Win32Platform::IsHostWindowUsable();
 			WindowManager::SetMainWindowRenderEnabled(renderEnabled);
 

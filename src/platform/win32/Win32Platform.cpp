@@ -238,7 +238,6 @@ namespace SFSEMenuFramework::Win32Platform
 			if (const auto callback = Shared().HostWindowCallbackFunction.load(std::memory_order_acquire)) {
 				callback();
 			}
-			Shared().HostCallbackPending.store(false, std::memory_order_release);
 			Shared().SubclassActive.store(false, std::memory_order_release);
 			Shared().InitializedHostWindow.store(nullptr, std::memory_order_relaxed);
 			Shared().InitializedHostWindowThreadID.store(0, std::memory_order_release);

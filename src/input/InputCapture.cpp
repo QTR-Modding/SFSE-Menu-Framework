@@ -131,23 +131,6 @@ namespace SFSEMenuFramework::InputCapture
 			}
 		}
 
-		void ExpirePendingKeyboardEdge() noexcept
-		{
-			auto pending = pendingKeyboardSuppression.load(std::memory_order_acquire);
-			if (pending == 0) {
-				return;
-			}
-
-			const auto deadline = static_cast<std::uint32_t>(pending >> 32);
-			if (static_cast<std::int32_t>(::GetTickCount() - deadline) > 0) {
-				static_cast<void>(pendingKeyboardSuppression.compare_exchange_strong(
-					pending,
-					0,
-					std::memory_order_acq_rel,
-					std::memory_order_acquire));
-			}
-		}
-
 		[[nodiscard]] bool TryClaimKeyboardSuppression(
 			const RE::InputEvent* a_queueHead) noexcept
 		{
@@ -330,7 +313,6 @@ namespace SFSEMenuFramework::InputCapture
 				return;
 			}
 
-			ExpirePendingKeyboardEdge();
 			const bool keyboardEdgeMatched =
 				a_queueHead && TryClaimKeyboardSuppression(a_queueHead);
 

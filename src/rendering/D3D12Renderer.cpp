@@ -561,7 +561,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 	{
 		const bool canEnable =
 			rendererReady.load(std::memory_order_acquire) &&
-			Win32Platform::IsInitialized() && Win32Platform::IsHostWindowUsable();
+			Win32Platform::IsHostWindowUsable();
 		const bool enable = a_enabled && canEnable;
 		if (!enable) {
 			InputEventManager::SetImGuiItemActive(false);
@@ -644,13 +644,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 			return;
 		}
 		ImGui_ImplDX12_NewFrame();
-		if (!std::isfinite(io.DisplaySize.x) ||
-			!std::isfinite(io.DisplaySize.y) ||
-			io.DisplaySize.x <= 0.0F ||
-			io.DisplaySize.y <= 0.0F) {
-			return;
-		}
-
 		FontUploadContext fontUpload{
 			.Device = rendererState.Device.Get(),
 			.CommandList = a_commandList

@@ -384,7 +384,7 @@ namespace SFSEMenuFramework::Win32Platform
 	{
 		auto& state = State<RenderPlatformState>();
 		const auto window = Shared().InitializedHostWindow.load(std::memory_order_acquire);
-		if (!IsInitialized() || !IsHostWindowUsable()) {
+		if (!IsHostWindowUsable()) {
 			ShutdownBackend(state);
 			return false;
 		}
@@ -442,7 +442,6 @@ namespace SFSEMenuFramework::Win32Platform
 		if (currentGeneration != observedGeneration) {
 			acceptingInput = Shared().AcceptInput.load(std::memory_order_acquire);
 			ResetBackendInput(window, acceptingInput);
-			observedGeneration = currentGeneration;
 		}
 
 		ImGui_ImplWin32_NewFrame();
