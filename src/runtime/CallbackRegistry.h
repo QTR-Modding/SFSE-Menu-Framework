@@ -2,6 +2,7 @@
 
 #include "api/InternalTypes.h"
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -23,6 +24,7 @@ namespace SFSEMenuFramework::Detail
 
 			Handle                     RegistrationHandle{};
 			Callback                   Function{ nullptr };
+			float                      Priority{ 0.0F };
 			std::atomic<std::uint32_t> State{ ACTIVE };
 
 			[[nodiscard]] bool IsActive() const noexcept
@@ -57,7 +59,13 @@ namespace SFSEMenuFramework::Detail
 			}
 		};
 
-		[[nodiscard]] Handle Register(Callback a_callback) noexcept
+		using Entries = std::vector<std::shared_ptr<Entry>>;
+		using Snapshot = std::shared_ptr<const Entries>;
+
+		[[nodiscard]] Handle Register(
+			Callback a_callback,
+			float a_priority = 0.0F,
+			std::mutex* a_publicationMutex = nullptr) noexcept
 		{
 			if (!a_callback) {
 				return 0;
@@ -68,10 +76,11 @@ namespace SFSEMenuFramework::Detail
 			try {
 				auto entry = std::make_shared<Entry>();
 				entry->Function = a_callback;
+				entry->Priority = a_priority;
 
 				std::scoped_lock lock{ MutationMutex };
 				const auto current = Published.load(std::memory_order_acquire);
-				auto next = std::make_shared<Snapshot>();
+				auto next = std::make_shared<Entries>();
 				if (current) {
 					next->reserve(current->size() + 1);
 					for (const auto& registered : *current) {
@@ -86,7 +95,18 @@ namespace SFSEMenuFramework::Detail
 
 				entry->RegistrationHandle = NextHandle++;
 				const auto handle = entry->RegistrationHandle;
-				next->push_back(std::move(entry));
+				// Insert after equal priorities to retain registration order.
+				const auto position = std::upper_bound(
+					next->begin(), next->end(), a_priority,
+					[](float a_priorityValue, const auto& a_entry) {
+						return a_priorityValue > a_entry->Priority;
+					});
+				next->insert(position, std::move(entry));
+				// Lifecycle edges and listener publication share this lock.
+				std::unique_lock<std::mutex> publicationLock;
+				if (a_publicationMutex) {
+					publicationLock = std::unique_lock{ *a_publicationMutex };
+				}
 				Published.store(std::move(next), std::memory_order_release);
 				return handle;
 			} catch (const std::bad_alloc&) {
@@ -124,14 +144,24 @@ namespace SFSEMenuFramework::Detail
 			}
 		}
 
+		[[nodiscard]] Snapshot CaptureSnapshot() const noexcept
+		{
+			return Published.load(std::memory_order_acquire);
+		}
+
 		template <class Visitor>
 		void Dispatch(Visitor&& a_visitor) noexcept
 		{
-			const auto snapshot = Published.load(std::memory_order_acquire);
-			if (!snapshot) {
+			Dispatch(CaptureSnapshot(), std::forward<Visitor>(a_visitor));
+		}
+
+		template <class Visitor>
+		static void Dispatch(const Snapshot& a_snapshot, Visitor&& a_visitor) noexcept
+		{
+			if (!a_snapshot) {
 				return;
 			}
-			for (const auto& entry : *snapshot) {
+			for (const auto& entry : *a_snapshot) {
 				if (!entry || !entry->Function || !entry->Enter()) {
 					continue;
 				}
@@ -145,11 +175,8 @@ namespace SFSEMenuFramework::Detail
 		}
 
 	private:
-		using EntryPointer = std::shared_ptr<Entry>;
-		using Snapshot = std::vector<EntryPointer>;
-
 		std::mutex                                  MutationMutex;
-		std::atomic<std::shared_ptr<const Snapshot>> Published{};
+		std::atomic<Snapshot>                        Published{};
 		Handle                                      NextHandle{ 1 };
 		inline static thread_local Entry*            ExecutingEntry{};
 	};

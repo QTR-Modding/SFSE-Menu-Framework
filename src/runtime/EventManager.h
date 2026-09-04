@@ -1,6 +1,6 @@
 #pragma once
 
-#include "api/InternalTypes.h"
+#include "runtime/CallbackRegistry.h"
 
 #include <atomic>
 #include <cstdint>
@@ -10,13 +10,13 @@ namespace SFSEMenuFramework
 {
 	namespace Detail
 	{
-		struct EventSnapshot;
+		using EventCallbacks = CallbackRegistry<Model::EventCallback, Model::EventHandle>;
 	}
 
 	class EventManager final
 	{
 	public:
-		using Snapshot = std::shared_ptr<const Detail::EventSnapshot>;
+		using Snapshot = Detail::EventCallbacks::Snapshot;
 
 		[[nodiscard]] static Model::EventHandle Register(
 			Model::EventCallback a_callback,
