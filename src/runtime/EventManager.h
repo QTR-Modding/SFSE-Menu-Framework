@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SFSEMenuFramework/API.h>
+#include "api/InternalTypes.h"
 
 #include <atomic>
 #include <cstdint>
@@ -18,9 +18,9 @@ namespace SFSEMenuFramework
 	public:
 		using Snapshot = std::shared_ptr<const Detail::EventSnapshot>;
 
-		[[nodiscard]] static Model::RegistrationResult Register(
-			const Model::EventRegistration* a_registration,
-			Model::EventHandle*              a_handle) noexcept;
+		[[nodiscard]] static Model::EventHandle Register(
+			Model::EventCallback a_callback,
+			float                a_priority) noexcept;
 		static void Unregister(Model::EventHandle a_handle) noexcept;
 		[[nodiscard]] static bool SetMainWindowState(
 			std::atomic<bool>& a_state, bool a_open,

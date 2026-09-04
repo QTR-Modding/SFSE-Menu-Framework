@@ -58,7 +58,7 @@ namespace SFSEMenuFramework::FontManager
 		void SwapAtlasContents(
 			ImFontAtlas& a_live, ImFontAtlas& a_candidate) noexcept
 		{
-			// Coupled deliberately to the vendored Dear ImGui 1.90.8 layout.
+			// Coupled deliberately to the vendored Dear ImGui 1.90.8-docking layout.
 			// The candidate is fully built and uploaded before the stable live
 			// atlas object changes.
 			using std::swap;
@@ -285,6 +285,15 @@ namespace SFSEMenuFramework::FontManager
 	std::string_view GetLastApplyError() noexcept
 	{
 		return GetState().LastApplyError;
+	}
+
+	bool PushDefaultFont() noexcept
+	{
+		if (!ConsumerFontScope::IsActive()) {
+			return false;
+		}
+		const auto& active = GetState().ActiveGeneration;
+		return active && ConsumerFontScope::Push(active->DefaultFont);
 	}
 
 	bool PushFont(std::string_view a_name) noexcept

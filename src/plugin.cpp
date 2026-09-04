@@ -1,8 +1,5 @@
-#include "api/PluginInterface.h"
 #include "lifecycle/MenuLifecycle.h"
 #include "rendering/RenderHooks.h"
-
-#include <SFSEMenuFramework/API.h>
 
 #include <atomic>
 
@@ -23,6 +20,11 @@ namespace
 			logger::critical("Post-data-load menu ownership activation failed");
 		}
 	}
+}
+
+SFSE_PLUGIN_PRELOAD(const SFSE::LoadInterface*)
+{
+	return true;
 }
 
 SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
@@ -72,12 +74,8 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 	}
 
 	earlyLifecycleReady.store(true, std::memory_order_release);
-	SFSEMenuFramework::PluginInterface::Publish();
-
 	logger::info("Menu input ownership waiting for SFSE post-data-load");
-	logger::info(
-		"External consumer interface v{} available",
-		SFSEMenuFramework::Model::INTERFACE_VERSION);
+	logger::info("SFSE-MCP direct exports available");
 	logger::info(
 		"Mod Control Panel starts closed and can open before SFSE post-data-load once rendering is ready");
 	return true;

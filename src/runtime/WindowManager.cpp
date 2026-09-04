@@ -2,7 +2,6 @@
 
 #include "appearance/fonts/ConsumerFontScope.h"
 #include "platform/win32/Win32Platform.h"
-#include "runtime/ConsumerValidation.h"
 #include "runtime/EventManager.h"
 
 #include <algorithm>
@@ -25,8 +24,7 @@ namespace
 	{
 		WindowInterface            Interface;
 		WindowRenderFunction       BuiltInRender{ nullptr };
-		Model::WindowRenderFunction ExternalRender{ nullptr };
-		void*                      UserData{ nullptr };
+		Model::ClientWindowRenderFunction ExternalRender{ nullptr };
 		bool                       PauseGameWhenBlocking{ false };
 		bool                       WasBlockingOpen{ false };
 	};
@@ -169,6 +167,12 @@ namespace
 		a_registry.Published.store(std::move(next), std::memory_order_release);
 		return &raw->Interface;
 	}
+
+	void RenderExternalWindow(
+		Model::ClientWindowRenderFunction a_renderFunction) noexcept
+	{
+		a_renderFunction();
+	}
 }
 namespace SFSEMenuFramework
 {
@@ -192,55 +196,29 @@ namespace SFSEMenuFramework
 		}
 	}
 
-	Model::RegistrationResult WindowManager::RegisterWindow(
-		const Model::WindowRegistration* a_registration,
-		Model::WindowInterface** a_window) noexcept
+	Model::WindowInterface* WindowManager::AddExternalWindow(
+		Model::ClientWindowRenderFunction a_renderFunction) noexcept
 	{
-		if (a_window) {
-			*a_window = nullptr;
-		}
-		if (!a_registration || !a_window) {
-			return Model::RegistrationResult::InvalidArgument;
-		}
-		if (a_registration->StructureSize < sizeof(Model::WindowRegistration) ||
-			a_registration->ImGui.StructureSize < sizeof(Model::ImGuiLayout)) {
-			return Model::RegistrationResult::StructureTooSmall;
-		}
-		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION) {
-			return Model::RegistrationResult::UnsupportedVersion;
-		}
-		if (!a_registration->Render || a_registration->BlockUserInput > 1) {
-			return Model::RegistrationResult::InvalidArgument;
-		}
-		if (!Detail::HasMatchingImGuiLayout(a_registration->ImGui)) {
-			return Model::RegistrationResult::ImGuiMismatch;
-		}
-		if (!Detail::IsExecutableImageFunction(a_registration->Render)) {
-			return Model::RegistrationResult::InvalidArgument;
+		if (!a_renderFunction) {
+			return nullptr;
 		}
 		try {
 			auto* registry = GetWindowRegistry();
 			if (!registry) {
-				return Model::RegistrationResult::OutOfMemory;
+				return nullptr;
 			}
 			auto window = std::make_unique<Window>();
-			window->ExternalRender = a_registration->Render;
-			window->UserData = a_registration->UserData;
-			window->PauseGameWhenBlocking = a_registration->BlockUserInput != 0;
-			window->Interface.BlockUserInput.store(
-				a_registration->BlockUserInput != 0, std::memory_order_relaxed);
-			*a_window = PublishWindow(*registry, std::move(window));
-			return *a_window ? Model::RegistrationResult::Success :
-				Model::RegistrationResult::RegistryFull;
+			window->ExternalRender = a_renderFunction;
+			window->PauseGameWhenBlocking = true;
+			return PublishWindow(*registry, std::move(window));
 		} catch (const std::bad_alloc&) {
-			return Model::RegistrationResult::OutOfMemory;
+			return nullptr;
 		} catch (const std::system_error&) {
-			return Model::RegistrationResult::InternalError;
+			return nullptr;
 		}
 	}
 
-	std::uint64_t WindowManager::RenderOpenWindows(
-		const Model::RenderContext& a_context)
+	std::uint64_t WindowManager::RenderOpenWindows()
 	{
 		auto* registry = GetWindowRegistry();
 		if (!registry) {
@@ -260,10 +238,10 @@ namespace SFSEMenuFramework
 				const bool blocking = window->Interface.BlockUserInput.load(
 					std::memory_order_acquire);
 				if (window->BuiltInRender) {
-					window->BuiltInRender(a_context);
+					window->BuiltInRender();
 				} else if (window->ExternalRender) {
 					ConsumerFontScope::CallbackScope callbackScope{ "window" };
-					window->ExternalRender(&a_context, window->UserData);
+					RenderExternalWindow(window->ExternalRender);
 				}
 				renderedBlockingWindow |= blocking;
 			}

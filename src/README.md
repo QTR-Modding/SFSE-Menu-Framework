@@ -1,11 +1,12 @@
 # Source architecture
 
 This directory contains the private implementation of SFSE Menu Framework.
-The public consumer API lives separately under `include/SFSEMenuFramework`.
+Client mods use the separate header-only SFSE-MCP package. The framework DLL
+owns ImGui and exposes the matching direct and generated cimgui exports.
 
 The implementation is organized by responsibility:
 
-- `api`: the exported interface table and single DLL query entry point.
+- `api`: direct SFSE-MCP exports and host-internal callback types.
 - `runtime`: lifecycle/HUD dispatch, panel/window registration, callback snapshots, and consumer validation.
 - `config`: framework settings, persistence, and root-menu visibility.
 - `appearance`: live font/theme ownership; `appearance/fonts` separates font

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SFSEMenuFramework/API.h>
+#include "api/InternalTypes.h"
 
 namespace SFSEMenuFramework
 {
@@ -10,7 +10,6 @@ namespace SFSEMenuFramework
 		static bool Install();
 
 	private:
-		static void __stdcall Render(
-			const Model::RenderContext& a_context);
+		static void __stdcall Render();
 	};
 }

@@ -1,10 +1,9 @@
 #pragma once
 
-#include <SFSEMenuFramework/API.h>
-
 #include <atomic>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace SFSEMenuFramework
@@ -12,15 +11,11 @@ namespace SFSEMenuFramework
 	class PanelRegistry final
 	{
 	public:
+		using DirectRenderFunction = void(__stdcall*)();
+
 		struct Panel final
 		{
-			void*                      OwnerModule{ nullptr };
-			std::string                Id;
-			std::string                Section;
-			std::string                Title;
-			Model::PanelRenderFunction Render{ nullptr };
-			void*                      UserData{ nullptr };
-			std::atomic<bool>          Enabled{ true };
+			DirectRenderFunction Render{ nullptr };
 		};
 		using PanelPointer = std::shared_ptr<Panel>;
 
@@ -38,12 +33,10 @@ namespace SFSEMenuFramework
 		using MenuTree = MenuNode::List;
 		using MenuTreePointer = MenuNode::ListPointer;
 
-		[[nodiscard]] static Model::RegistrationResult Register(
-			const Model::PanelRegistration* a_registration,
-			Model::PanelHandle*              a_handle) noexcept;
+		[[nodiscard]] static bool RegisterDirect(
+			std::string_view a_path,
+			DirectRenderFunction a_render) noexcept;
 		[[nodiscard]] static MenuTreePointer GetMenuTree() noexcept;
-		static void Render(
-			const PanelPointer& a_panel,
-			const Model::RenderContext& a_context);
+		static void Render(const PanelPointer& a_panel);
 	};
 }

@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
-#include <type_traits>
 #include <utility>
 
 #include <wrl/client.h>
@@ -48,7 +47,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 		std::atomic<std::uint64_t> renderedBlockingWindowGeneration{ 0 };
 		std::atomic<std::uint64_t> lastBlockingWindowRenderTick{ 0 };
-		std::atomic<std::uint64_t> nextContextGeneration{ 1 };
 		std::atomic<bool>          rendererReady{ false };
 		thread_local bool          renderInProgress{};
 
@@ -93,7 +91,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 			FontResources                                  ActiveFontResources;
 			std::uint64_t                                  NextFrameIndex{ 0 };
 			ImGuiContext*                                  Context{ nullptr };
-			std::uint64_t                                  ContextGeneration{ 0 };
 			bool                                           InitializationFailed{ false };
 		};
 
@@ -160,8 +157,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 				"descriptor-heap creation");
 		}
 
-		// Adapted from Dear ImGui 1.90.8 imgui_impl_dx12.cpp at
-		// 6f7b5d0ee2fe9948ab871a530888a6dc5c960700 (MIT). Each live atlas gets
+		// Adapted from Dear ImGui 1.90.8-docking imgui_impl_dx12.cpp at
+		// 6d948ab47ecf984239af01434f3ed03808dbf188 (MIT). Each live atlas gets
 		// its own heap; CompletionSlot keeps its resources alive through GPU use.
 		[[nodiscard]] bool CreateFontTexture(
 			ID3D12Device*              a_device,
@@ -299,7 +296,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 				}
 				ImGui::DestroyContext(a_state.Context);
 				a_state.Context = nullptr;
-				a_state.ContextGeneration = 0;
 			}
 
 			a_state.RenderTargetHeap.Reset();
@@ -485,9 +481,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 				logger::critical("Failed to create the ImGui context");
 				return fail();
 			}
-			a_state.ContextGeneration =
-				nextContextGeneration.fetch_add(1, std::memory_order_relaxed);
-
 			ImGui::SetCurrentContext(a_state.Context);
 			auto& io = ImGui::GetIO();
 			io.IniFilename = imguiIniFilename;
@@ -561,7 +554,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 	{
 		const bool canEnable =
 			rendererReady.load(std::memory_order_acquire) &&
-			Win32Platform::IsInitialized() && Win32Platform::IsHostWindowUsable();
+			Win32Platform::IsHostWindowUsable();
 		const bool enable = a_enabled && canEnable;
 		if (!enable) {
 			InputEventManager::SetImGuiItemActive(false);
@@ -632,25 +625,18 @@ namespace SFSEMenuFramework::D3D12Renderer
 			return;
 		}
 
+		ImGui::SetCurrentContext(rendererState.Context);
 		EventManager::Snapshot lifecycleSnapshot;
 		if (!EventManager::BeginFrame(lifecycleSnapshot)) {
 			return;
 		}
 
-		ImGui::SetCurrentContext(rendererState.Context);
 		auto& io = ImGui::GetIO();
 		if (!Win32Platform::PrepareFrame()) {
 			InputEventManager::SetImGuiItemActive(false);
 			return;
 		}
 		ImGui_ImplDX12_NewFrame();
-		if (!std::isfinite(io.DisplaySize.x) ||
-			!std::isfinite(io.DisplaySize.y) ||
-			io.DisplaySize.x <= 0.0F ||
-			io.DisplaySize.y <= 0.0F) {
-			return;
-		}
-
 		FontUploadContext fontUpload{
 			.Device = rendererState.Device.Get(),
 			.CommandList = a_commandList
@@ -682,24 +668,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 			Model::EventType::kBeforeRender,
 			lifecycleSnapshot);
 		ImGui::NewFrame();
-		ImGuiMemAllocFunc allocate{};
-		ImGuiMemFreeFunc free{};
-		void* allocatorUserData{};
-		ImGui::GetAllocatorFunctions(&allocate, &free, &allocatorUserData);
-		static_assert(std::is_same_v<Model::ImGuiAllocateFunction, ImGuiMemAllocFunc>);
-		static_assert(std::is_same_v<Model::ImGuiFreeFunction, ImGuiMemFreeFunc>);
-		const Model::RenderContext renderContext{
-			.StructureSize = sizeof(Model::RenderContext),
-			.InterfaceVersion = Model::INTERFACE_VERSION,
-			.ContextGeneration = rendererState.ContextGeneration,
-			.ImGuiContext = rendererState.Context,
-			.Allocate = allocate,
-			.Free = free,
-			.AllocatorUserData = allocatorUserData
-		};
-		HudManager::Render(renderContext);
-		const auto renderedGeneration =
-			WindowManager::RenderOpenWindows(renderContext);
+		HudManager::Render();
+		const auto renderedGeneration = WindowManager::RenderOpenWindows();
 		InputEventManager::SetImGuiItemActive(ImGui::IsAnyItemActive());
 		ImGui::Render();
 

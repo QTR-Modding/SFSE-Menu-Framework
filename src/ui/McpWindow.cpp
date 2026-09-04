@@ -52,8 +52,7 @@ namespace
 
 	[[nodiscard]] bool IsPanelEnabled(const PanelPointer& a_panel)
 	{
-		return a_panel &&
-		       a_panel->Enabled.load(std::memory_order_acquire);
+		return a_panel && a_panel->Render;
 	}
 
 	[[nodiscard]] PanelPointer GetPanel(const MenuNode& a_node)
@@ -390,7 +389,7 @@ namespace
 		ImGui::EndMenuBar();
 	}
 
-	void RenderNavigation(const SFSEMenuFramework::Model::RenderContext& a_context)
+	void RenderNavigation()
 	{
 		const auto roots = SFSEMenuFramework::PanelRegistry::GetMenuTree();
 		auto selectedPanel = selectedNode ? GetPanel(*selectedNode) : nullptr;
@@ -515,7 +514,7 @@ namespace
 				"SFSEModControlPanelMenuNode", ImVec2{ 0.0F, -FLT_MIN },
 				ImGuiChildFlags_Border)) {
 			if (selectedPanel) {
-				SFSEMenuFramework::PanelRegistry::Render(selectedPanel, a_context);
+				SFSEMenuFramework::PanelRegistry::Render(selectedPanel);
 			}
 		}
 		ImGui::EndChild();
@@ -549,8 +548,7 @@ bool SFSEMenuFramework::McpWindow::Install()
 	return true;
 }
 
-void __stdcall SFSEMenuFramework::McpWindow::Render(
-	const Model::RenderContext& a_context)
+void __stdcall SFSEMenuFramework::McpWindow::Render()
 {
 	ObserveMainOpenSession();
 	const auto* viewport = ImGui::GetMainViewport();
@@ -568,7 +566,7 @@ void __stdcall SFSEMenuFramework::McpWindow::Render(
 		ImGui::Begin(MCP_WINDOW_ID, nullptr, windowFlags);
 	if (drawContents) {
 		RenderMainMenuBar();
-		RenderNavigation(a_context);
+		RenderNavigation();
 		RenderArchiveConfirmation();
 	}
 	ImGui::End();

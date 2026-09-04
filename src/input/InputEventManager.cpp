@@ -32,31 +32,15 @@ namespace SFSEMenuFramework::InputEventManager
 		}
 	}
 
-	Model::RegistrationResult Register(
-		const Model::InputEventRegistration* a_registration,
-		Model::InputEventHandle*              a_handle) noexcept
+	Model::InputEventHandle Register(
+		Model::InputEventCallback a_callback) noexcept
 	{
-		if (a_handle) {
-			*a_handle = 0;
-		}
-		if (!a_registration || !a_handle) {
-			return Model::RegistrationResult::InvalidArgument;
-		}
-		if (a_registration->StructureSize <
-			sizeof(Model::InputEventRegistration)) {
-			return Model::RegistrationResult::StructureTooSmall;
-		}
-		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION) {
-			return Model::RegistrationResult::UnsupportedVersion;
-		}
-		if (!Detail::IsExecutableImageFunction(a_registration->Callback)) {
-			return Model::RegistrationResult::InvalidArgument;
+		if (!Detail::IsExecutableImageFunction(a_callback)) {
+			return 0;
 		}
 
 		auto* registry = GetRegistry();
-		return registry ?
-			registry->Register(a_registration->Callback, nullptr, a_handle) :
-			Model::RegistrationResult::OutOfMemory;
+		return registry ? registry->Register(a_callback) : 0;
 	}
 
 	void Unregister(Model::InputEventHandle a_handle) noexcept

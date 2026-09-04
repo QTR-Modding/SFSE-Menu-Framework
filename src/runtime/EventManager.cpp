@@ -127,34 +127,21 @@ namespace SFSEMenuFramework
 		}
 	}
 
-	Model::RegistrationResult EventManager::Register(
-		const Model::EventRegistration* a_registration,
-		Model::EventHandle*              a_handle) noexcept
+	Model::EventHandle EventManager::Register(
+		Model::EventCallback a_callback,
+		float                a_priority) noexcept
 	{
-		if (a_handle) {
-			*a_handle = 0;
-		}
-		if (!a_registration || !a_handle) {
-			return Model::RegistrationResult::InvalidArgument;
-		}
-		if (a_registration->StructureSize < sizeof(Model::EventRegistration)) {
-			return Model::RegistrationResult::StructureTooSmall;
-		}
-		if (a_registration->InterfaceVersion != Model::INTERFACE_VERSION) {
-			return Model::RegistrationResult::UnsupportedVersion;
-		}
-		if (!a_registration->Callback ||
-			!std::isfinite(a_registration->Priority) ||
-			!Detail::IsExecutableImageFunction(a_registration->Callback)) {
-			return Model::RegistrationResult::InvalidArgument;
+		if (!a_callback || !std::isfinite(a_priority) ||
+			!Detail::IsExecutableImageFunction(a_callback)) {
+			return 0;
 		}
 		try {
 			auto listener = std::make_shared<Listener>();
-			listener->Callback = a_registration->Callback;
-			listener->Priority = a_registration->Priority;
+			listener->Callback = a_callback;
+			listener->Priority = a_priority;
 			auto* registry = GetEventRegistry();
 			if (!registry) {
-				return Model::RegistrationResult::OutOfMemory;
+				return 0;
 			}
 			std::scoped_lock lock{ registry->MutationMutex };
 			const auto current = registry->Published.load(std::memory_order_acquire);
@@ -169,7 +156,7 @@ namespace SFSEMenuFramework
 			}
 			if (next->Listeners.size() >= maximumListenerCount ||
 				registry->NextHandle == 0) {
-				return Model::RegistrationResult::RegistryFull;
+				return 0;
 			}
 			listener->Handle = registry->NextHandle++;
 			const auto registeredHandle = listener->Handle;
@@ -183,12 +170,11 @@ namespace SFSEMenuFramework
 				});
 			std::scoped_lock transitionLock{ registry->TransitionMutex };
 			registry->Published.store(std::move(next), std::memory_order_release);
-			*a_handle = registeredHandle;
-			return Model::RegistrationResult::Success;
+			return registeredHandle;
 		} catch (const std::bad_alloc&) {
-			return Model::RegistrationResult::OutOfMemory;
+			return 0;
 		} catch (const std::system_error&) {
-			return Model::RegistrationResult::InternalError;
+			return 0;
 		}
 	}
 

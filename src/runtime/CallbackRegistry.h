@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SFSEMenuFramework/API.h>
+#include "api/InternalTypes.h"
 
 #include <atomic>
 #include <memory>
@@ -23,7 +23,6 @@ namespace SFSEMenuFramework::Detail
 
 			Handle                     RegistrationHandle{};
 			Callback                   Function{ nullptr };
-			void*                      UserData{ nullptr };
 			std::atomic<std::uint32_t> State{ ACTIVE };
 
 			[[nodiscard]] bool IsActive() const noexcept
@@ -58,25 +57,17 @@ namespace SFSEMenuFramework::Detail
 			}
 		};
 
-		[[nodiscard]] Model::RegistrationResult Register(
-			Callback a_callback,
-			void*    a_userData,
-			Handle*  a_handle) noexcept
+		[[nodiscard]] Handle Register(Callback a_callback) noexcept
 		{
-			if (a_handle) {
-				*a_handle = 0;
-			}
-			if (!a_callback || !a_handle) {
-				return Model::RegistrationResult::InvalidArgument;
+			if (!a_callback) {
+				return 0;
 			}
 
-			// This is a noexcept DLL boundary. Only allocation and mutex failures
-			// are translated. Consumer exceptions are unsupported and terminate at
-			// the callback's noexcept host boundary.
+			// Registration crosses a noexcept DLL boundary. Allocation and mutex
+			// failures are reported to clients as an invalid handle.
 			try {
 				auto entry = std::make_shared<Entry>();
 				entry->Function = a_callback;
-				entry->UserData = a_userData;
 
 				std::scoped_lock lock{ MutationMutex };
 				const auto current = Published.load(std::memory_order_acquire);
@@ -90,19 +81,18 @@ namespace SFSEMenuFramework::Detail
 					}
 				}
 				if (next->size() >= MaximumEntries || NextHandle == 0) {
-					return Model::RegistrationResult::RegistryFull;
+					return 0;
 				}
 
 				entry->RegistrationHandle = NextHandle++;
 				const auto handle = entry->RegistrationHandle;
 				next->push_back(std::move(entry));
 				Published.store(std::move(next), std::memory_order_release);
-				*a_handle = handle;
-				return Model::RegistrationResult::Success;
+				return handle;
 			} catch (const std::bad_alloc&) {
-				return Model::RegistrationResult::OutOfMemory;
+				return 0;
 			} catch (const std::system_error&) {
-				return Model::RegistrationResult::InternalError;
+				return 0;
 			}
 		}
 

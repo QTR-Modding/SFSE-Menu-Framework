@@ -1,7 +1,7 @@
-// Dear ImGui 1.90.8 misc/freetype/imgui_freetype.cpp is compiled through
+// Dear ImGui 1.90.8-docking misc/freetype/imgui_freetype.cpp is compiled through
 // this narrow bridge so SFSE Menu Framework can select an OpenType variation
 // weight without changing any public ImGui structure or consumer ABI.
-// Dear ImGui commit: 6f7b5d0ee2fe9948ab871a530888a6dc5c960700 (MIT).
+// Dear ImGui source commit: 6d948ab47ecf984239af01434f3ed03808dbf188 (MIT).
 
 #include "FontVariation.h"
 
