@@ -16,6 +16,9 @@ Building also requires Xmake 3.0.9 or newer and a C++23-capable MSVC toolchain.
 
 - Press `F1` once to open or close the Mod Control Panel.
 - On a gamepad, double-press Start to open it; one press closes it.
+- Use the D-pad or left stick to navigate, `A` to activate, and `B` to cancel.
+- Hold `X`, then use the left stick to move a window or the D-pad to resize it.
+- Controller input hides the software cursor; moving or clicking the mouse restores it.
 - Press `Escape` while it is open to return control to Starfield.
 
 `Options > Open Settings` controls the theme, input bindings, toggle modes,

@@ -12,7 +12,8 @@ The implementation is organized by responsibility:
 - `appearance`: live font/theme ownership; `appearance/fonts` separates font
   discovery, glyph ranges, atlas construction, and consumer stack isolation.
 - `ui`: the framework control panel and settings window.
-- `input`: the game-input capture hook, consumer input callbacks, and keyboard suppression handoff.
+- `input`: the game-input capture hook, consumer callbacks, keyboard suppression,
+  and render-thread gamepad navigation handoff.
 - `lifecycle`: framework startup and ownership of game input, cursor, pause, and blur.
 - `platform/win32`: host-window discovery, subclassing, and keyboard/pointer routing.
 - `rendering`: D3D12/ImGui lifetime and render-hook installation.
@@ -28,6 +29,8 @@ Some files remain larger when one shared lock or lifetime makes a split harder t
   font-atlas resource retirement, descriptor-heap restoration, and frame
   lifecycle as one GPU transaction.
 - `input/InputCapture.cpp` owns one input-device hook and its lossless keyboard-edge token protocol.
+- `input/GamepadNavigation.cpp` owns the bounded native-event bridge, ImGui
+  gamepad mapping, and active mouse/controller cursor policy.
 - `runtime/CallbackRegistry.h` shares callback lifetime and snapshot handling
   across lifecycle events, HUD callbacks, and input callbacks. Each manager
   retains its own dispatch policy.

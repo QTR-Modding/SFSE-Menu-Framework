@@ -1,6 +1,7 @@
 #include "input/InputCapture.h"
 
 #include "config/FrameworkSettings.h"
+#include "input/GamepadNavigation.h"
 #include "input/InputEventManager.h"
 #include "runtime/WindowManager.h"
 
@@ -317,6 +318,7 @@ namespace SFSEMenuFramework::InputCapture
 				a_queueHead && TryClaimKeyboardSuppression(a_queueHead);
 
 			bool stateChanged{};
+			bool stateChangedByGamepad{};
 			const bool modalAtBatchStart =
 				modal.load(std::memory_order_acquire);
 			if (modalAtBatchStart || IsOperational()) {
@@ -330,6 +332,7 @@ namespace SFSEMenuFramework::InputCapture
 							static_cast<const RE::ButtonEvent&>(*event);
 						if (!keyboardEdgeMatched && !stateChanged) {
 							stateChanged = ProcessGamePadOpenClose(button);
+							stateChangedByGamepad = stateChanged;
 						}
 					}
 					event = event->next;
@@ -370,6 +373,18 @@ namespace SFSEMenuFramework::InputCapture
 					const bool captureBatch = modalAtBatchStart ||
 						modal.load(std::memory_order_acquire) ||
 						blockingOpenedDuringBatch;
+					if (stateChangedByGamepad && blockingGenerationAfterConsumers != 0) {
+						GamepadNavigation::ObserveGamepadActivity(
+							blockingGenerationAfterConsumers);
+					}
+					if (captureBatch && !keyboardEdgeMatched && !stateChanged) {
+						for (event = a_queueHead; event; event = event->next) {
+							GamepadNavigation::CaptureNativeEvent(
+								*event,
+								blockingGenerationAfterConsumers,
+								event->status != RE::InputEvent::Status::kStop);
+						}
+					}
 					if (captureBatch || keyboardEdgeMatched || stateChanged) {
 						// SKSE Menu Framework sends an empty queue on an actual
 						// open/close edge. During ordinary modal capture it retains
