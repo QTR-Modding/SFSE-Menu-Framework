@@ -26,6 +26,8 @@ namespace SFSEMenuFramework::GamepadNavigation
 	{
 		constexpr std::size_t queueCapacity = 512;
 		constexpr float       activityThreshold = 0.10F;
+		constexpr float       gamepadRepeatDelay = 0.625F;
+		constexpr float       gamepadRepeatRate = 0.125F;
 
 		enum class EventKind : std::uint8_t
 		{
@@ -310,6 +312,7 @@ namespace SFSEMenuFramework::GamepadNavigation
 	{
 		auto& io = ImGui::GetIO();
 		pendingCloseRequest = {};
+		io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
 		if (nativeGamepadGeneration.load(std::memory_order_acquire) == a_generation) {
 			io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
 		}
@@ -341,6 +344,25 @@ namespace SFSEMenuFramework::GamepadNavigation
 			RequestCloseIfCancelHasNoTarget(events[index], a_generation);
 			ApplyEvent(io, events[index]);
 		}
+	}
+
+	RepeatTiming ApplyRepeatTiming() noexcept
+	{
+		auto& io = ImGui::GetIO();
+		const RepeatTiming previous{ io.KeyRepeatDelay, io.KeyRepeatRate };
+		const auto* context = ImGui::GetCurrentContext();
+		if (context && context->NavInputSource == ImGuiInputSource_Gamepad) {
+			io.KeyRepeatDelay = gamepadRepeatDelay;
+			io.KeyRepeatRate = gamepadRepeatRate;
+		}
+		return previous;
+	}
+
+	void RestoreRepeatTiming(RepeatTiming a_timing) noexcept
+	{
+		auto& io = ImGui::GetIO();
+		io.KeyRepeatDelay = a_timing.Delay;
+		io.KeyRepeatRate = a_timing.Rate;
 	}
 
 	bool ConsumeCloseRequestForCurrentWindow(

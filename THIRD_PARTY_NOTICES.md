@@ -40,7 +40,12 @@ an OpenType variable-weight coordinate without changing public ImGui layouts.
 The native gamepad bridge also adapts the Win32 backend's four-direction analog
 key submission pattern. Its B-button close fallback follows the cancellation
 priority expressed by `NavUpdateCancelRequest`; the window-close action itself
-is SFSE Menu Framework behavior.
+is SFSE Menu Framework behavior. The Win32 backend is built with Dear ImGui's
+supported `IMGUI_IMPL_WIN32_DISABLE_GAMEPAD` switch so Starfield's native input
+events are the framework's sole controller source. The vendored
+`GetTypematicRepeatRate` behavior is left unchanged; SFSE Menu Framework
+temporarily supplies a slower gamepad-only delay and rate around ImGui's
+navigation update. Keyboard repeat timing is unchanged.
 
 The MIT License (MIT)
 

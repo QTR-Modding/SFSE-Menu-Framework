@@ -663,6 +663,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		const auto openGeneration = WindowManager::GetBlockingWindowOpenGeneration();
 		if (!HasRecentBlockingWindowFrame(openGeneration) ||
 			!WindowManager::IsBlockingWindowOpenGeneration(openGeneration)) {
+			io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
 			io.ClearEventsQueue();
 			io.ClearInputKeys();
 		} else {
@@ -671,7 +672,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 		EventManager::Dispatch(
 			Model::EventType::kBeforeRender,
 			lifecycleSnapshot);
+		const auto repeatTiming = GamepadNavigation::ApplyRepeatTiming();
 		ImGui::NewFrame();
+		GamepadNavigation::RestoreRepeatTiming(repeatTiming);
 		HudManager::Render();
 		const auto renderedGeneration = WindowManager::RenderOpenWindows();
 		const auto* mainWindow = WindowManager::GetMainWindow();

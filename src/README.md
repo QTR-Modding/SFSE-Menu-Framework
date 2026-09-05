@@ -13,7 +13,8 @@ The implementation is organized by responsibility:
   discovery, glyph ranges, atlas construction, and consumer stack isolation.
 - `ui`: the framework control panel and settings window.
 - `input`: the game-input capture hook, consumer callbacks, keyboard suppression,
-  and render-thread gamepad navigation handoff.
+  and sole-source native gamepad handoff to the render thread. The Win32
+  backend's independent XInput polling is disabled to prevent competing edges.
 - `lifecycle`: framework startup and ownership of game input, cursor, pause, and blur.
 - `platform/win32`: host-window discovery, subclassing, and keyboard/pointer routing.
 - `rendering`: D3D12/ImGui lifetime and render-hook installation.
