@@ -419,6 +419,27 @@ namespace
 		ImGui::EndMenuBar();
 	}
 
+	void RenderSearchFilter()
+	{
+		const float buttonSize = ImGui::GetFrameHeight();
+		const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+		const float availableWidth = ImGui::GetContentRegionAvail().x;
+		const bool showClear = availableWidth >= buttonSize * 2.0F + spacing;
+		rootFilter.Draw("##SFSEModControlPanelMenuFilter",
+			showClear ? availableWidth - buttonSize - spacing : -FLT_MIN);
+		if (!showClear) {
+			return;
+		}
+
+		ImGui::SameLine(0.0F, spacing);
+		ImGui::BeginDisabled(rootFilter.InputBuf[0] == '\0');
+		if (ImGui::Button("X##ClearSearch", ImVec2{ buttonSize, buttonSize })) {
+			rootFilter.Clear();
+		}
+		ImGui::EndDisabled();
+		RenderTooltip("Clear search");
+	}
+
 	void RenderNavigation()
 	{
 		const auto roots = SFSEMenuFramework::PanelRegistry::GetMenuTree();
@@ -431,13 +452,13 @@ namespace
 		const auto available = ImGui::GetContentRegionAvail();
 		const float navigationWidth = available.x * 0.3F;
 		const float uiScale = SFSEMenuFramework::FontManager::GetActiveInfo().Settings.UIScale;
-		const float filterHeight = 50.0F * uiScale;
+		const float filterHeight = (std::max)(50.0F * uiScale, ImGui::GetFrameHeight());
 		const float headerHeight = 41.0F * uiScale;
 		const float headerOffsetY = 5.0F * uiScale;
 
 		if (ImGui::BeginChild(
 				"TreeView2", ImVec2{ navigationWidth, filterHeight }, ImGuiChildFlags_None)) {
-			rootFilter.Draw("##SFSEModControlPanelMenuFilter", -FLT_MIN);
+			RenderSearchFilter();
 		}
 		ImGui::EndChild();
 
