@@ -69,7 +69,6 @@ namespace SFSEMenuFramework::RenderHooks
 			bool           SawOrdinaryTarget{ false };
 			bool           SawCopyTarget{ false };
 			bool           FrameStarted{ false };
-			std::uint8_t   CandidateCount{ 0 };
 			std::uint8_t   BarrierCallsAfterFirstCandidate{ 0 };
 			PreviousRegion Previous{ PreviousRegion::Unknown };
 		};
@@ -118,12 +117,6 @@ namespace SFSEMenuFramework::RenderHooks
 				result[index] = ReadVtableSlot(a_vtable, commandListSlots[index]);
 			}
 			return result;
-		}
-
-		template <class Predicate>
-		[[nodiscard]] bool AllTargets(const CommandTargets& a_targets, Predicate a_predicate)
-		{
-			return std::ranges::all_of(a_targets, a_predicate);
 		}
 
 		[[nodiscard]] bool GetModulePath(
@@ -361,11 +354,9 @@ namespace SFSEMenuFramework::RenderHooks
 				return;
 			}
 			if ((ordinaryTarget && regionState.SawOrdinaryTarget) ||
-				(copyTarget && regionState.SawCopyTarget) ||
-				regionState.CandidateCount >= 2) {
+				(copyTarget && regionState.SawCopyTarget)) {
 				return;
 			}
-			++regionState.CandidateCount;
 
 			regionState.SawOrdinaryTarget = regionState.SawOrdinaryTarget || ordinaryTarget;
 			regionState.SawCopyTarget = regionState.SawCopyTarget || copyTarget;
@@ -413,9 +404,10 @@ namespace SFSEMenuFramework::RenderHooks
 				regionState.Active &&
 				a_commandList && a_commandList->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT &&
 				a_barriers) {
-				if (!regionState.CandidateCount ||
+				const bool sawCandidate = regionState.SawOrdinaryTarget || regionState.SawCopyTarget;
+				if (!sawCandidate ||
 					regionState.BarrierCallsAfterFirstCandidate < 4) {
-					regionState.BarrierCallsAfterFirstCandidate += regionState.CandidateCount != 0;
+					regionState.BarrierCallsAfterFirstCandidate += sawCandidate;
 					for (UINT index = 0; index < a_barrierCount; ++index) {
 						InspectBarrierCandidate(a_commandList, a_barriers[index]);
 					}
@@ -589,7 +581,7 @@ namespace SFSEMenuFramework::RenderHooks
 				reinterpret_cast<std::uintptr_t>(proxyRawVtable)
 			};
 			const auto proxyTargets = ReadCommandTargets(proxyVtable);
-			if (!AllTargets(proxyTargets, IsAdjacentStreamlineTarget)) {
+			if (!std::ranges::all_of(proxyTargets, IsAdjacentStreamlineTarget)) {
 				logger::critical("Unsupported NVIDIA Streamline command-list vtable");
 				return fail();
 			}
@@ -631,7 +623,7 @@ namespace SFSEMenuFramework::RenderHooks
 			FunctionAddress(&ResourceBarrierThunk),
 			FunctionAddress(&SetDescriptorHeapsThunk)
 		};
-		const bool nativeTargets = AllTargets(targets, IsNativeD3D12Target);
+		const bool nativeTargets = std::ranges::all_of(targets, IsNativeD3D12Target);
 		const bool reShadeProxy =
 			!nativeTargets && IsVerifiedReShadeProxy(vtable, targets);
 		bool targetsValid = nativeTargets || reShadeProxy;
@@ -724,7 +716,7 @@ namespace SFSEMenuFramework::RenderHooks
 
 	void Detail::FinalizeRegionBeforeComposite() noexcept
 	{
-		if (regionState.Active && regionState.CandidateCount) {
+		if (regionState.Active && (regionState.SawOrdinaryTarget || regionState.SawCopyTarget)) {
 			previousRegion.store(
 				regionState.SawCopyTarget ?
 					PreviousRegion::FrameGeneration :

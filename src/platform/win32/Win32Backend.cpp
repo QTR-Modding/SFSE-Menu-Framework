@@ -99,6 +99,22 @@ namespace SFSEMenuFramework::Win32Platform
 			Shared().InputStateGeneration.fetch_add(
 				1, std::memory_order_release);
 		}
+
+		// Caller holds the queue lock, including across an entire raw mouse batch.
+		[[nodiscard]] bool AppendQueuedMessage(
+			InputQueueState& a_queue, const QueuedWindowMessage& a_message) noexcept
+		{
+			if (a_queue.Count != 0 &&
+				TryCoalesce(a_queue.Messages[a_queue.Count - 1], a_message)) {
+				return true;
+			}
+			if (a_queue.Count == a_queue.Messages.size()) {
+				InvalidateQueuedInput(a_queue);
+				return false;
+			}
+			a_queue.Messages[a_queue.Count++] = a_message;
+			return true;
+		}
 	}
 
 	void Detail::RequestInputReset()
@@ -122,24 +138,12 @@ namespace SFSEMenuFramework::Win32Platform
 			return false;
 		}
 
-		const QueuedWindowMessage message{
+		return AppendQueuedMessage(queue, {
 			.Window = a_window,
 			.Message = a_message,
 			.WParam = a_wParam,
 			.LParam = a_lParam
-		};
-		if (queue.Count != 0 &&
-			TryCoalesce(queue.Messages[queue.Count - 1], message)) {
-			return true;
-		}
-
-		if (queue.Count == queue.Messages.size()) {
-			InvalidateQueuedInput(queue);
-			return false;
-		}
-
-		queue.Messages[queue.Count++] = message;
-		return true;
+		});
 	}
 
 	bool Detail::EnqueueRawMouseBatch(
@@ -162,15 +166,9 @@ namespace SFSEMenuFramework::Win32Platform
 		}
 
 		for (std::size_t index = 0; index < a_count; ++index) {
-			if (queue.Count != 0 &&
-				TryCoalesce(queue.Messages[queue.Count - 1], a_messages[index])) {
-				continue;
-			}
-			if (queue.Count == queue.Messages.size()) {
-				InvalidateQueuedInput(queue);
+			if (!AppendQueuedMessage(queue, a_messages[index])) {
 				return false;
 			}
-			queue.Messages[queue.Count++] = a_messages[index];
 		}
 		return true;
 	}
@@ -448,7 +446,7 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 		}
 
-		auto observedGeneration = input.StateGeneration;
+		const auto observedGeneration = input.StateGeneration;
 		auto currentGeneration =
 			Shared().InputStateGeneration.load(std::memory_order_acquire);
 		if (currentGeneration != observedGeneration) {
@@ -462,7 +460,6 @@ namespace SFSEMenuFramework::Win32Platform
 		if (currentGeneration != observedGeneration) {
 			acceptingInput = Shared().AcceptInput.load(std::memory_order_acquire);
 			ResetBackendInput(window, acceptingInput);
-			observedGeneration = currentGeneration;
 		}
 
 		if (acceptingInput && ::GetForegroundWindow() != window) {
