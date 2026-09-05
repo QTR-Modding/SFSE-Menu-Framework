@@ -229,7 +229,13 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 
 			ResetBackendInput(a_state.Window, false);
+			// Win32 shutdown clears every viewport's RendererUserData, even with
+			// multi-viewports disabled. The application-owned DX12 main viewport
+			// must survive this platform-only rebind, including in-flight buffers.
+			auto* viewport = ImGui::GetMainViewport();
+			auto* rendererData = std::exchange(viewport->RendererUserData, nullptr);
 			ImGui_ImplWin32_Shutdown();
+			viewport->RendererUserData = rendererData;
 			a_state.BackendAlive = false;
 			a_state.BackendInitializationFailed = false;
 			a_state.Window = nullptr;
@@ -385,7 +391,13 @@ namespace SFSEMenuFramework::Win32Platform
 		auto& state = State<RenderPlatformState>();
 		const auto window = Shared().InitializedHostWindow.load(std::memory_order_acquire);
 		if (!IsHostWindowUsable()) {
-			ShutdownBackend(state);
+			// Like SKSE-MF 928e01a Hooks.cpp, focus loss clears input rather than
+			// destroying ImGui. Keep the backends and GPU resources for resume.
+			static_cast<void>(UpdateInputState(false));
+			if (state.BackendAlive) {
+				ResetBackendInput(state.Window, false);
+				ImGui::GetIO().MouseDrawCursor = false;
+			}
 			return false;
 		}
 

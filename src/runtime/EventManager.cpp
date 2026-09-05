@@ -4,66 +4,18 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <memory>
 #include <mutex>
 #include <new>
-#include <system_error>
 #include <utility>
-#include <vector>
 
 // Event types and listener priority are adapted from SKSE Menu Framework 3
 // commit 928e01a (GPL-3.0). Immutable snapshots, quiescent unregister,
 // deferred transitions, and generation leases are Starfield-specific.
-namespace SFSEMenuFramework::Detail
-{
-	struct EventListener final
-	{
-		static constexpr std::uint32_t ACTIVE = 0x80000000U;
-		static constexpr std::uint32_t IN_FLIGHT = ~ACTIVE;
-		Model::EventHandle         Handle{ 0 };
-		Model::EventCallback       Callback{ nullptr };
-		float                      Priority{ 0.0F };
-		std::atomic<std::uint32_t> State{ ACTIVE };
-		[[nodiscard]] bool IsActive() const noexcept
-		{
-			return (State.load(std::memory_order_acquire) & ACTIVE) != 0;
-		}
-		[[nodiscard]] bool Enter() noexcept
-		{
-			auto state = State.load(std::memory_order_acquire);
-			while ((state & ACTIVE) != 0 && (state & IN_FLIGHT) != IN_FLIGHT) {
-				if (State.compare_exchange_weak(
-						state, state + 1, std::memory_order_acq_rel,
-						std::memory_order_acquire)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		void Leave() noexcept
-		{
-			const auto previous = State.fetch_sub(1, std::memory_order_acq_rel);
-			if ((previous & IN_FLIGHT) == 1 || (previous & ACTIVE) == 0) {
-				State.notify_all();
-			}
-		}
-	};
-
-	using EventListenerPointer = std::shared_ptr<EventListener>;
-
-	struct EventSnapshot final
-	{
-		std::vector<EventListenerPointer> Listeners;
-	};
-}
-
 namespace SFSEMenuFramework
 {
 	namespace
 	{
-		using Listener = Detail::EventListener;
 		using SnapshotPointer = EventManager::Snapshot;
-		constexpr std::size_t maximumListenerCount = 1024;
 		constexpr std::size_t maximumPendingTransitions = 1024;
 		struct PendingTransition final
 		{
@@ -72,9 +24,7 @@ namespace SFSEMenuFramework
 		};
 		struct EventRegistry final
 		{
-			std::mutex                  MutationMutex;
-			std::atomic<SnapshotPointer> Published;
-			Model::EventHandle           NextHandle{ 1 };
+			Detail::EventCallbacks      Callbacks;
 			std::mutex                  TransitionMutex;
 			std::array<PendingTransition, maximumPendingTransitions + 1> Queue{};
 			std::size_t                 Head{};
@@ -86,7 +36,7 @@ namespace SFSEMenuFramework
 				bool a_emergencyClose) noexcept
 			{
 				if (!a_snapshot || !std::ranges::any_of(
-						a_snapshot->Listeners, [](const auto& a_listener) {
+						*a_snapshot, [](const auto& a_listener) {
 							return a_listener && a_listener->IsActive();
 						})) {
 					return true;
@@ -116,10 +66,9 @@ namespace SFSEMenuFramework
 			{
 				FullLogged.clear(std::memory_order_relaxed);
 				BacklogLogged.clear(std::memory_order_relaxed);
-				a_snapshot = Published.load(std::memory_order_acquire);
+				a_snapshot = Callbacks.CaptureSnapshot();
 			}
 		};
-		thread_local Listener* executingListener{};
 		[[nodiscard]] EventRegistry* GetEventRegistry() noexcept
 		{
 			static auto* registry = new (std::nothrow) EventRegistry();
@@ -135,47 +84,9 @@ namespace SFSEMenuFramework
 			!Detail::IsExecutableImageFunction(a_callback)) {
 			return 0;
 		}
-		try {
-			auto listener = std::make_shared<Listener>();
-			listener->Callback = a_callback;
-			listener->Priority = a_priority;
-			auto* registry = GetEventRegistry();
-			if (!registry) {
-				return 0;
-			}
-			std::scoped_lock lock{ registry->MutationMutex };
-			const auto current = registry->Published.load(std::memory_order_acquire);
-			auto next = std::make_shared<Detail::EventSnapshot>();
-			if (current) {
-				next->Listeners.reserve(current->Listeners.size() + 1);
-				for (const auto& registered : current->Listeners) {
-					if (registered && registered->IsActive()) {
-						next->Listeners.push_back(registered);
-					}
-				}
-			}
-			if (next->Listeners.size() >= maximumListenerCount ||
-				registry->NextHandle == 0) {
-				return 0;
-			}
-			listener->Handle = registry->NextHandle++;
-			const auto registeredHandle = listener->Handle;
-			next->Listeners.push_back(std::move(listener));
-			std::stable_sort(
-				next->Listeners.begin(),
-				next->Listeners.end(),
-				[](const auto& a, const auto& b) {
-					return a->Priority == b->Priority ?
-						a->Handle < b->Handle : a->Priority > b->Priority;
-				});
-			std::scoped_lock transitionLock{ registry->TransitionMutex };
-			registry->Published.store(std::move(next), std::memory_order_release);
-			return registeredHandle;
-		} catch (const std::bad_alloc&) {
-			return 0;
-		} catch (const std::system_error&) {
-			return 0;
-		}
+		auto* registry = GetEventRegistry();
+		return registry ? registry->Callbacks.Register(
+			a_callback, a_priority, &registry->TransitionMutex) : 0;
 	}
 
 	void EventManager::Unregister(Model::EventHandle a_handle) noexcept
@@ -183,25 +94,8 @@ namespace SFSEMenuFramework
 		if (a_handle == 0) {
 			return;
 		}
-		const auto* registry = GetEventRegistry();
-		const auto snapshot = registry ?
-			registry->Published.load(std::memory_order_acquire) : nullptr;
-		if (!snapshot) {
-			return;
-		}
-		for (const auto& listener : snapshot->Listeners) {
-			if (!listener || listener->Handle != a_handle) {
-				continue;
-			}
-			listener->State.fetch_and(Listener::IN_FLIGHT, std::memory_order_acq_rel);
-			const std::uint32_t allowedInFlight =
-				executingListener == listener.get() ? 1U : 0U;
-			auto state = listener->State.load(std::memory_order_acquire);
-			while ((state & Listener::IN_FLIGHT) > allowedInFlight) {
-				listener->State.wait(state, std::memory_order_acquire);
-				state = listener->State.load(std::memory_order_acquire);
-			}
-			return;
+		if (auto* registry = GetEventRegistry()) {
+			registry->Callbacks.Unregister(a_handle);
 		}
 	}
 
@@ -220,7 +114,7 @@ namespace SFSEMenuFramework
 		if (a_state.load(std::memory_order_acquire) == a_open) {
 			return false;
 		}
-		const auto snapshot = registry->Published.load(std::memory_order_acquire);
+		const auto snapshot = registry->Callbacks.CaptureSnapshot();
 		if (!registry->Push(
 				a_open ? Model::EventType::kOpenMenu :
 					Model::EventType::kCloseMenu,
@@ -280,15 +174,9 @@ namespace SFSEMenuFramework
 			a_type > Model::EventType::kAfterRender || !a_snapshot) {
 			return;
 		}
-		for (const auto& listener : a_snapshot->Listeners) {
-			if (!listener || !listener->Callback || !listener->Enter()) {
-				continue;
-			}
-			auto* const previousListener = executingListener;
-			executingListener = listener.get();
-			listener->Callback(a_type);
-			executingListener = previousListener;
-			listener->Leave();
-		}
+		Detail::EventCallbacks::Dispatch(
+			a_snapshot, [a_type](const auto& a_entry) noexcept {
+				a_entry.Function(a_type);
+			});
 	}
 }
