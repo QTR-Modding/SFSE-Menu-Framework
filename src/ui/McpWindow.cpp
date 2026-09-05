@@ -106,6 +106,41 @@ namespace
 		}
 	}
 
+	void RenderFavoriteStar(bool a_favorite)
+	{
+		if (!ImGui::IsItemVisible()) {
+			return;
+		}
+
+		// Clockwise star outline, independent of the selected font and glyph ranges.
+		ImVec2 points[]{
+			{ 0.50F, 0.00F }, { 0.62F, 0.35F }, { 1.00F, 0.35F },
+			{ 0.69F, 0.58F }, { 0.81F, 0.95F }, { 0.50F, 0.72F },
+			{ 0.19F, 0.95F }, { 0.31F, 0.58F }, { 0.00F, 0.35F },
+			{ 0.38F, 0.35F }
+		};
+		const auto minimum = ImGui::GetItemRectMin();
+		const auto maximum = ImGui::GetItemRectMax();
+		const float buttonSize = maximum.y - minimum.y;
+		const float iconSize = buttonSize * 0.60F;
+		for (auto& point : points) {
+			point.x = (minimum.x + maximum.x - iconSize) * 0.5F + point.x * iconSize;
+			point.y = (minimum.y + maximum.y - iconSize * 0.95F) * 0.5F + point.y * iconSize;
+		}
+
+		const auto color = ImGui::GetColorU32(a_favorite ?
+			ImVec4{ 1.0F, 0.84F, 0.0F, 1.0F } :
+			ImLerp(ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled),
+				ImGui::GetStyleColorVec4(ImGuiCol_Text), 0.65F));
+		auto* drawList = ImGui::GetWindowDrawList();
+		if (a_favorite) {
+			drawList->AddConcavePolyFilled(points, IM_ARRAYSIZE(points), color);
+		} else {
+			drawList->AddPolyline(points, IM_ARRAYSIZE(points), color,
+				ImDrawFlags_Closed, (std::max)(1.5F, buttonSize * 0.045F));
+		}
+	}
+
 	void RenderRootMenuButtons(
 		std::string_view a_menuName,
 		bool             a_favorite)
@@ -130,18 +165,13 @@ namespace
 				headerMaximum.x - buttonSize * 2.0F,
 				headerMinimum.y
 			});
-		ImGui::PushStyleColor(
-			ImGuiCol_Text,
-			a_favorite ?
-				ImVec4{ 1.0F, 0.84F, 0.0F, 1.0F } :
-				ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-		if (ImGui::Button("*", ImVec2{ buttonSize, buttonSize })) {
+		if (ImGui::Button("##Favorite", ImVec2{ buttonSize, buttonSize })) {
 			menuConfigSaveFailed =
 				!SFSEMenuFramework::RootMenuConfig::SetFavorite(
 					a_menuName,
 					!a_favorite);
 		}
-		ImGui::PopStyleColor();
+		RenderFavoriteStar(a_favorite);
 		RenderTooltip(
 			a_favorite ? "Remove from favorites" : "Add to favorites");
 
