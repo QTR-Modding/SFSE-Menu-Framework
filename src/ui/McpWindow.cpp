@@ -106,6 +106,41 @@ namespace
 		}
 	}
 
+	void RenderFavoriteStar(bool a_favorite)
+	{
+		if (!ImGui::IsItemVisible()) {
+			return;
+		}
+
+		// Clockwise star outline, independent of the selected font and glyph ranges.
+		ImVec2 points[]{
+			{ 0.50F, 0.00F }, { 0.62F, 0.35F }, { 1.00F, 0.35F },
+			{ 0.69F, 0.58F }, { 0.81F, 0.95F }, { 0.50F, 0.72F },
+			{ 0.19F, 0.95F }, { 0.31F, 0.58F }, { 0.00F, 0.35F },
+			{ 0.38F, 0.35F }
+		};
+		const auto minimum = ImGui::GetItemRectMin();
+		const auto maximum = ImGui::GetItemRectMax();
+		const float buttonSize = maximum.y - minimum.y;
+		const float iconSize = buttonSize * 0.60F;
+		for (auto& point : points) {
+			point.x = (minimum.x + maximum.x - iconSize) * 0.5F + point.x * iconSize;
+			point.y = (minimum.y + maximum.y - iconSize * 0.95F) * 0.5F + point.y * iconSize;
+		}
+
+		const auto color = ImGui::GetColorU32(a_favorite ?
+			ImVec4{ 1.0F, 0.84F, 0.0F, 1.0F } :
+			ImLerp(ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled),
+				ImGui::GetStyleColorVec4(ImGuiCol_Text), 0.65F));
+		auto* drawList = ImGui::GetWindowDrawList();
+		if (a_favorite) {
+			drawList->AddConcavePolyFilled(points, IM_ARRAYSIZE(points), color);
+		} else {
+			drawList->AddPolyline(points, IM_ARRAYSIZE(points), color,
+				ImDrawFlags_Closed, (std::max)(1.5F, buttonSize * 0.045F));
+		}
+	}
+
 	void RenderRootMenuButtons(
 		std::string_view a_menuName,
 		bool             a_favorite)
@@ -130,18 +165,13 @@ namespace
 				headerMaximum.x - buttonSize * 2.0F,
 				headerMinimum.y
 			});
-		ImGui::PushStyleColor(
-			ImGuiCol_Text,
-			a_favorite ?
-				ImVec4{ 1.0F, 0.84F, 0.0F, 1.0F } :
-				ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-		if (ImGui::Button("*", ImVec2{ buttonSize, buttonSize })) {
+		if (ImGui::Button("##Favorite", ImVec2{ buttonSize, buttonSize })) {
 			menuConfigSaveFailed =
 				!SFSEMenuFramework::RootMenuConfig::SetFavorite(
 					a_menuName,
 					!a_favorite);
 		}
-		ImGui::PopStyleColor();
+		RenderFavoriteStar(a_favorite);
 		RenderTooltip(
 			a_favorite ? "Remove from favorites" : "Add to favorites");
 
@@ -389,6 +419,27 @@ namespace
 		ImGui::EndMenuBar();
 	}
 
+	void RenderSearchFilter()
+	{
+		const float buttonSize = ImGui::GetFrameHeight();
+		const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+		const float availableWidth = ImGui::GetContentRegionAvail().x;
+		const bool showClear = availableWidth >= buttonSize * 2.0F + spacing;
+		rootFilter.Draw("##SFSEModControlPanelMenuFilter",
+			showClear ? availableWidth - buttonSize - spacing : -FLT_MIN);
+		if (!showClear) {
+			return;
+		}
+
+		ImGui::SameLine(0.0F, spacing);
+		ImGui::BeginDisabled(rootFilter.InputBuf[0] == '\0');
+		if (ImGui::Button("X##ClearSearch", ImVec2{ buttonSize, buttonSize })) {
+			rootFilter.Clear();
+		}
+		ImGui::EndDisabled();
+		RenderTooltip("Clear search");
+	}
+
 	void RenderNavigation()
 	{
 		const auto roots = SFSEMenuFramework::PanelRegistry::GetMenuTree();
@@ -401,27 +452,27 @@ namespace
 		const auto available = ImGui::GetContentRegionAvail();
 		const float navigationWidth = available.x * 0.3F;
 		const float uiScale = SFSEMenuFramework::FontManager::GetActiveInfo().Settings.UIScale;
-		const float filterHeight = 50.0F * uiScale;
-		const float headerHeight = 41.0F * uiScale;
-		const float headerOffsetY = 5.0F * uiScale;
+		const float headerHeight = ImCeil((std::max)(50.0F * uiScale, ImGui::GetFrameHeight()));
 
 		if (ImGui::BeginChild(
-				"TreeView2", ImVec2{ navigationWidth, filterHeight }, ImGuiChildFlags_None)) {
-			rootFilter.Draw("##SFSEModControlPanelMenuFilter", -FLT_MIN);
+				"TreeView2", ImVec2{ navigationWidth, headerHeight }, ImGuiChildFlags_None)) {
+			RenderSearchFilter();
 		}
 		ImGui::EndChild();
 
 		ImGui::SameLine();
+		ImGui::SetNextWindowContentSize(ImVec2{ 0.0F, headerHeight });
 		if (ImGui::BeginChild(
 				"SFSEModControlPanelModMenuHeader", ImVec2{ 0.0F, headerHeight },
 				ImGuiChildFlags_None)) {
 			if (selectedPanel) {
 				const std::string_view title = selectedNode->Name;
-				const float windowWidth = ImGui::GetWindowSize().x;
-				const float textWidth =
-					ImGui::CalcTextSize(title.data(), title.data() + title.size()).x;
-				ImGui::SetCursorPosX((windowWidth - textWidth) * 0.5F);
-				ImGui::SetCursorPosY(headerOffsetY);
+				const auto headerSize = ImGui::GetWindowSize();
+				const auto textSize =
+					ImGui::CalcTextSize(title.data(), title.data() + title.size());
+				ImGui::SetCursorPos(ImVec2{
+					(headerSize.x - textSize.x) * 0.5F,
+					(headerSize.y - textSize.y) * 0.5F });
 				ImGui::TextUnformatted(title.data(), title.data() + title.size());
 			}
 		}
