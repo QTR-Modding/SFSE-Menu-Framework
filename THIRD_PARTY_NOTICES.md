@@ -13,6 +13,11 @@ rebuild request sequence, are used under GNU GPL version 3. The complete
 license is included in
 [COPYING](COPYING).
 
+The root-menu favorite and archive actions retain the adapted behavior, but
+SFSE Menu Framework renders them in separate table cells instead of overlaying
+them on the collapsing header. This Starfield-specific layout keeps their
+visual and gamepad navigation rectangles distinct.
+
 The native controller-button to ImGui navigation mapping additionally adapts
 `src/Input.cpp` from [commit
 `c97cdce6dd207c7cf1401611bc82bd7e8f97a814`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/c97cdce6dd207c7cf1401611bc82bd7e8f97a814).
