@@ -16,6 +16,12 @@ license is included in
 These SKSE Menu Framework-derived portions remain GPL-3.0-only. The separate
 exceptions in this repository do not relicense those portions.
 
+Window-layout persistence adapts Quantumyilmaz's
+[PR #18](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/pull/18),
+`UI.cpp` and its render-loop save placement at commit
+`edea98b9e8cda213470f3c4b8fcb80fe8c89a50d`.
+This adaptation is GPL-3.0-only.
+
 ## Dear ImGui 1.90.8-docking
 
 SFSE Menu Framework vendors the official Dear ImGui `v1.90.8-docking`
