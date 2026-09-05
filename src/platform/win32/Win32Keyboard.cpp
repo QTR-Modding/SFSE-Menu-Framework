@@ -44,7 +44,6 @@ namespace SFSEMenuFramework::Win32Platform
 			UINT_PTR                              HoldTimerID{ 0 };
 			bool                                  HasLastPress{ false };
 		};
-		std::atomic_flag                rawKeyboardReadFailureLogged{};
 		std::atomic_flag                keyboardHoldTimerFailureLogged{};
 		std::atomic<std::uint32_t>      keyboardHoldTimerGeneration{ 0 };
 
@@ -165,35 +164,6 @@ namespace SFSEMenuFramework::Win32Platform
 				.EngineEventID = engineEventID.value_or(-1),
 				.Down = (a_flags & RI_KEY_BREAK) == 0
 			};
-		}
-
-		[[nodiscard]] std::optional<KeyboardTransition> ReadRawKeyboard(
-			LPARAM a_lParam) noexcept
-		{
-			RAWINPUT input{};
-			if (ReadRawInput(
-					a_lParam,
-					RIM_TYPEKEYBOARD,
-					sizeof(RAWKEYBOARD),
-					input,
-					rawKeyboardReadFailureLogged) != RawInputReadStatus::Ready) {
-				return std::nullopt;
-			}
-
-			const auto& keyboard = input.data.keyboard;
-			if (keyboard.MakeCode == 0 ||
-				keyboard.MakeCode == KEYBOARD_OVERRUN_MAKE_CODE ||
-				keyboard.VKey >= 0xFF) {
-				return std::nullopt;
-			}
-
-			const bool e0 = (keyboard.Flags & RI_KEY_E0) != 0;
-			const bool e1 = (keyboard.Flags & RI_KEY_E1) != 0;
-			if (e0 && e1) {
-				return std::nullopt;
-			}
-			return DecodeKeyboard(
-				keyboard.MakeCode, keyboard.Flags, keyboard.VKey);
 		}
 		[[nodiscard]] std::optional<KeyboardTransition> ReadLegacyKeyboard(
 			UINT a_message,
@@ -428,9 +398,15 @@ namespace SFSEMenuFramework::Win32Platform
 	}
 
 	void Detail::ProcessRawKeyboard(
-		HWND a_window, LPARAM a_lParam) noexcept
+		HWND a_window, const RAWKEYBOARD& a_keyboard) noexcept
 	{
-		if (const auto transition = ReadRawKeyboard(a_lParam)) {
+		if (a_keyboard.MakeCode == 0 ||
+			a_keyboard.MakeCode == KEYBOARD_OVERRUN_MAKE_CODE || a_keyboard.VKey >= 0xFF ||
+			(a_keyboard.Flags & (RI_KEY_E0 | RI_KEY_E1)) == (RI_KEY_E0 | RI_KEY_E1)) {
+			return;
+		}
+		if (const auto transition = DecodeKeyboard(
+				a_keyboard.MakeCode, a_keyboard.Flags, a_keyboard.VKey)) {
 			static_cast<void>(
 				ProcessKeyboardTransition(a_window, *transition));
 		}

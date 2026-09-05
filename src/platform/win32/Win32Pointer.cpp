@@ -63,7 +63,6 @@ namespace SFSEMenuFramework::Win32Platform
 		} };
 		std::atomic_flag                mouseCaptureFailureLogged{};
 		std::atomic_flag                mouseTrackingFailureLogged{};
-		std::atomic_flag                rawMouseReadFailureLogged{};
 		std::atomic_flag                rawMouseHandoffFailureLogged{};
 
 		template <class T>
@@ -79,6 +78,15 @@ namespace SFSEMenuFramework::Win32Platform
 			       a_area.right - 1 <= (std::numeric_limits<SHORT>::max)() &&
 			       a_area.bottom - 1 <= (std::numeric_limits<SHORT>::max)();
 		}
+
+		[[nodiscard]] POINT ClampClientPosition(
+			std::int64_t a_x, std::int64_t a_y, const RECT& a_area) noexcept
+		{
+			return {
+				static_cast<LONG>(std::clamp<std::int64_t>(a_x, a_area.left, a_area.right - 1)),
+				static_cast<LONG>(std::clamp<std::int64_t>(a_y, a_area.top, a_area.bottom - 1))
+			};
+		}
 	}
 
 	void Detail::ResetRawMouseState() noexcept
@@ -92,24 +100,6 @@ namespace SFSEMenuFramework::Win32Platform
 		state.Generation = 0;
 		state.ButtonsDown = 0;
 		state.Initialized = false;
-	}
-
-	RawInputReadStatus Detail::ReadRawMouse(
-		LPARAM a_lParam,
-		RAWMOUSE& a_mouse) noexcept
-	{
-		RAWINPUT input{};
-		const auto status = ReadRawInput(
-			a_lParam,
-			RIM_TYPEMOUSE,
-			sizeof(RAWMOUSE),
-			input,
-			rawMouseReadFailureLogged);
-		if (status != RawInputReadStatus::Ready) {
-			return status;
-		}
-		a_mouse = input.data.mouse;
-		return RawInputReadStatus::Ready;
 	}
 
 	namespace
@@ -318,14 +308,9 @@ namespace SFSEMenuFramework::Win32Platform
 				a_state.Y += a_mouse.lLastY;
 			}
 
-			a_state.X = std::clamp<std::int64_t>(
-				a_state.X,
-				clientArea.left,
-				clientArea.right - 1);
-			a_state.Y = std::clamp<std::int64_t>(
-				a_state.Y,
-				clientArea.top,
-				clientArea.bottom - 1);
+			const auto position = ClampClientPosition(a_state.X, a_state.Y, clientArea);
+			a_state.X = position.x;
+			a_state.Y = position.y;
 			a_positionChanged =
 				a_state.X != previousX || a_state.Y != previousY;
 			return true;
@@ -440,26 +425,14 @@ namespace SFSEMenuFramework::Win32Platform
 		std::int64_t initialX{};
 		std::int64_t initialY{};
 		if (state.Window == a_window) {
-			initialX = std::clamp<std::int64_t>(
-				state.X,
-				clientArea.left,
-				clientArea.right - 1);
-			initialY = std::clamp<std::int64_t>(
-				state.Y,
-				clientArea.top,
-				clientArea.bottom - 1);
+			initialX = state.X;
+			initialY = state.Y;
 		} else {
 			POINT cursorPosition{};
 			if (::GetCursorPos(&cursorPosition) &&
 				::ScreenToClient(a_window, &cursorPosition)) {
-				initialX = std::clamp<std::int64_t>(
-					cursorPosition.x,
-					clientArea.left,
-					clientArea.right - 1);
-				initialY = std::clamp<std::int64_t>(
-					cursorPosition.y,
-					clientArea.top,
-					clientArea.bottom - 1);
+				initialX = cursorPosition.x;
+				initialY = cursorPosition.y;
 			} else {
 				// A bounded virtual starting point is still required when
 				// Windows cannot expose the first absolute pointer position.
@@ -470,11 +443,12 @@ namespace SFSEMenuFramework::Win32Platform
 					(clientArea.bottom - clientArea.top) / 2;
 			}
 		}
+		const auto position = ClampClientPosition(initialX, initialY, clientArea);
 		state = {
 			.Window = a_window,
 			.Generation = a_generation,
-			.X = initialX,
-			.Y = initialY,
+			.X = position.x,
+			.Y = position.y,
 			.ButtonsDown = 0,
 			.Initialized = true
 		};
@@ -498,14 +472,7 @@ namespace SFSEMenuFramework::Win32Platform
 		POINT clientPosition{};
 		const auto& state = State<RawMouseState>();
 		if (state.Initialized && state.Window == a_window) {
-			clientPosition.x = static_cast<LONG>(std::clamp<std::int64_t>(
-				state.X,
-				clientArea.left,
-				clientArea.right - 1));
-			clientPosition.y = static_cast<LONG>(std::clamp<std::int64_t>(
-				state.Y,
-				clientArea.top,
-				clientArea.bottom - 1));
+			clientPosition = ClampClientPosition(state.X, state.Y, clientArea);
 		} else {
 			clientPosition = {
 				clientArea.left +

@@ -20,13 +20,6 @@ namespace SFSEMenuFramework::Win32Platform::Detail
 		Legacy
 	};
 
-	enum class RawInputReadStatus : std::uint8_t
-	{
-		Other,
-		Ready,
-		Failed
-	};
-
 	struct QueuedWindowMessage final
 	{
 		HWND   Window{ nullptr };
@@ -65,9 +58,6 @@ namespace SFSEMenuFramework::Win32Platform::Detail
 			a_message == WM_SYSKEYDOWN || a_message == WM_SYSKEYUP;
 	}
 
-	[[nodiscard]] RawInputReadStatus ReadRawInput(
-		LPARAM a_lParam, DWORD a_type, std::size_t a_payloadSize,
-		RAWINPUT& a_input, std::atomic_flag& a_failureLogged) noexcept;
 	[[nodiscard]] bool ReadClientArea(
 		HWND a_window, RECT& a_area) noexcept;
 	[[nodiscard]] bool HasCurrentInputLease() noexcept;
@@ -75,13 +65,11 @@ namespace SFSEMenuFramework::Win32Platform::Detail
 	void ResetKeyboardToggleState() noexcept;
 	[[nodiscard]] bool ProcessKeyboardHoldTimer(
 		HWND a_window, UINT_PTR a_timerID) noexcept;
-	void ProcessRawKeyboard(HWND a_window, LPARAM a_lParam) noexcept;
+	void ProcessRawKeyboard(HWND a_window, const RAWKEYBOARD& a_keyboard) noexcept;
 	void ProcessLegacyKeyboard(
 		HWND a_window, UINT a_message, WPARAM a_wParam,
 		LPARAM a_lParam) noexcept;
 
-	[[nodiscard]] RawInputReadStatus ReadRawMouse(
-		LPARAM a_lParam, RAWMOUSE& a_mouse) noexcept;
 	void ResetRawMouseState() noexcept;
 	void DeactivateRawMouseState() noexcept;
 	void ResetWindowThreadMouseState(HWND a_window);

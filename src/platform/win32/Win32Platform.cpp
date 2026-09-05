@@ -53,50 +53,43 @@ namespace SFSEMenuFramework::Win32Platform
 		{
 			return reinterpret_cast<UINT_PTR>(&WindowSubclass);
 		}
-	}
 
-	RawInputReadStatus Detail::ReadRawInput(
-		LPARAM            a_lParam,
-		DWORD             a_type,
-		std::size_t       a_payloadSize,
-		RAWINPUT&         a_input,
-		std::atomic_flag& a_failureLogged) noexcept
-	{
-		RAWINPUTHEADER header{};
-		UINT headerSize = sizeof(header);
-		const auto headerBytes = ::GetRawInputData(
-			reinterpret_cast<HRAWINPUT>(a_lParam),
-			RID_HEADER,
-			&header,
-			&headerSize,
-			sizeof(RAWINPUTHEADER));
-		if (headerBytes == static_cast<UINT>(-1) ||
-			headerBytes != sizeof(header)) {
-			if (FirstFailure(a_failureLogged)) {
+		[[nodiscard]] bool RawInputReadFailed() noexcept
+		{
+			static std::atomic_flag logged{};
+			if (FirstFailure(logged)) {
 				logger::warn("Starfield raw input packet could not be read");
 			}
-			return RawInputReadStatus::Failed;
-		}
-		if (header.dwType != a_type) {
-			return RawInputReadStatus::Other;
+			return false;
 		}
 
-		UINT size = sizeof(a_input);
-		const auto copied = ::GetRawInputData(
-			reinterpret_cast<HRAWINPUT>(a_lParam),
-			RID_INPUT,
-			&a_input,
-			&size,
-			sizeof(RAWINPUTHEADER));
-		if (copied == static_cast<UINT>(-1) ||
-			copied < sizeof(RAWINPUTHEADER) + a_payloadSize ||
-			a_input.header.dwType != a_type) {
-			if (FirstFailure(a_failureLogged)) {
-				logger::warn("Starfield raw input packet could not be read");
+		[[nodiscard]] bool ReadRawInputHeader(LPARAM a_lParam, RAWINPUTHEADER& a_header) noexcept
+		{
+			UINT size = sizeof(a_header);
+			const auto copied = ::GetRawInputData(
+				reinterpret_cast<HRAWINPUT>(a_lParam), RID_HEADER,
+				&a_header, &size, sizeof(a_header));
+			if (copied != sizeof(a_header)) {
+				return RawInputReadFailed();
 			}
-			return RawInputReadStatus::Failed;
+			return true;
 		}
-		return RawInputReadStatus::Ready;
+
+		// Called only for a keyboard packet or a mouse packet owned by the early route.
+		[[nodiscard]] bool ReadRawInputPayload(
+			LPARAM a_lParam, const RAWINPUTHEADER& a_header, RAWINPUT& a_input) noexcept
+		{
+			const auto payloadSize = a_header.dwType == RIM_TYPEKEYBOARD ?
+				sizeof(RAWKEYBOARD) : sizeof(RAWMOUSE);
+			UINT size = sizeof(a_input);
+			const auto copied = ::GetRawInputData(reinterpret_cast<HRAWINPUT>(a_lParam), RID_INPUT,
+				&a_input, &size, sizeof(a_header));
+			if (copied == static_cast<UINT>(-1) || copied < sizeof(a_header) + payloadSize ||
+				a_input.header.dwType != a_header.dwType) {
+				return RawInputReadFailed();
+			}
+			return true;
+		}
 	}
 
 	bool Detail::ReadClientArea(HWND a_window, RECT& a_area) noexcept
@@ -276,7 +269,13 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 
 			if (a_message == WM_INPUT) {
-				ProcessRawKeyboard(a_window, a_lParam);
+				RAWINPUTHEADER header{};
+				const bool headerValid = ReadRawInputHeader(a_lParam, header);
+				RAWINPUT input{};
+				if (headerValid && header.dwType == RIM_TYPEKEYBOARD &&
+					ReadRawInputPayload(a_lParam, header, input)) {
+					ProcessRawKeyboard(a_window, input.data.keyboard);
+				}
 				const bool acceptingRawInput =
 					Shared().AcceptInput.load(std::memory_order_acquire);
 				const bool currentInputLease =
@@ -297,12 +296,11 @@ namespace SFSEMenuFramework::Win32Platform
 				if (earlyRawInput) {
 					const auto generation =
 						Shared().EarlyRawMouseGeneration.load(std::memory_order_acquire);
-					RAWMOUSE mouse{};
-					const auto status = ReadRawMouse(a_lParam, mouse);
 					const bool failed =
-						status == RawInputReadStatus::Failed ||
-						(status == RawInputReadStatus::Ready &&
-						 !ProcessEarlyRawMouse(a_window, mouse));
+						!headerValid ||
+						(header.dwType == RIM_TYPEMOUSE &&
+						 (!ReadRawInputPayload(a_lParam, header, input) ||
+						  !ProcessEarlyRawMouse(a_window, input.data.mouse)));
 					if (failed) {
 						if (generation != 0) {
 							Shared().RawMouseFaultGeneration.store(

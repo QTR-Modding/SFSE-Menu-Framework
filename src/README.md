@@ -28,12 +28,14 @@ Some files remain larger when one shared lock or lifetime makes a split harder t
   font-atlas resource retirement, descriptor-heap restoration, and frame
   lifecycle as one GPU transaction.
 - `input/InputCapture.cpp` owns one input-device hook and its lossless keyboard-edge token protocol.
-- `input/InputEventManager.cpp` and `runtime/HudManager.cpp` own the two
-  unregisterable SKSE Menu Framework-style consumer callback registries.
+- `runtime/CallbackRegistry.h` shares callback lifetime and snapshot handling
+  across lifecycle events, HUD callbacks, and input callbacks. Each manager
+  retains its own dispatch policy.
 - `lifecycle/MenuOwnership.cpp` owns the balanced acquisition and release of game input, cursor, pause, and blur.
 
-Within `platform/win32`, `Win32Platform.cpp` owns host-window discovery and
-subclass lifetime, `Win32Keyboard.cpp` owns toggle-key state,
+Within `platform/win32`, `Win32Platform.cpp` owns host-window discovery,
+subclass lifetime, and raw-packet reading/type dispatch; `Win32Keyboard.cpp`
+owns toggle-key state,
 `Win32Pointer.cpp` owns cursor and capture state, and `Win32Backend.cpp`
 owns the queued-input and Dear ImGui backend transactions. Their few shared
 atomics live in one `SharedState` object owned by `Win32Platform.cpp` and are
