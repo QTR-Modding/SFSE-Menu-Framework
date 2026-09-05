@@ -452,27 +452,27 @@ namespace
 		const auto available = ImGui::GetContentRegionAvail();
 		const float navigationWidth = available.x * 0.3F;
 		const float uiScale = SFSEMenuFramework::FontManager::GetActiveInfo().Settings.UIScale;
-		const float filterHeight = (std::max)(50.0F * uiScale, ImGui::GetFrameHeight());
-		const float headerHeight = 41.0F * uiScale;
-		const float headerOffsetY = 5.0F * uiScale;
+		const float headerHeight = ImCeil((std::max)(50.0F * uiScale, ImGui::GetFrameHeight()));
 
 		if (ImGui::BeginChild(
-				"TreeView2", ImVec2{ navigationWidth, filterHeight }, ImGuiChildFlags_None)) {
+				"TreeView2", ImVec2{ navigationWidth, headerHeight }, ImGuiChildFlags_None)) {
 			RenderSearchFilter();
 		}
 		ImGui::EndChild();
 
 		ImGui::SameLine();
+		ImGui::SetNextWindowContentSize(ImVec2{ 0.0F, headerHeight });
 		if (ImGui::BeginChild(
 				"SFSEModControlPanelModMenuHeader", ImVec2{ 0.0F, headerHeight },
 				ImGuiChildFlags_None)) {
 			if (selectedPanel) {
 				const std::string_view title = selectedNode->Name;
-				const float windowWidth = ImGui::GetWindowSize().x;
-				const float textWidth =
-					ImGui::CalcTextSize(title.data(), title.data() + title.size()).x;
-				ImGui::SetCursorPosX((windowWidth - textWidth) * 0.5F);
-				ImGui::SetCursorPosY(headerOffsetY);
+				const auto headerSize = ImGui::GetWindowSize();
+				const auto textSize =
+					ImGui::CalcTextSize(title.data(), title.data() + title.size());
+				ImGui::SetCursorPos(ImVec2{
+					(headerSize.x - textSize.x) * 0.5F,
+					(headerSize.y - textSize.y) * 0.5F });
 				ImGui::TextUnformatted(title.data(), title.data() + title.size());
 			}
 		}
