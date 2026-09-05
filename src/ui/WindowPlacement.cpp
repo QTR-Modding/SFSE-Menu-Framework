@@ -28,7 +28,7 @@ namespace SFSEMenuFramework::WindowPlacement
 			ImVec2 Size{};
 		};
 		std::array placements{
-			Placement{ "#MCPMainWindow", L"MainWindow", 0.8F },
+			Placement{ "Mod Control Panel##MCPMainWindow", L"MainWindow", 0.8F },
 			Placement{ "Settings##Window", L"SettingsWindow", 0.4F }
 		};
 
@@ -56,6 +56,11 @@ namespace SFSEMenuFramework::WindowPlacement
 			};
 			a_state.HasSavedState = true;
 		}
+	}
+
+	const char* GetName(BuiltInWindow a_window) noexcept
+	{
+		return placements[static_cast<std::size_t>(a_window)].Name;
 	}
 
 	void Apply(BuiltInWindow a_window)

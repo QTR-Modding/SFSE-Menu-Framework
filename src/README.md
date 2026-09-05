@@ -30,7 +30,8 @@ Some files remain larger when one shared lock or lifetime makes a split harder t
   lifecycle as one GPU transaction.
 - `input/InputCapture.cpp` owns one input-device hook and its lossless keyboard-edge token protocol.
 - `input/GamepadNavigation.cpp` owns the bounded native-event bridge, ImGui
-  gamepad mapping, and active mouse/controller cursor policy.
+  gamepad mapping, cancel-to-close fallback, and active mouse/controller cursor
+  policy.
 - `runtime/CallbackRegistry.h` shares callback lifetime and snapshot handling
   across lifecycle events, HUD callbacks, and input callbacks. Each manager
   retains its own dispatch policy.

@@ -18,4 +18,6 @@ namespace SFSEMenuFramework::GamepadNavigation
 	[[nodiscard]] bool ShouldDrawMouseCursor(
 		std::uint64_t a_generation) noexcept;
 	void ApplyPending(std::uint64_t a_generation) noexcept;
+	[[nodiscard]] bool ConsumeCloseRequestForCurrentWindow(
+		std::uint64_t a_generation) noexcept;
 }

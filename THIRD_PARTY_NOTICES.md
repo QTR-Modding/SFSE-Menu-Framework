@@ -38,7 +38,9 @@ texture creation/upload sequence for checked, per-generation live replacement.
 Its FreeType builder is compiled through a narrow project bridge that selects
 an OpenType variable-weight coordinate without changing public ImGui layouts.
 The native gamepad bridge also adapts the Win32 backend's four-direction analog
-key submission pattern.
+key submission pattern. Its B-button close fallback follows the cancellation
+priority expressed by `NavUpdateCancelRequest`; the window-close action itself
+is SFSE Menu Framework behavior.
 
 The MIT License (MIT)
 

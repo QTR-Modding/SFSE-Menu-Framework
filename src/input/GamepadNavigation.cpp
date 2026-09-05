@@ -3,6 +3,7 @@
 #include <RE/B/BSInputEventUser.h>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <Windows.h>
 
@@ -39,6 +40,13 @@ namespace SFSEMenuFramework::GamepadNavigation
 			std::uint32_t ID{};
 			float         X{};
 			float         Y{};
+			bool          InitialPress{};
+		};
+
+		struct CloseRequest final
+		{
+			ImGuiID       WindowID{};
+			std::uint64_t Generation{};
 		};
 
 		struct Queue final
@@ -54,6 +62,7 @@ namespace SFSEMenuFramework::GamepadNavigation
 		std::atomic<std::uint64_t> lastInputStamp{};
 		std::atomic<std::uint64_t> nativeGamepadGeneration{};
 		std::atomic_flag           overflowLogged{};
+		CloseRequest               pendingCloseRequest;
 
 		class QueueLock final
 		{
@@ -185,6 +194,36 @@ namespace SFSEMenuFramework::GamepadNavigation
 				left ? ImGuiKey_GamepadLStickDown : ImGuiKey_GamepadRStickDown,
 				-a_event.Y);
 		}
+
+		void RequestCloseIfCancelHasNoTarget(
+			const PendingEvent& a_event, std::uint64_t a_generation) noexcept
+		{
+			// Preserve Dear ImGui's NavUpdateCancelRequest priority. Closing is
+			// an SFSE fallback only after the current context has nothing to cancel.
+			if (a_event.Kind != EventKind::Button || a_event.ID != 8192 ||
+				!a_event.InitialPress) {
+				return;
+			}
+
+			auto* context = ImGui::GetCurrentContext();
+			if (!context) {
+				return;
+			}
+			auto& state = *context;
+			if (!state.NavWindow || state.ActiveId != 0 || state.NavId != 0 ||
+				state.NavLayer != ImGuiNavLayer_Main ||
+				state.NavWindowingTarget != nullptr ||
+				state.OpenPopupStack.Size != 0) {
+				return;
+			}
+
+			auto* root = state.NavWindow->RootWindowForNav;
+			if (!root || (state.NavWindow != state.NavWindow->RootWindow &&
+				!(root->Flags & ImGuiWindowFlags_Popup) && root->ParentWindow)) {
+				return;
+			}
+			pendingCloseRequest = { root->ID, a_generation };
+		}
 	}
 
 	void ObserveGamepadActivity(std::uint64_t a_generation) noexcept
@@ -236,6 +275,8 @@ namespace SFSEMenuFramework::GamepadNavigation
 			pending.Kind = EventKind::Button;
 			pending.ID = static_cast<std::uint32_t>(button.idCode);
 			pending.X = std::clamp(button.value, 0.0F, 1.0F);
+			pending.InitialPress =
+				button.value != 0.0F && button.heldDownSecs == 0.0F;
 			active = pending.X > activityThreshold;
 			if (!IsMappedButton(pending.ID)) {
 				if (active) {
@@ -268,6 +309,7 @@ namespace SFSEMenuFramework::GamepadNavigation
 	void ApplyPending(std::uint64_t a_generation) noexcept
 	{
 		auto& io = ImGui::GetIO();
+		pendingCloseRequest = {};
 		if (nativeGamepadGeneration.load(std::memory_order_acquire) == a_generation) {
 			io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
 		}
@@ -296,7 +338,23 @@ namespace SFSEMenuFramework::GamepadNavigation
 			return;
 		}
 		for (std::size_t index = 0; index < count; ++index) {
+			RequestCloseIfCancelHasNoTarget(events[index], a_generation);
 			ApplyEvent(io, events[index]);
 		}
+	}
+
+	bool ConsumeCloseRequestForCurrentWindow(
+		std::uint64_t a_generation) noexcept
+	{
+		if (pendingCloseRequest.Generation != a_generation) {
+			return false;
+		}
+		const auto* current = ImGui::GetCurrentWindow();
+		const auto* root = current ? current->RootWindowForNav : nullptr;
+		if (!root || root->ID != pendingCloseRequest.WindowID) {
+			return false;
+		}
+		pendingCloseRequest = {};
+		return true;
 	}
 }

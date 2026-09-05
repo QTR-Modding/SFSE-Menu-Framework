@@ -3,6 +3,7 @@
 #include "appearance/FontManager.h"
 #include "config/FrameworkSettings.h"
 #include "config/RootMenuConfig.h"
+#include "input/GamepadNavigation.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/PanelRegistry.h"
 #include "runtime/WindowManager.h"
@@ -23,7 +24,6 @@
 
 namespace
 {
-	constexpr char MCP_WINDOW_ID[] = "#MCPMainWindow";
 	constexpr char MCP_TITLE[] = "Mod Control Panel";
 	constexpr char menuConfigPath[] =
 		"Data\\SFSE\\Plugins\\SFSEMenuFrameworkMenuConfig.json";
@@ -368,6 +368,13 @@ namespace
 		}
 	}
 
+	void CloseMainWindow()
+	{
+		SFSEMenuFramework::SettingsWindow::Close();
+		static_cast<void>(
+			SFSEMenuFramework::WindowManager::SetMainWindowOpen(false));
+	}
+
 	void ObserveMainOpenSession()
 	{
 		const auto generation =
@@ -411,9 +418,7 @@ namespace
 		ImGui::SameLine(titlePosition);
 		ImGui::TextUnformatted(MCP_TITLE);
 		if (SFSEMenuFramework::UI::RenderCloseButton()) {
-			SFSEMenuFramework::SettingsWindow::Close();
-			static_cast<void>(
-				SFSEMenuFramework::WindowManager::SetMainWindowOpen(false));
+			CloseMainWindow();
 		}
 		ImGui::EndMenuBar();
 	}
@@ -609,9 +614,15 @@ void __stdcall SFSEMenuFramework::McpWindow::Render()
 		ImGuiWindowFlags_NoTitleBar |
 		ImGuiWindowFlags_NoSavedSettings;
 	const bool drawContents =
-		ImGui::Begin(MCP_WINDOW_ID, nullptr, windowFlags);
+		ImGui::Begin(WindowPlacement::GetName(WindowPlacement::BuiltInWindow::Main),
+			nullptr, windowFlags);
 	WindowPlacement::Capture(WindowPlacement::BuiltInWindow::Main);
-	if (drawContents) {
+	const bool closeRequested =
+		GamepadNavigation::ConsumeCloseRequestForCurrentWindow(
+			WindowManager::GetBlockingWindowOpenGeneration());
+	if (closeRequested) {
+		CloseMainWindow();
+	} else if (drawContents) {
 		RenderMainMenuBar();
 		RenderNavigation();
 		RenderArchiveConfirmation();
