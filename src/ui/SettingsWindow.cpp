@@ -5,6 +5,7 @@
 #include "config/FrameworkSettings.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/WindowManager.h"
+#include "ui/WindowPlacement.h"
 #include "ui/WindowPresentation.h"
 
 #include <imgui.h>
@@ -33,7 +34,6 @@ namespace SFSEMenuFramework::SettingsWindow
 
 		bool isOpen{};
 		bool focusRequested{};
-		bool resetPlacement{};
 		bool fontSettingsRefreshRequested{ true };
 		bool fontSettingsInvalid{};
 
@@ -532,19 +532,13 @@ namespace SFSEMenuFramework::SettingsWindow
 		focusRequested = false;
 	}
 
-	void ResetPlacement() noexcept
-	{
-		resetPlacement = true;
-	}
-
 	void Render()
 	{
 		if (!isOpen) {
 			return;
 		}
 
-		const auto* viewport = ImGui::GetMainViewport();
-		SFSEMenuFramework::UI::ApplyWindowPlacement(*viewport, 0.4F, 0.4F, resetPlacement);
+		WindowPlacement::Apply(WindowPlacement::BuiltInWindow::Settings);
 		if (focusRequested) {
 			ImGui::SetNextWindowFocus();
 			focusRequested = false;
@@ -553,8 +547,10 @@ namespace SFSEMenuFramework::SettingsWindow
 		constexpr ImGuiWindowFlags windowFlags =
 			ImGuiWindowFlags_NoCollapse |
 			ImGuiWindowFlags_MenuBar |
-			ImGuiWindowFlags_NoTitleBar;
+			ImGuiWindowFlags_NoTitleBar |
+			ImGuiWindowFlags_NoSavedSettings;
 		const bool drawContents = ImGui::Begin(WINDOW_ID, nullptr, windowFlags);
+		WindowPlacement::Capture(WindowPlacement::BuiltInWindow::Settings);
 		if (drawContents && ImGui::BeginMenuBar()) {
 			ImGui::TextUnformatted("Settings");
 			if (SFSEMenuFramework::UI::RenderCloseButton()) {

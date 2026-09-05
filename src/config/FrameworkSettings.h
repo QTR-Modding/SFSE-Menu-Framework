@@ -73,6 +73,19 @@ namespace SFSEMenuFramework::FrameworkSettings
 		FontSettings  Fonts{};
 	};
 
+	// Viewport-relative geometry, kept separate from editable framework settings.
+	struct WindowLayout final
+	{
+		const wchar_t* Section{};
+		float X{};
+		float Y{};
+		float Width{};
+		float Height{};
+	};
+
+	[[nodiscard]] bool LoadWindowLayout(WindowLayout& a_layout) noexcept;
+	[[nodiscard]] bool SaveWindowLayouts(std::span<const WindowLayout> a_layouts) noexcept;
+
 	[[nodiscard]] bool Load() noexcept;
 	[[nodiscard]] bool Save() noexcept;
 	void               ResetDefaults() noexcept;

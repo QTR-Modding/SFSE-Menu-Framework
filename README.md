@@ -32,7 +32,9 @@ Additional theme JSON files using the bundled schema belong in
 
 Slash-delimited registrations form a collapsible navigation tree. Top-level
 sections can be searched, favorited, archived, and restored. Menu state and
-window placement are stored under `Data/SFSE/Plugins`.
+window placement are stored under `Data/SFSE/Plugins`. Main and Settings window
+layouts survive restarts in display-relative coordinates; `Options > Reset
+Windows` restores both to their defaults.
 
 The panel can open as soon as Starfield's window and renderer are ready, before
 `kPostDataLoad`. Consumer callbacks that use game data must gate that work at

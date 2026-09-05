@@ -3,12 +3,14 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
 #include <cwchar>
 #include <filesystem>
 #include <iterator>
+#include <limits>
 #include <string_view>
 #include <system_error>
 #include <type_traits>
@@ -307,6 +309,74 @@ namespace SFSEMenuFramework::FrameworkSettings
 			const wchar_t* path;
 			bool           success{ true };
 		};
+
+		template <class Writer>
+		[[nodiscard]] bool SaveProfile(Writer a_write) noexcept
+		{
+			std::array<wchar_t, pathCapacity> path{};
+			std::array<wchar_t, pathCapacity> temporaryPath{};
+			if (!BuildSettingsPath(path) ||
+				!BuildTemporarySettingsPath(path, temporaryPath) ||
+				!PrepareTemporarySettingsFile(path.data(), temporaryPath.data())) {
+				return false;
+			}
+
+			Profile profile{ temporaryPath.data() };
+			a_write(profile);
+			// The cache-flush form returns zero even when it succeeds.
+			static_cast<void>(::WritePrivateProfileStringW(
+				nullptr, nullptr, nullptr, temporaryPath.data()));
+			if (static_cast<bool>(profile) && ::MoveFileExW(
+					temporaryPath.data(), path.data(),
+					MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE) {
+				return true;
+			}
+			const auto error = ::GetLastError();
+			static_cast<void>(::DeleteFileW(temporaryPath.data()));
+			::SetLastError(error);
+			return false;
+		}
+	}
+
+	bool LoadWindowLayout(WindowLayout& a_layout) noexcept
+	{
+		std::array<wchar_t, pathCapacity> path{};
+		if (!a_layout.Section || !BuildSettingsPath(path)) {
+			return false;
+		}
+		constexpr float missing = std::numeric_limits<float>::quiet_NaN();
+		WindowLayout loaded{ a_layout.Section, missing, missing, missing, missing };
+		Profile profile{ path.data() };
+		profile.Read(loaded.Section, L"X", loaded.X, missing, ParseNumber<float>);
+		profile.Read(loaded.Section, L"Y", loaded.Y, missing, ParseNumber<float>);
+		profile.Read(loaded.Section, L"Width", loaded.Width, missing, ParseNumber<float>);
+		profile.Read(loaded.Section, L"Height", loaded.Height, missing, ParseNumber<float>);
+		if (!profile || !std::isfinite(loaded.X) || !std::isfinite(loaded.Y) ||
+			!std::isfinite(loaded.Width) || !std::isfinite(loaded.Height) ||
+			loaded.Width <= 0.0F || loaded.Height <= 0.0F) {
+			return false;
+		}
+		a_layout = loaded;
+		return true;
+	}
+
+	bool SaveWindowLayouts(std::span<const WindowLayout> a_layouts) noexcept
+	{
+		for (const auto& layout : a_layouts) {
+			if (!layout.Section || !std::isfinite(layout.X) || !std::isfinite(layout.Y) ||
+				!std::isfinite(layout.Width) || !std::isfinite(layout.Height) ||
+				layout.Width <= 0.0F || layout.Height <= 0.0F) {
+				return false;
+			}
+		}
+		return a_layouts.empty() || SaveProfile([a_layouts](Profile& profile) {
+			for (const auto& layout : a_layouts) {
+				profile.Write(layout.Section, L"X", layout.X);
+				profile.Write(layout.Section, L"Y", layout.Y);
+				profile.Write(layout.Section, L"Width", layout.Width);
+				profile.Write(layout.Section, L"Height", layout.Height);
+			}
+		});
 	}
 
 	bool Load() noexcept
@@ -378,55 +448,31 @@ namespace SFSEMenuFramework::FrameworkSettings
 	{
 		auto saved = GetValues();
 		Normalize(saved);
-
-		std::array<wchar_t, pathCapacity> path{};
-		if (!BuildSettingsPath(path)) {
-			return false;
-		}
-		std::array<wchar_t, pathCapacity> temporaryPath{};
-		if (!BuildTemporarySettingsPath(path, temporaryPath) ||
-			!PrepareTemporarySettingsFile(path.data(), temporaryPath.data())) {
-			return false;
-		}
-
-		Profile profile{ temporaryPath.data() };
-		profile.Write(sectionName, L"ToggleKey", GetKeyboardBindingName(saved.ToggleKey));
-		profile.Write(sectionName, L"ToggleMode", ToggleModeName(saved.Mode));
-		profile.Write(sectionName, L"ToggleKeyGamePad",
-			GetGamePadBindingName(saved.ToggleKeyGamePad));
-		profile.Write(sectionName, L"ToggleModeGamePad", ToggleModeName(saved.ModeGamePad));
-		profile.Write(sectionName, L"FreezeTimeOnMenu",
-			saved.FreezeTimeOnMenu ? L"1" : L"0");
-		profile.Write(sectionName, L"BlurBackgroundOnMenu",
-			saved.BlurBackgroundOnMenu ? L"1" : L"0");
-		profile.Write(sectionName, L"MenuStyle", saved.MenuStyle.data());
-		profile.Write(fontSectionName, L"PrimaryFont", NameView(saved.Fonts.PrimaryFont));
-		profile.Write(fontSectionName, L"FontRendering",
-			GetFontRenderingName(saved.Fonts.Rendering));
-		for (const auto& setting : fontFloatSettings) {
-			profile.Write(
-				fontSectionName, setting.Name, saved.Fonts.*setting.Value);
-		}
-		for (const auto& setting : glyphSettings) {
-			profile.Write(
-				fontSectionName, setting.Name,
-				saved.Fonts.Glyphs.*setting.Value ? L"1" : L"0");
-		}
-
-		// The documented cache-flush form returns zero even when it only
-		// flushes successfully, so its return value is not a failure signal.
-		static_cast<void>(::WritePrivateProfileStringW(
-			nullptr, nullptr, nullptr, temporaryPath.data()));
-		bool success = static_cast<bool>(profile);
-		if (success) {
-			success = ::MoveFileExW(
-				temporaryPath.data(), path.data(),
-				MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
-		}
+		const bool success = SaveProfile([&saved](Profile& profile) {
+			profile.Write(sectionName, L"ToggleKey", GetKeyboardBindingName(saved.ToggleKey));
+			profile.Write(sectionName, L"ToggleMode", ToggleModeName(saved.Mode));
+			profile.Write(sectionName, L"ToggleKeyGamePad",
+				GetGamePadBindingName(saved.ToggleKeyGamePad));
+			profile.Write(sectionName, L"ToggleModeGamePad", ToggleModeName(saved.ModeGamePad));
+			profile.Write(sectionName, L"FreezeTimeOnMenu",
+				saved.FreezeTimeOnMenu ? L"1" : L"0");
+			profile.Write(sectionName, L"BlurBackgroundOnMenu",
+				saved.BlurBackgroundOnMenu ? L"1" : L"0");
+			profile.Write(sectionName, L"MenuStyle", saved.MenuStyle.data());
+			profile.Write(fontSectionName, L"PrimaryFont", NameView(saved.Fonts.PrimaryFont));
+			profile.Write(fontSectionName, L"FontRendering",
+				GetFontRenderingName(saved.Fonts.Rendering));
+			for (const auto& setting : fontFloatSettings) {
+				profile.Write(
+					fontSectionName, setting.Name, saved.Fonts.*setting.Value);
+			}
+			for (const auto& setting : glyphSettings) {
+				profile.Write(
+					fontSectionName, setting.Name,
+					saved.Fonts.Glyphs.*setting.Value ? L"1" : L"0");
+			}
+		});
 		if (!success) {
-			const auto error = ::GetLastError();
-			static_cast<void>(::DeleteFileW(temporaryPath.data()));
-			::SetLastError(error);
 			return false;
 		}
 

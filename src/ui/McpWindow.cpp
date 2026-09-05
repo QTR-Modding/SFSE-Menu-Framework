@@ -7,6 +7,7 @@
 #include "runtime/PanelRegistry.h"
 #include "runtime/WindowManager.h"
 #include "ui/SettingsWindow.h"
+#include "ui/WindowPlacement.h"
 #include "ui/WindowPresentation.h"
 
 #include <imgui.h>
@@ -41,7 +42,6 @@ namespace
 	MenuNodePointer selectedNode;
 	std::string pendingArchiveMenu;
 	bool archiveConfirmationRequested{};
-	bool resetMainWindowPlacement{};
 	bool menuConfigSaveFailed{};
 	std::uint64_t observedMainSessionGeneration{};
 
@@ -388,8 +388,7 @@ namespace
 
 		if (ImGui::BeginMenu("Options")) {
 			if (ImGui::MenuItem("Reset Windows")) {
-				resetMainWindowPlacement = true;
-				SFSEMenuFramework::SettingsWindow::ResetPlacement();
+				SFSEMenuFramework::WindowPlacement::Reset();
 			}
 			if (ImGui::MenuItem("Resume Game")) {
 				ResumeGame();
@@ -602,19 +601,16 @@ bool SFSEMenuFramework::McpWindow::Install()
 void __stdcall SFSEMenuFramework::McpWindow::Render()
 {
 	ObserveMainOpenSession();
-	const auto* viewport = ImGui::GetMainViewport();
-	SFSEMenuFramework::UI::ApplyWindowPlacement(
-		*viewport,
-		0.8F,
-		0.8F,
-		resetMainWindowPlacement);
+	WindowPlacement::Apply(WindowPlacement::BuiltInWindow::Main);
 
 	constexpr ImGuiWindowFlags windowFlags =
 		ImGuiWindowFlags_NoCollapse |
 		ImGuiWindowFlags_MenuBar |
-		ImGuiWindowFlags_NoTitleBar;
+		ImGuiWindowFlags_NoTitleBar |
+		ImGuiWindowFlags_NoSavedSettings;
 	const bool drawContents =
 		ImGui::Begin(MCP_WINDOW_ID, nullptr, windowFlags);
+	WindowPlacement::Capture(WindowPlacement::BuiltInWindow::Main);
 	if (drawContents) {
 		RenderMainMenuBar();
 		RenderNavigation();

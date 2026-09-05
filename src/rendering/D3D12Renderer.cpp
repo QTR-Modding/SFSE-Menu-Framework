@@ -7,6 +7,7 @@
 #include "runtime/EventManager.h"
 #include "runtime/HudManager.h"
 #include "runtime/WindowManager.h"
+#include "ui/WindowPlacement.h"
 
 #include <backends/imgui_impl_dx12.h>
 #include <imgui.h>
@@ -670,6 +671,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 		ImGui::NewFrame();
 		HudManager::Render();
 		const auto renderedGeneration = WindowManager::RenderOpenWindows();
+		const auto* mainWindow = WindowManager::GetMainWindow();
+		WindowPlacement::SavePending(mainWindow && mainWindow->IsOpen.load());
 		InputEventManager::SetImGuiItemActive(ImGui::IsAnyItemActive());
 		ImGui::Render();
 
