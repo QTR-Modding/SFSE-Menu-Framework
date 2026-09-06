@@ -10,7 +10,7 @@
 #include <string_view>
 
 // Direct client exports port the framework boundary from SKSE Menu Framework
-// commit 928e01ab459822a8d233ab99f0419ea1de23c775. Client callbacks call the
+// through commit c8cfc5c93fa3b5f6261cef695ab814e4467dd980. Client callbacks call the
 // cimgui exports compiled into this DLL, so the real ImGui context never leaves
 // the framework.
 namespace
@@ -39,6 +39,19 @@ extern "C" __declspec(dllexport) void AddSectionItem(
 		static_cast<void>(
 			SFSEMenuFramework::PanelRegistry::RegisterDirect(a_path, a_render));
 	}
+}
+
+extern "C" __declspec(dllexport) bool RenameSection(
+	const char* a_path,
+	const char* a_newName)
+{
+	return a_path && a_newName &&
+		SFSEMenuFramework::PanelRegistry::Rename(a_path, a_newName);
+}
+
+extern "C" __declspec(dllexport) bool DeleteSection(const char* a_path)
+{
+	return a_path && SFSEMenuFramework::PanelRegistry::Delete(a_path);
 }
 
 extern "C" __declspec(dllexport)
@@ -150,7 +163,12 @@ extern "C" __declspec(dllexport) void UnregisterEvent(std::int64_t a_handle)
 
 extern "C" __declspec(dllexport) float GetMenuFrameworkVersion()
 {
-	return 3.7F;
+	return 3.8F;
+}
+
+extern "C" __declspec(dllexport) std::uint32_t GetMenuFrameworkAPIVersion()
+{
+	return 1;
 }
 
 extern "C" __declspec(dllexport)
