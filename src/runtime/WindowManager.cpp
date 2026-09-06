@@ -1,6 +1,7 @@
 #include "runtime/WindowManager.h"
 
 #include "appearance/fonts/ConsumerFontScope.h"
+#include "config/FrameworkSettings.h"
 #include "input/GamepadNavigation.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/EventManager.h"
@@ -26,7 +27,6 @@ namespace
 		WindowInterface            Interface;
 		WindowRenderFunction       BuiltInRender{ nullptr };
 		Model::ClientWindowRenderFunction ExternalRender{ nullptr };
-		bool                       PauseGameWhenBlocking{ false };
 		bool                       WasBlockingOpen{ false };
 	};
 
@@ -87,7 +87,7 @@ namespace
 				state.AnyBlocking |= blocking;
 				if (blocking) {
 					state.PauseGame |= window->ExternalRender ?
-						window->PauseGameWhenBlocking :
+						FrameworkSettings::GetFreezeTimeOnMenu() :
 						window->Interface.PauseGame.load(std::memory_order_acquire);
 				}
 				state.BlockingOpenEdges += blocking && !window->WasBlockingOpen;
@@ -210,7 +210,6 @@ namespace SFSEMenuFramework
 			}
 			auto window = std::make_unique<Window>();
 			window->ExternalRender = a_renderFunction;
-			window->PauseGameWhenBlocking = true;
 			return PublishWindow(*registry, std::move(window));
 		} catch (const std::bad_alloc&) {
 			return nullptr;

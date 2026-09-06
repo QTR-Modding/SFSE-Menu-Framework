@@ -172,6 +172,7 @@ namespace SFSEMenuFramework::SettingsWindow
 				GlyphToggle{ "Cyrillic", &FrameworkSettings::GlyphCoverage::Cyrillic },
 				GlyphToggle{ "Vietnamese", &FrameworkSettings::GlyphCoverage::Vietnamese },
 				GlyphToggle{ "Turkish", &FrameworkSettings::GlyphCoverage::Turkish },
+				GlyphToggle{ "Polish", &FrameworkSettings::GlyphCoverage::Polish },
 				GlyphToggle{ "Thai", &FrameworkSettings::GlyphCoverage::Thai },
 				GlyphToggle{ "Korean", &FrameworkSettings::GlyphCoverage::Korean },
 				GlyphToggle{ "Japanese", &FrameworkSettings::GlyphCoverage::Japanese },

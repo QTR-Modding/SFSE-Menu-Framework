@@ -39,6 +39,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 		bool Cyrillic{};
 		bool Vietnamese{};
 		bool Turkish{};
+		bool Polish{};
 		bool Thai{};
 		bool Korean{};
 		bool Japanese{};
