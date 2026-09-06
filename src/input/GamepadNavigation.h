@@ -24,7 +24,7 @@ namespace SFSEMenuFramework::GamepadNavigation
 	void CaptureNativeEvent(
 		const RE::InputEvent& a_event,
 		std::uint64_t         a_generation,
-		bool                  a_sendToImGui) noexcept;
+		bool                  a_consumerAllowsImGui) noexcept;
 	void ObserveGamepadActivity(std::uint64_t a_generation) noexcept;
 	void ObserveMouseActivity(std::uint64_t a_generation) noexcept;
 	[[nodiscard]] bool ShouldDrawMouseCursor(

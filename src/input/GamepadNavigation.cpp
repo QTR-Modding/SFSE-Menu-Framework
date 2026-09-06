@@ -36,6 +36,39 @@ namespace SFSEMenuFramework::GamepadNavigation
 			RightStick
 		};
 
+		enum class SequenceOwner : std::uint8_t
+		{
+			None,
+			ImGui,
+			Suppressed
+		};
+
+		struct ButtonMapping final
+		{
+			std::uint32_t ID;
+			ImGuiKey      Key;
+		};
+
+		constexpr std::array buttonMappings{
+			ButtonMapping{ 1, ImGuiKey_GamepadDpadUp },
+			ButtonMapping{ 2, ImGuiKey_GamepadDpadDown },
+			ButtonMapping{ 4, ImGuiKey_GamepadDpadLeft },
+			ButtonMapping{ 8, ImGuiKey_GamepadDpadRight },
+			ButtonMapping{ 9, ImGuiKey_GamepadL2 },
+			ButtonMapping{ 10, ImGuiKey_GamepadR2 },
+			ButtonMapping{ 16, ImGuiKey_GamepadStart },
+			ButtonMapping{ 32, ImGuiKey_GamepadBack },
+			ButtonMapping{ 64, ImGuiKey_GamepadL3 },
+			ButtonMapping{ 128, ImGuiKey_GamepadR3 },
+			ButtonMapping{ 256, ImGuiKey_GamepadL1 },
+			ButtonMapping{ 512, ImGuiKey_GamepadR1 },
+			ButtonMapping{ 4096, ImGuiKey_GamepadFaceDown },
+			ButtonMapping{ 8192, ImGuiKey_GamepadFaceRight },
+			ButtonMapping{ 16384, ImGuiKey_GamepadFaceLeft },
+			ButtonMapping{ 32768, ImGuiKey_GamepadFaceUp }
+		};
+		constexpr std::size_t invalidButtonIndex = buttonMappings.size();
+
 		struct PendingEvent final
 		{
 			EventKind     Kind{};
@@ -55,6 +88,9 @@ namespace SFSEMenuFramework::GamepadNavigation
 		{
 			std::atomic_flag                       Lock{};
 			std::array<PendingEvent, queueCapacity> Events{};
+			std::array<SequenceOwner, buttonMappings.size()> ButtonOwners{};
+			SequenceOwner                          LeftStickOwner{};
+			SequenceOwner                          RightStickOwner{};
 			std::size_t                            Count{};
 			std::uint64_t                          Generation{};
 			bool                                   Overflowed{};
@@ -91,72 +127,93 @@ namespace SFSEMenuFramework::GamepadNavigation
 			return (a_generation << 1) | static_cast<std::uint64_t>(a_gamepad);
 		}
 
-		[[nodiscard]] bool IsMappedButton(std::uint32_t a_id) noexcept
+		[[nodiscard]] std::size_t FindButtonIndex(std::uint32_t a_id) noexcept
 		{
-			switch (a_id) {
-			case 1:
-			case 2:
-			case 4:
-			case 8:
-			case 9:
-			case 10:
-			case 16:
-			case 32:
-			case 64:
-			case 128:
-			case 256:
-			case 512:
-			case 4096:
-			case 8192:
-			case 16384:
-			case 32768:
-				return true;
-			default:
-				return false;
+			for (std::size_t index = 0; index < buttonMappings.size(); ++index) {
+				if (buttonMappings[index].ID == a_id) {
+					return index;
+				}
 			}
+			return invalidButtonIndex;
 		}
 
 		[[nodiscard]] ImGuiKey MapButton(std::uint32_t a_id) noexcept
 		{
-			switch (a_id) {
-			case 1: return ImGuiKey_GamepadDpadUp;
-			case 2: return ImGuiKey_GamepadDpadDown;
-			case 4: return ImGuiKey_GamepadDpadLeft;
-			case 8: return ImGuiKey_GamepadDpadRight;
-			case 9: return ImGuiKey_GamepadL2;
-			case 10: return ImGuiKey_GamepadR2;
-			case 16: return ImGuiKey_GamepadStart;
-			case 32: return ImGuiKey_GamepadBack;
-			case 64: return ImGuiKey_GamepadL3;
-			case 128: return ImGuiKey_GamepadR3;
-			case 256: return ImGuiKey_GamepadL1;
-			case 512: return ImGuiKey_GamepadR1;
-			case 4096: return ImGuiKey_GamepadFaceDown;
-			case 8192: return ImGuiKey_GamepadFaceRight;
-			case 16384: return ImGuiKey_GamepadFaceLeft;
-			case 32768: return ImGuiKey_GamepadFaceUp;
-			default: return ImGuiKey_None;
-			}
+			const auto index = FindButtonIndex(a_id);
+			return index == invalidButtonIndex ?
+				ImGuiKey_None : buttonMappings[index].Key;
 		}
 
-		void Enqueue(
-			const PendingEvent& a_event, std::uint64_t a_generation) noexcept
+		void ResetSequenceOwners(Queue& a_queue) noexcept
+		{
+			a_queue.ButtonOwners.fill(SequenceOwner::None);
+			a_queue.LeftStickOwner = SequenceOwner::None;
+			a_queue.RightStickOwner = SequenceOwner::None;
+		}
+
+		void SetGeneration(Queue& a_queue, std::uint64_t a_generation) noexcept
+		{
+			if (a_queue.Generation == a_generation) {
+				return;
+			}
+			a_queue.Generation = a_generation;
+			a_queue.Count = 0;
+			a_queue.Overflowed = false;
+			ResetSequenceOwners(a_queue);
+		}
+
+		void EnqueueLocked(Queue& a_queue, const PendingEvent& a_event) noexcept
+		{
+			if (a_queue.Overflowed) {
+				return;
+			}
+			if (a_queue.Count == a_queue.Events.size()) {
+				a_queue.Count = 0;
+				a_queue.Overflowed = true;
+				return;
+			}
+			a_queue.Events[a_queue.Count++] = a_event;
+		}
+
+		void EnqueueSequence(
+			const PendingEvent& a_event,
+			std::uint64_t       a_generation,
+			bool                a_sequenceActive,
+			bool                a_consumerAllowsImGui) noexcept
 		{
 			QueueLock lock{ queue.Lock };
-			if (queue.Generation != a_generation) {
-				queue.Generation = a_generation;
-				queue.Count = 0;
-				queue.Overflowed = false;
+			SetGeneration(queue, a_generation);
+
+			SequenceOwner* owner{};
+			if (a_event.Kind == EventKind::Button) {
+				const auto index = FindButtonIndex(a_event.ID);
+				if (index == invalidButtonIndex) {
+					return;
+				}
+				owner = &queue.ButtonOwners[index];
+			} else {
+				owner = a_event.Kind == EventKind::LeftStick ?
+					&queue.LeftStickOwner : &queue.RightStickOwner;
 			}
-			if (queue.Overflowed) {
-				return;
+
+			bool send{};
+			if (!a_sequenceActive) {
+				send = *owner == SequenceOwner::ImGui;
+				*owner = SequenceOwner::None;
+			} else if ((a_event.Kind == EventKind::Button && a_event.InitialPress) ||
+				*owner == SequenceOwner::None) {
+				*owner = a_consumerAllowsImGui ?
+					SequenceOwner::ImGui : SequenceOwner::Suppressed;
+				send = *owner == SequenceOwner::ImGui;
+			} else {
+				// Once a sequence starts, keep its ImGui lifetime coherent even if
+				// a client consumes a later held or release transition.
+				send = *owner == SequenceOwner::ImGui;
 			}
-			if (queue.Count == queue.Events.size()) {
-				queue.Count = 0;
-				queue.Overflowed = true;
-				return;
+
+			if (send) {
+				EnqueueLocked(queue, a_event);
 			}
-			queue.Events[queue.Count++] = a_event;
 		}
 
 		void AddDirection(
@@ -260,7 +317,7 @@ namespace SFSEMenuFramework::GamepadNavigation
 	void CaptureNativeEvent(
 		const RE::InputEvent& a_event,
 		std::uint64_t         a_generation,
-		bool                  a_sendToImGui) noexcept
+		bool                  a_consumerAllowsImGui) noexcept
 	{
 		if (a_generation == 0 ||
 			a_event.deviceType != RE::InputEvent::DeviceType::kGamepad) {
@@ -269,6 +326,7 @@ namespace SFSEMenuFramework::GamepadNavigation
 
 		PendingEvent pending;
 		bool         active{};
+		bool         sequenceActive{};
 		if (a_event.eventType == RE::InputEvent::EventType::kButton) {
 			const auto& button = static_cast<const RE::ButtonEvent&>(a_event);
 			if (button.idCode < 0) {
@@ -280,7 +338,8 @@ namespace SFSEMenuFramework::GamepadNavigation
 			pending.InitialPress =
 				button.value != 0.0F && button.heldDownSecs == 0.0F;
 			active = pending.X > activityThreshold;
-			if (!IsMappedButton(pending.ID)) {
+			sequenceActive = pending.X > 0.0F;
+			if (FindButtonIndex(pending.ID) == invalidButtonIndex) {
 				if (active) {
 					ObserveGamepadActivity(a_generation);
 				}
@@ -296,6 +355,7 @@ namespace SFSEMenuFramework::GamepadNavigation
 			pending.Y = std::clamp(stick.yValue, -1.0F, 1.0F);
 			active = std::abs(pending.X) > activityThreshold ||
 				std::abs(pending.Y) > activityThreshold;
+			sequenceActive = active;
 		} else {
 			return;
 		}
@@ -303,9 +363,8 @@ namespace SFSEMenuFramework::GamepadNavigation
 		if (active) {
 			ObserveGamepadActivity(a_generation);
 		}
-		if (a_sendToImGui) {
-			Enqueue(pending, a_generation);
-		}
+		EnqueueSequence(
+			pending, a_generation, sequenceActive, a_consumerAllowsImGui);
 	}
 
 	void ApplyPending(std::uint64_t a_generation) noexcept
@@ -322,14 +381,15 @@ namespace SFSEMenuFramework::GamepadNavigation
 		bool                                   overflowed{};
 		{
 			QueueLock lock{ queue.Lock };
-			if (queue.Generation == a_generation) {
-				count = queue.Count;
-				overflowed = queue.Overflowed;
-				std::copy_n(queue.Events.begin(), count, events.begin());
-			}
+			SetGeneration(queue, a_generation);
+			count = queue.Count;
+			overflowed = queue.Overflowed;
+			std::copy_n(queue.Events.begin(), count, events.begin());
 			queue.Count = 0;
 			queue.Overflowed = false;
-			queue.Generation = a_generation;
+			if (overflowed) {
+				ResetSequenceOwners(queue);
+			}
 		}
 
 		if (overflowed) {
