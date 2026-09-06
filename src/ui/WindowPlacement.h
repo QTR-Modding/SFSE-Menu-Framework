@@ -9,6 +9,7 @@ namespace SFSEMenuFramework::WindowPlacement
 	};
 
 	// Called on the render thread, respectively before and immediately after Begin.
+	[[nodiscard]] const char* GetName(BuiltInWindow a_window) noexcept;
 	void Apply(BuiltInWindow a_window);
 	void Capture(BuiltInWindow a_window);
 	void Reset();

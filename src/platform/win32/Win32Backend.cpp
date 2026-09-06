@@ -1,6 +1,7 @@
 #include "platform/win32/Win32Platform.h"
 #include "platform/win32/Win32PlatformInternal.h"
 
+#include "input/GamepadNavigation.h"
 #include "runtime/WindowManager.h"
 
 #include <backends/imgui_impl_win32.h>
@@ -470,7 +471,9 @@ namespace SFSEMenuFramework::Win32Platform
 		}
 
 		auto& io = ImGui::GetIO();
-		io.MouseDrawCursor = acceptingInput;
+		io.MouseDrawCursor =
+			acceptingInput && GamepadNavigation::ShouldDrawMouseCursor(
+				WindowManager::GetBlockingWindowOpenGeneration());
 		if (!acceptingInput) {
 			io.ClearEventsQueue();
 			io.ClearInputKeys();

@@ -3,6 +3,7 @@
 #include "appearance/FontManager.h"
 #include "config/FrameworkSettings.h"
 #include "config/RootMenuConfig.h"
+#include "input/GamepadNavigation.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/PanelRegistry.h"
 #include "runtime/WindowManager.h"
@@ -23,7 +24,6 @@
 
 namespace
 {
-	constexpr char MCP_WINDOW_ID[] = "#MCPMainWindow";
 	constexpr char MCP_TITLE[] = "Mod Control Panel";
 	constexpr char menuConfigPath[] =
 		"Data\\SFSE\\Plugins\\SFSEMenuFrameworkMenuConfig.json";
@@ -141,31 +141,22 @@ namespace
 		}
 	}
 
-	void RenderRootMenuButtons(
+	void RenderRootMenuActions(
 		std::string_view a_menuName,
-		bool             a_favorite)
+		bool             a_favorite,
+		float            a_buttonSize)
 	{
-		const auto headerMinimum = ImGui::GetItemRectMin();
-		const auto headerMaximum = ImGui::GetItemRectMax();
-		const auto restoreCursor = ImGui::GetCursorScreenPos();
-		const float buttonSize = headerMaximum.y - headerMinimum.y;
-
 		ImGui::PushID(
 			a_menuName.data(),
 			a_menuName.data() + a_menuName.size());
-		ImGui::PushStyleVar(
-			ImGuiStyleVar_FramePadding,
-			ImVec2{ 0.0F, 0.0F });
 		ImGui::PushStyleColor(
 			ImGuiCol_Button,
 			ImVec4{ 0.0F, 0.0F, 0.0F, 0.0F });
 
-		ImGui::SetCursorScreenPos(
-			ImVec2{
-				headerMaximum.x - buttonSize * 2.0F,
-				headerMinimum.y
-			});
-		if (ImGui::Button("##Favorite", ImVec2{ buttonSize, buttonSize })) {
+		ImGui::TableSetColumnIndex(1);
+		if (ImGui::Button(
+				"##Favorite",
+				ImVec2{ a_buttonSize, a_buttonSize })) {
 			menuConfigSaveFailed =
 				!SFSEMenuFramework::RootMenuConfig::SetFavorite(
 					a_menuName,
@@ -175,21 +166,15 @@ namespace
 		RenderTooltip(
 			a_favorite ? "Remove from favorites" : "Add to favorites");
 
-		ImGui::SetCursorScreenPos(
-			ImVec2{
-				headerMaximum.x - buttonSize,
-				headerMinimum.y
-			});
-		if (ImGui::Button("-", ImVec2{ buttonSize, buttonSize })) {
+		ImGui::TableSetColumnIndex(2);
+		if (ImGui::Button("-", ImVec2{ a_buttonSize, a_buttonSize })) {
 			pendingArchiveMenu = a_menuName;
 			archiveConfirmationRequested = true;
 		}
 		RenderTooltip("Archive menu");
 
 		ImGui::PopStyleColor();
-		ImGui::PopStyleVar();
 		ImGui::PopID();
-		ImGui::SetCursorScreenPos(restoreCursor);
 	}
 
 	void RenderLiteralTextClipped(
@@ -368,6 +353,13 @@ namespace
 		}
 	}
 
+	void CloseMainWindow()
+	{
+		SFSEMenuFramework::SettingsWindow::Close();
+		static_cast<void>(
+			SFSEMenuFramework::WindowManager::SetMainWindowOpen(false));
+	}
+
 	void ObserveMainOpenSession()
 	{
 		const auto generation =
@@ -411,9 +403,7 @@ namespace
 		ImGui::SameLine(titlePosition);
 		ImGui::TextUnformatted(MCP_TITLE);
 		if (SFSEMenuFramework::UI::RenderCloseButton()) {
-			SFSEMenuFramework::SettingsWindow::Close();
-			static_cast<void>(
-				SFSEMenuFramework::WindowManager::SetMainWindowOpen(false));
+			CloseMainWindow();
 		}
 		ImGui::EndMenuBar();
 	}
@@ -512,34 +502,43 @@ namespace
 
 				const bool favorite = SFSEMenuFramework::RootMenuConfig::IsFavorite(root->Name);
 				const bool passesFilter = rootFilter.PassFilter(root->Name.c_str());
-				constexpr ImGuiTreeNodeFlags headerFlags =
-					ImGuiTreeNodeFlags_AllowOverlap;
 				bool headerOpen{};
 				if (passesFilter) {
-					auto* window = ImGui::GetCurrentWindow();
-					const auto& style = ImGui::GetStyle();
-					const ImVec2 textMinimum{
-						window->DC.CursorPos.x + ImGui::GetFontSize() +
-							style.FramePadding.x * 3.0F,
-						window->DC.CursorPos.y + (std::max)(
-							style.FramePadding.y,
-							window->DC.CurrLineTextBaseOffset)
-					};
-
 					ImGui::PushID(root.get());
-					headerOpen = ImGui::CollapsingHeader(
-						"##RootMenuHeader", headerFlags);
-					const auto headerMinimum = ImGui::GetItemRectMin();
-					const auto headerMaximum = ImGui::GetItemRectMax();
-					const float buttonSize = headerMaximum.y - headerMinimum.y;
-					RenderLiteralTextClipped(
-						root->Name,
-						textMinimum,
-						ImVec2{
-							headerMaximum.x - buttonSize * 2.0F,
-							headerMaximum.y
-						});
-					RenderRootMenuButtons(root->Name, favorite);
+					constexpr ImGuiTableFlags rowFlags =
+						ImGuiTableFlags_SizingStretchProp |
+						ImGuiTableFlags_NoSavedSettings |
+						ImGuiTableFlags_NoPadOuterX;
+					if (ImGui::BeginTable("##RootMenuRow", 3, rowFlags)) {
+						const float buttonSize = ImGui::GetFrameHeight();
+						ImGui::TableSetupColumn(
+							"##Header", ImGuiTableColumnFlags_WidthStretch);
+						ImGui::TableSetupColumn(
+							"##Favorite", ImGuiTableColumnFlags_WidthFixed,
+							buttonSize);
+						ImGui::TableSetupColumn(
+							"##Archive", ImGuiTableColumnFlags_WidthFixed,
+							buttonSize);
+						ImGui::TableNextRow(ImGuiTableRowFlags_None, buttonSize);
+						ImGui::TableSetColumnIndex(0);
+
+						auto* window = ImGui::GetCurrentWindow();
+						const auto& style = ImGui::GetStyle();
+						const ImVec2 textMinimum{
+							window->DC.CursorPos.x + ImGui::GetFontSize() +
+								style.FramePadding.x * 3.0F,
+							window->DC.CursorPos.y + (std::max)(
+								style.FramePadding.y,
+								window->DC.CurrLineTextBaseOffset)
+						};
+						headerOpen = ImGui::CollapsingHeader("##RootMenuHeader");
+						RenderLiteralTextClipped(
+							root->Name,
+							textMinimum,
+							ImGui::GetItemRectMax());
+						RenderRootMenuActions(root->Name, favorite, buttonSize);
+						ImGui::EndTable();
+					}
 					ImGui::PopID();
 				}
 				if (headerOpen) {
@@ -609,9 +608,15 @@ void __stdcall SFSEMenuFramework::McpWindow::Render()
 		ImGuiWindowFlags_NoTitleBar |
 		ImGuiWindowFlags_NoSavedSettings;
 	const bool drawContents =
-		ImGui::Begin(MCP_WINDOW_ID, nullptr, windowFlags);
+		ImGui::Begin(WindowPlacement::GetName(WindowPlacement::BuiltInWindow::Main),
+			nullptr, windowFlags);
 	WindowPlacement::Capture(WindowPlacement::BuiltInWindow::Main);
-	if (drawContents) {
+	const bool closeRequested =
+		GamepadNavigation::ConsumeCloseRequestForCurrentWindow(
+			WindowManager::GetBlockingWindowOpenGeneration());
+	if (closeRequested) {
+		CloseMainWindow();
+	} else if (drawContents) {
 		RenderMainMenuBar();
 		RenderNavigation();
 		RenderArchiveConfirmation();

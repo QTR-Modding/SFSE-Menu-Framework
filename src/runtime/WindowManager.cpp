@@ -1,6 +1,7 @@
 #include "runtime/WindowManager.h"
 
 #include "appearance/fonts/ConsumerFontScope.h"
+#include "input/GamepadNavigation.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/EventManager.h"
 
@@ -230,7 +231,7 @@ namespace SFSEMenuFramework
 		}
 		bool renderedBlockingWindow{};
 		if (const auto windows = registry->Published.load(std::memory_order_acquire)) {
-			for (const auto* window : *windows) {
+			for (auto* window : *windows) {
 				if (!window ||
 					!window->Interface.IsOpen.load(std::memory_order_acquire)) {
 					continue;
@@ -240,8 +241,17 @@ namespace SFSEMenuFramework
 				if (window->BuiltInRender) {
 					window->BuiltInRender();
 				} else if (window->ExternalRender) {
+					const auto closeTarget =
+						GamepadNavigation::SnapshotCloseTarget(
+							before.BlockingGeneration);
 					ConsumerFontScope::CallbackScope callbackScope{ "window" };
 					RenderExternalWindow(window->ExternalRender);
+					if (GamepadNavigation::
+						ConsumeCloseRequestForNewlyRenderedTarget(
+							before.BlockingGeneration, closeTarget)) {
+						window->Interface.IsOpen.store(
+							false, std::memory_order_release);
+					}
 				}
 				renderedBlockingWindow |= blocking;
 			}

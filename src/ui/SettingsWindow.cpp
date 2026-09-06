@@ -3,6 +3,7 @@
 #include "appearance/FontManager.h"
 #include "appearance/ThemeManager.h"
 #include "config/FrameworkSettings.h"
+#include "input/GamepadNavigation.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/WindowManager.h"
 #include "ui/WindowPlacement.h"
@@ -30,8 +31,6 @@ namespace SFSEMenuFramework::SettingsWindow
 		// adapt SKSE Menu Framework 3 UI.cpp at commit
 		// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0).
 		// Persistence and Starfield ownership updates remain SFSE-specific.
-		constexpr char WINDOW_ID[] = "Settings##Window";
-
 		bool isOpen{};
 		bool focusRequested{};
 		bool fontSettingsRefreshRequested{ true };
@@ -549,9 +548,17 @@ namespace SFSEMenuFramework::SettingsWindow
 			ImGuiWindowFlags_MenuBar |
 			ImGuiWindowFlags_NoTitleBar |
 			ImGuiWindowFlags_NoSavedSettings;
-		const bool drawContents = ImGui::Begin(WINDOW_ID, nullptr, windowFlags);
+		const bool drawContents = ImGui::Begin(
+			WindowPlacement::GetName(WindowPlacement::BuiltInWindow::Settings),
+			nullptr, windowFlags);
 		WindowPlacement::Capture(WindowPlacement::BuiltInWindow::Settings);
-		if (drawContents && ImGui::BeginMenuBar()) {
+		const bool closeRequested =
+			GamepadNavigation::ConsumeCloseRequestForCurrentWindow(
+				WindowManager::GetBlockingWindowOpenGeneration());
+		if (closeRequested) {
+			isOpen = false;
+		}
+		if (!closeRequested && drawContents && ImGui::BeginMenuBar()) {
 			ImGui::TextUnformatted("Settings");
 			if (SFSEMenuFramework::UI::RenderCloseButton()) {
 				isOpen = false;
@@ -559,7 +566,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			ImGui::EndMenuBar();
 		}
 
-		if (drawContents) {
+		if (!closeRequested && drawContents) {
 			const float windowWidth = ImGui::GetContentRegionAvail().x;
 			const float contentWidth = windowWidth * 0.8F;
 			const float offset = (windowWidth - contentWidth) * 0.5F;

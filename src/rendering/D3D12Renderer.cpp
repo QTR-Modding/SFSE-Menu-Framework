@@ -2,6 +2,7 @@
 
 #include "appearance/FontManager.h"
 #include "appearance/ThemeManager.h"
+#include "input/GamepadNavigation.h"
 #include "input/InputEventManager.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/EventManager.h"
@@ -662,13 +663,18 @@ namespace SFSEMenuFramework::D3D12Renderer
 		const auto openGeneration = WindowManager::GetBlockingWindowOpenGeneration();
 		if (!HasRecentBlockingWindowFrame(openGeneration) ||
 			!WindowManager::IsBlockingWindowOpenGeneration(openGeneration)) {
+			io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
 			io.ClearEventsQueue();
 			io.ClearInputKeys();
+		} else {
+			GamepadNavigation::ApplyPending(openGeneration);
 		}
 		EventManager::Dispatch(
 			Model::EventType::kBeforeRender,
 			lifecycleSnapshot);
+		const auto repeatTiming = GamepadNavigation::ApplyRepeatTiming();
 		ImGui::NewFrame();
+		GamepadNavigation::RestoreRepeatTiming(repeatTiming);
 		HudManager::Render();
 		const auto renderedGeneration = WindowManager::RenderOpenWindows();
 		const auto* mainWindow = WindowManager::GetMainWindow();

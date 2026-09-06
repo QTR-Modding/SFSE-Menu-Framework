@@ -33,7 +33,7 @@ add_requires("freetype 2.14.1", {
 
 local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
-local plugin_version = "0.10.0"
+local plugin_version = "0.11.4"
 local plugin_author = "Quantumyilmaz"
 
 set_project(plugin_name)
@@ -78,7 +78,10 @@ target("imgui", function()
         "extern/imgui/misc/freetype/imgui_freetype.h",
         "extern/imgui_bridge/FontVariation.h"
     )
-    add_defines("IMGUI_ENABLE_FREETYPE")
+    add_defines(
+        "IMGUI_ENABLE_FREETYPE",
+        "IMGUI_IMPL_WIN32_DISABLE_GAMEPAD"
+    )
     add_includedirs("extern/imgui", { public = true })
     add_includedirs("extern/imgui_bridge", { public = true })
     add_packages("freetype", { public = true })

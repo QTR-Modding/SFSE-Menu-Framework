@@ -13,6 +13,17 @@ rebuild request sequence, are used under GNU GPL version 3. The complete
 license is included in
 [COPYING](COPYING).
 
+The root-menu favorite and archive actions retain the adapted behavior, but
+SFSE Menu Framework renders them in separate table cells instead of overlaying
+them on the collapsing header. This Starfield-specific layout keeps their
+visual and gamepad navigation rectangles distinct.
+
+The native controller-button to ImGui navigation mapping additionally adapts
+`src/Input.cpp` from [commit
+`c97cdce6dd207c7cf1401611bc82bd7e8f97a814`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/c97cdce6dd207c7cf1401611bc82bd7e8f97a814).
+Starfield's native thumbstick events and cross-thread handoff are
+Starfield-specific.
+
 These SKSE Menu Framework-derived portions remain GPL-3.0-only. The separate
 exceptions in this repository do not relicense those portions.
 
@@ -31,6 +42,15 @@ annotated tag (tag object
 texture creation/upload sequence for checked, per-generation live replacement.
 Its FreeType builder is compiled through a narrow project bridge that selects
 an OpenType variable-weight coordinate without changing public ImGui layouts.
+The native gamepad bridge also adapts the Win32 backend's four-direction analog
+key submission pattern. Its B-button close fallback follows the cancellation
+priority expressed by `NavUpdateCancelRequest`; the window-close action itself
+is SFSE Menu Framework behavior. The Win32 backend is built with Dear ImGui's
+supported `IMGUI_IMPL_WIN32_DISABLE_GAMEPAD` switch so Starfield's native input
+events are the framework's sole controller source. The vendored
+`GetTypematicRepeatRate` behavior is left unchanged; SFSE Menu Framework
+temporarily supplies a slower gamepad-only delay and rate around ImGui's
+navigation update. Keyboard repeat timing is unchanged.
 
 The MIT License (MIT)
 
@@ -153,7 +173,7 @@ The exception text is reproduced verbatim:
 
 SFSE Menu Framework links the
 [QTR CommonLibSF fork at commit
-`72c9fc34099d7e8ebd95008b05287f82725ac955`](https://github.com/QTR-Modding/commonlibsf/tree/72c9fc34099d7e8ebd95008b05287f82725ac955),
+`3304c28d27d2bfc017883dafcd5a80a38d5abdc2`](https://github.com/QTR-Modding/commonlibsf/tree/3304c28d27d2bfc017883dafcd5a80a38d5abdc2),
 including fork modifications by Quantumyilmaz, and its pinned
 [commonlib-shared dependency at commit
 `5470284e964d5510aa001dca3e0bb5548b6356a4`](https://github.com/libxse/commonlib-shared/tree/5470284e964d5510aa001dca3e0bb5548b6356a4).

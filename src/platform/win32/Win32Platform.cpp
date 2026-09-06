@@ -2,6 +2,7 @@
 #include "platform/win32/Win32PlatformInternal.h"
 
 #include "input/InputCapture.h"
+#include "input/GamepadNavigation.h"
 #include "rendering/D3D12Renderer.h"
 #include "runtime/WindowManager.h"
 
@@ -272,8 +273,12 @@ namespace SFSEMenuFramework::Win32Platform
 				RAWINPUTHEADER header{};
 				const bool headerValid = ReadRawInputHeader(a_lParam, header);
 				RAWINPUT input{};
-				if (headerValid && header.dwType == RIM_TYPEKEYBOARD &&
-					ReadRawInputPayload(a_lParam, header, input)) {
+				const bool payloadValid =
+					headerValid &&
+					(header.dwType == RIM_TYPEKEYBOARD ||
+						header.dwType == RIM_TYPEMOUSE) &&
+					ReadRawInputPayload(a_lParam, header, input);
+				if (payloadValid && header.dwType == RIM_TYPEKEYBOARD) {
 					ProcessRawKeyboard(a_window, input.data.keyboard);
 				}
 				const bool acceptingRawInput =
@@ -289,6 +294,14 @@ namespace SFSEMenuFramework::Win32Platform
 						a_wParam,
 						a_lParam);
 				}
+				if (currentInputLease && payloadValid &&
+					header.dwType == RIM_TYPEMOUSE &&
+					(input.data.mouse.lLastX != 0 ||
+						input.data.mouse.lLastY != 0 ||
+						input.data.mouse.usButtonFlags != 0)) {
+					GamepadNavigation::ObserveMouseActivity(
+						WindowManager::GetBlockingWindowOpenGeneration());
+				}
 				const bool earlyRawInput =
 					Shared().PointerRouteState.load(std::memory_order_acquire) ==
 						PointerRoute::EarlyRaw &&
@@ -299,7 +312,7 @@ namespace SFSEMenuFramework::Win32Platform
 					const bool failed =
 						!headerValid ||
 						(header.dwType == RIM_TYPEMOUSE &&
-						 (!ReadRawInputPayload(a_lParam, header, input) ||
+						 (!payloadValid ||
 						  !ProcessEarlyRawMouse(a_window, input.data.mouse)));
 					if (failed) {
 						if (generation != 0) {

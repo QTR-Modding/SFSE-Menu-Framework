@@ -20,6 +20,7 @@ namespace SFSEMenuFramework::WindowPlacement
 		struct Placement final
 		{
 			const char* Name;
+			const char* LegacyName;
 			const wchar_t* Section;
 			float DefaultRatio;
 			bool HasSavedState{};
@@ -28,9 +29,30 @@ namespace SFSEMenuFramework::WindowPlacement
 			ImVec2 Size{};
 		};
 		std::array placements{
-			Placement{ "#MCPMainWindow", L"MainWindow", 0.8F },
-			Placement{ "Settings##Window", L"SettingsWindow", 0.4F }
+			Placement{
+				"Mod Control Panel##MCPMainWindow",
+				"#MCPMainWindow",
+				L"MainWindow",
+				0.8F },
+			Placement{ "Settings##Window", nullptr, L"SettingsWindow", 0.4F }
 		};
+
+		[[nodiscard]] const ImGuiWindowSettings* FindPreviousSettings(
+			const Placement& a_state)
+		{
+			const auto usable = [](const ImGuiWindowSettings* a_settings) {
+				return a_settings &&
+					a_settings->Size.x > 0 && a_settings->Size.y > 0;
+			};
+			const auto* current =
+				ImGui::FindWindowSettingsByID(ImHashStr(a_state.Name));
+			if (usable(current)) {
+				return current;
+			}
+			const auto* legacy = a_state.LegacyName ?
+				ImGui::FindWindowSettingsByID(ImHashStr(a_state.LegacyName)) : nullptr;
+			return usable(legacy) ? legacy : nullptr;
+		}
 
 		[[nodiscard]] bool ValidViewport(const ImGuiViewport& a_viewport)
 		{
@@ -58,6 +80,11 @@ namespace SFSEMenuFramework::WindowPlacement
 		}
 	}
 
+	const char* GetName(BuiltInWindow a_window) noexcept
+	{
+		return placements[static_cast<std::size_t>(a_window)].Name;
+	}
+
 	void Apply(BuiltInWindow a_window)
 	{
 		auto& state = placements[static_cast<std::size_t>(a_window)];
@@ -69,8 +96,7 @@ namespace SFSEMenuFramework::WindowPlacement
 			FrameworkSettings::WindowLayout layout{ state.Section };
 			if (FrameworkSettings::LoadWindowLayout(layout)) {
 				Restore(state, layout, viewport);
-			} else if (const auto* previous = ImGui::FindWindowSettingsByID(ImHashStr(state.Name));
-				previous && previous->Size.x > 0 && previous->Size.y > 0) {
+			} else if (const auto* previous = FindPreviousSettings(state)) {
 				// ImGui stores pixel positions relative to their owning viewport.
 				const auto savedOrigin = previous->ViewportId ? ImVec2{
 					static_cast<float>(previous->ViewportPos.x), static_cast<float>(previous->ViewportPos.y) } : viewport.Pos;
