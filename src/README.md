@@ -7,7 +7,10 @@ owns ImGui and exposes the matching direct and generated cimgui exports.
 The implementation is organized by responsibility:
 
 - `api`: direct SFSE-MCP exports and host-internal callback types.
-- `runtime`: lifecycle/HUD dispatch, panel/window registration, callback snapshots, and consumer validation.
+- `runtime`: lifecycle/HUD dispatch, panel/window registration, callback
+  snapshots, consumer validation, and escaped menu-path parsing. Panel-tree
+  mutations publish immutable path copies; stable node identities preserve UI
+  selection and navigation state across rename/delete operations.
 - `config`: framework settings, persistence, and root-menu visibility.
 - `appearance`: live font/theme ownership; `appearance/fonts` separates font
   discovery, glyph ranges, atlas construction, and consumer stack isolation.

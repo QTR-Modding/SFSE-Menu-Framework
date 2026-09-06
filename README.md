@@ -41,6 +41,11 @@ window placement are stored under `Data/SFSE/Plugins`. Main and Settings window
 layouts survive restarts in display-relative coordinates; `Options > Reset
 Windows` restores both to their defaults.
 
+Prefix a literal slash in a menu name with a backslash (`\/`). Framework 3.8
+also exposes full-path registration plus runtime rename/delete operations; the
+separate SDK provides `FullPathAddSectionItem`, `RenameSection`,
+`DeleteSection`, and `GetMenuFrameworkAPIVersion`.
+
 The panel can open as soon as Starfield's window and renderer are ready, before
 `kPostDataLoad`. Consumer callbacks that use game data must gate that work at
 their own appropriate SFSE lifecycle boundary.
@@ -140,6 +145,10 @@ git clone --recurse-submodules https://github.com/QTR-Modding/SFSE-Menu-Framewor
 cd SFSE-Menu-Framework
 xmake f -m releasedbg
 xmake
+xmake package
+powershell -File scripts/Verify-Package.ps1 `
+    -Archive build/packages/SFSEMenuFramework-0.12.0.zip `
+    -BuiltDll build/windows/x64/releasedbg/SFSEMenuFramework.dll
 ```
 
 To generate a Visual Studio solution:
@@ -156,8 +165,8 @@ Original SFSE Menu Framework code is licensed under
 SKSE Menu Framework-derived portions remain GPL-3.0-only as detailed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-This project is a Starfield port of
-[SKSE Menu Framework 3 by SkyrimThiago at commit `928e01a`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775).
+This project is a Starfield port of selected merged behavior from
+[SKSE Menu Framework 3 by SkyrimThiago through commit `c8cfc5c`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/c8cfc5c93fa3b5f6261cef695ab814e4467dd980).
 The DirectX 12 renderer, early Raw Input bridge, stable callback snapshots,
 live font-atlas transaction, and variable-font controls are Starfield-specific.
 Exact source revisions, borrowed implementation boundaries, licenses,

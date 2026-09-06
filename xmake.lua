@@ -1,8 +1,9 @@
 set_xmakever("3.0.9")
 set_policy("package.requires_lock", true)
 
+local project_root = os.projectdir()
+
 if is_plat("windows") then
-    local project_root = os.projectdir()
     add_cxflags(
         "/Brepro",
         "/experimental:deterministic",
@@ -19,6 +20,12 @@ end
 
 includes(path.join(os.projectdir(), "lib", "commonlibsf"))
 
+-- This project performs deployment only after verification. Keep all other
+-- CommonLib plugin behavior, but replace its implicit post-build install hook.
+rule("commonlib.plugin", function()
+    after_build(function() end)
+end)
+
 add_requires("nlohmann_json 3.11.3")
 add_requires("freetype 2.14.1", {
     configs = {
@@ -33,8 +40,9 @@ add_requires("freetype 2.14.1", {
 
 local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
-local plugin_version = "0.11.4"
+local plugin_version = "0.12.0"
 local plugin_author = "Quantumyilmaz"
+local build_staging_dir = path.join(project_root, "build", "staging")
 
 set_project(plugin_name)
 set_version(plugin_version)
@@ -127,7 +135,31 @@ target(dll_name, function()
     )
     add_installfiles("COPYING", "EXCEPTIONS", "THIRD_PARTY_NOTICES.md")
 
-    before_install(function(target)
+    -- CommonLibSF derives an automatic post-build install destination from
+    -- environment variables. Override it with build-local staging so compiling
+    -- cannot touch an active game or mod-manager setup. Deployment is explicit.
+    -- It also adds the PDB during configuration; keep symbols local for packages.
+    on_config(function(target)
+        target:set("installdir", build_staging_dir)
         target:remove("installfiles", target:symbolfile())
     end)
+
+    before_build(function(target)
+        assert(
+            path.absolute(target:installdir()) == path.absolute(build_staging_dir),
+            "refusing to build with a non-staging install destination"
+        )
+    end)
+end)
+
+target("menu-path-tests", function()
+    set_kind("binary")
+    set_default(false)
+
+    add_files(
+        "tests/MenuPathTests.cpp",
+        "src/runtime/MenuPath.cpp"
+    )
+    add_includedirs("src")
+    add_tests("default")
 end)

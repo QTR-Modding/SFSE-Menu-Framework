@@ -2,9 +2,9 @@
 
 ## SKSE Menu Framework 3
 
-SFSE Menu Framework directly adapts implementation behavior and assets from
-[SKSE Menu Framework 3 by SkyrimThiago at commit
-`928e01ab459822a8d233ab99f0419ea1de23c775`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/928e01ab459822a8d233ab99f0419ea1de23c775).
+SFSE Menu Framework directly adapts selected implementation behavior and assets
+from [SKSE Menu Framework 3 by SkyrimThiago through commit
+`c8cfc5c93fa3b5f6261cef695ab814e4467dd980`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/c8cfc5c93fa3b5f6261cef695ab814e4467dd980).
 
 The consumer input-event and persistent-HUD registration/dispatch behavior,
 theme loader behavior and `classic.json`, `modern.json`, and
@@ -12,6 +12,14 @@ theme loader behavior and `classic.json`, `modern.json`, and
 rebuild request sequence, are used under GNU GPL version 3. The complete
 license is included in
 [COPYING](COPYING).
+
+The escaped-slash parser, last-registration-wins behavior, runtime menu
+rename/delete semantics, Polish glyph range, `OFF` toggle handling, external
+window freeze preference, and `DockingSeparatorSize` theme field adapt the
+corresponding merged source at `c8cfc5c`. Starfield's panel registry performs
+rename/delete with immutable path-copy snapshots instead of the source's
+queued raw-pointer tree mutation; this preserves callback safety while keeping
+the same client-visible next-frame result.
 
 The root-menu favorite and archive actions retain the adapted behavior, but
 SFSE Menu Framework renders them in separate table cells instead of overlaying
