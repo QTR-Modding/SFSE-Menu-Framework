@@ -33,7 +33,7 @@ add_requires("freetype 2.14.1", {
 
 local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
-local plugin_version = "0.11.2"
+local plugin_version = "0.11.3"
 local plugin_author = "Quantumyilmaz"
 
 set_project(plugin_name)

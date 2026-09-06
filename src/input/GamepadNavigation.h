@@ -15,6 +15,12 @@ namespace SFSEMenuFramework::GamepadNavigation
 		float Rate{};
 	};
 
+	struct CloseTargetSnapshot final
+	{
+		int  LastFrameActive{ -1 };
+		bool Pending{};
+	};
+
 	void CaptureNativeEvent(
 		const RE::InputEvent& a_event,
 		std::uint64_t         a_generation,
@@ -28,4 +34,9 @@ namespace SFSEMenuFramework::GamepadNavigation
 	void RestoreRepeatTiming(RepeatTiming a_timing) noexcept;
 	[[nodiscard]] bool ConsumeCloseRequestForCurrentWindow(
 		std::uint64_t a_generation) noexcept;
+	[[nodiscard]] CloseTargetSnapshot SnapshotCloseTarget(
+		std::uint64_t a_generation) noexcept;
+	[[nodiscard]] bool ConsumeCloseRequestForNewlyRenderedTarget(
+		std::uint64_t       a_generation,
+		CloseTargetSnapshot a_beforeRender) noexcept;
 }

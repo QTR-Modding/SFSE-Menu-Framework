@@ -379,4 +379,35 @@ namespace SFSEMenuFramework::GamepadNavigation
 		pendingCloseRequest = {};
 		return true;
 	}
+
+	CloseTargetSnapshot SnapshotCloseTarget(
+		std::uint64_t a_generation) noexcept
+	{
+		if (a_generation == 0 ||
+			pendingCloseRequest.Generation != a_generation) {
+			return {};
+		}
+		const auto* target = ImGui::FindWindowByID(pendingCloseRequest.WindowID);
+		return {
+			.LastFrameActive = target ? target->LastFrameActive : -1,
+			.Pending = true
+		};
+	}
+
+	bool ConsumeCloseRequestForNewlyRenderedTarget(
+		std::uint64_t       a_generation,
+		CloseTargetSnapshot a_beforeRender) noexcept
+	{
+		if (a_generation == 0 || !a_beforeRender.Pending ||
+			pendingCloseRequest.Generation != a_generation) {
+			return false;
+		}
+		const auto* target = ImGui::FindWindowByID(pendingCloseRequest.WindowID);
+		if (!target || target->LastFrameActive != ImGui::GetFrameCount() ||
+			target->LastFrameActive == a_beforeRender.LastFrameActive) {
+			return false;
+		}
+		pendingCloseRequest = {};
+		return true;
+	}
 }
