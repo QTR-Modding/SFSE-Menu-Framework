@@ -163,7 +163,15 @@ extern "C" __declspec(dllexport) void UnregisterEvent(std::int64_t a_handle)
 
 extern "C" __declspec(dllexport) float GetMenuFrameworkVersion()
 {
-	return 3.8F;
+	// Preserve the SKSE-MCP-compatible float export as an informational release
+	// projection. Capability checks belong to GetMenuFrameworkAPIVersion().
+	const auto version = SFSE::GetPluginVersion();
+	float minorScale = 10.0F;
+	for (auto remaining = version.minor(); remaining >= 10; remaining /= 10) {
+		minorScale *= 10.0F;
+	}
+	return static_cast<float>(version.major()) +
+		static_cast<float>(version.minor()) / minorScale;
 }
 
 extern "C" __declspec(dllexport) std::uint32_t GetMenuFrameworkAPIVersion()

@@ -41,10 +41,11 @@ window placement are stored under `Data/SFSE/Plugins`. Main and Settings window
 layouts survive restarts in display-relative coordinates; `Options > Reset
 Windows` restores both to their defaults.
 
-Prefix a literal slash in a menu name with a backslash (`\/`). Framework 3.8
-also exposes full-path registration plus runtime rename/delete operations; the
-separate SDK provides `FullPathAddSectionItem`, `RenameSection`,
-`DeleteSection`, and `GetMenuFrameworkAPIVersion`.
+Prefix a literal slash in a menu name with a backslash (`\/`). The separate
+SDK provides `FullPathAddSectionItem`, `RenameSection`, `DeleteSection`, and
+`GetMenuFrameworkAPIVersion`. Use API version `1` to detect runtime
+rename/delete support. `GetMenuFrameworkVersion` remains a legacy
+source-compatible release projection and must not be used as a capability gate.
 
 The panel can open as soon as Starfield's window and renderer are ready, before
 `kPostDataLoad`. Consumer callbacks that use game data must gate that work at
