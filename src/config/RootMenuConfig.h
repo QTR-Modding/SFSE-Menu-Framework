@@ -11,4 +11,7 @@ namespace SFSEMenuFramework::RootMenuConfig
 		std::string_view a_menuName, bool a_favorite) noexcept;
 	[[nodiscard]] bool SetArchived(
 		std::string_view a_menuName, bool a_archived) noexcept;
+	[[nodiscard]] bool RenameMenu(
+		std::string_view a_oldName, std::string_view a_newName) noexcept;
+	[[nodiscard]] bool RemoveMenu(std::string_view a_menuName) noexcept;
 }

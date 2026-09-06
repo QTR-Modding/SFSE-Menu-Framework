@@ -296,6 +296,7 @@ namespace SFSEMenuFramework::ThemeManager
 					static_cast<double>((std::numeric_limits<float>::max)())
 				},
 				{ "TabBarBorderSize", &ImGuiStyle::TabBarBorderSize },
+				{ "DockingSeparatorSize", &ImGuiStyle::DockingSeparatorSize },
 				{
 					"TableAngledHeadersAngle",
 					&ImGuiStyle::TableAngledHeadersAngle,

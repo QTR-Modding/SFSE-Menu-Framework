@@ -250,12 +250,14 @@ namespace SFSEMenuFramework::FrameworkSettings::Detail
 	// The optional language-range toggles and shipped false defaults adapt
 	// SKSE Menu Framework 3 Config.cpp/FontManager.cpp at commit
 	// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0).
-	// Greek, Vietnamese, and the two Chinese choices extend that configuration.
+	// Polish follows the merged source; Greek, Vietnamese, and the two Chinese
+	// choices extend that configuration.
 	inline constexpr std::array glyphSettings{
 		GlyphSetting{ L"EnableGreek", &GlyphCoverage::Greek },
 		GlyphSetting{ L"EnableCyrillic", &GlyphCoverage::Cyrillic },
 		GlyphSetting{ L"EnableVietnamese", &GlyphCoverage::Vietnamese },
 		GlyphSetting{ L"EnableTurkish", &GlyphCoverage::Turkish },
+		GlyphSetting{ L"EnablePolish", &GlyphCoverage::Polish },
 		GlyphSetting{ L"EnableThai", &GlyphCoverage::Thai },
 		GlyphSetting{ L"EnableKorean", &GlyphCoverage::Korean },
 		GlyphSetting{ L"EnableJapanese", &GlyphCoverage::Japanese },

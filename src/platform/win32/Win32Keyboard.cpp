@@ -355,6 +355,10 @@ namespace SFSEMenuFramework::Win32Platform
 			if (!WindowManager::IsHotkeyEnabled() || dik != configured) {
 				return false;
 			}
+			const auto mode = FrameworkSettings::GetToggleMode();
+			if (mode == FrameworkSettings::ToggleMode::Off) {
+				return false;
+			}
 
 			if (dik == REX::W32::DIK_F4 &&
 				(state.Down[REX::W32::DIK_LMENU] ||
@@ -366,7 +370,7 @@ namespace SFSEMenuFramework::Win32Platform
 				return closeMainWindow();
 			}
 
-			switch (FrameworkSettings::GetToggleMode()) {
+			switch (mode) {
 			case FrameworkSettings::ToggleMode::SinglePress:
 				return ApplyMainWindowKeyboardEdge(
 					true,

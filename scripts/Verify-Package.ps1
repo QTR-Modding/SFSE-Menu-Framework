@@ -1,0 +1,73 @@
+param(
+	[Parameter(Mandatory)]
+	[string] $Archive,
+
+	[Parameter(Mandatory)]
+	[string] $BuiltDll
+)
+
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$expectedFiles = @(
+	'Data/COPYING'
+	'Data/EXCEPTIONS'
+	'Data/SFSE/Plugins/Fonts/fa-brands-400.ttf'
+	'Data/SFSE/Plugins/Fonts/fa-regular-400.ttf'
+	'Data/SFSE/Plugins/Fonts/fa-solid-900.ttf'
+	'Data/SFSE/Plugins/Fonts/Font-Awesome-LICENSE.txt'
+	'Data/SFSE/Plugins/Fonts/FreeType-FTL.txt'
+	'Data/SFSE/Plugins/Fonts/Jost-400-Book.ttf'
+	'Data/SFSE/Plugins/Fonts/Jost-500-Medium.ttf'
+	'Data/SFSE/Plugins/Fonts/Jost-OFL.txt'
+	'Data/SFSE/Plugins/Fonts/SpaceGrotesk-Medium.ttf'
+	'Data/SFSE/Plugins/Fonts/SpaceGrotesk-OFL.txt'
+	'Data/SFSE/Plugins/Fonts/SpaceGrotesk[wght].ttf'
+	'Data/SFSE/Plugins/SFSEMenuFramework.dll'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/classic.json'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/modern.json'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/skyrimDefault.json'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/starfield.json'
+	'Data/THIRD_PARTY_NOTICES.md'
+) | Sort-Object
+
+$archivePath = (Resolve-Path -LiteralPath $Archive).Path
+$builtDllPath = (Resolve-Path -LiteralPath $BuiltDll).Path
+$zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+try {
+	$actualFiles = @(
+		$zip.Entries |
+			Where-Object { -not $_.FullName.EndsWith('/') } |
+			ForEach-Object FullName |
+			Sort-Object
+	)
+	$differences = @(Compare-Object $expectedFiles $actualFiles)
+	if ($actualFiles.Count -ne $expectedFiles.Count -or
+		$differences.Count -ne 0) {
+		$details = $differences | Out-String
+		throw "Package manifest mismatch:`n$details"
+	}
+
+	$dllEntry = $zip.GetEntry('Data/SFSE/Plugins/SFSEMenuFramework.dll')
+	$entryStream = $dllEntry.Open()
+	try {
+		$sha256 = [System.Security.Cryptography.SHA256]::Create()
+		try {
+			$archiveDllHash = -join (
+				$sha256.ComputeHash($entryStream) |
+					ForEach-Object { $_.ToString('X2') })
+		} finally {
+			$sha256.Dispose()
+		}
+	} finally {
+		$entryStream.Dispose()
+	}
+	$builtDllHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $builtDllPath).Hash
+	if ($archiveDllHash -ne $builtDllHash) {
+		throw 'Packaged DLL does not match the reviewed build output.'
+	}
+} finally {
+	$zip.Dispose()
+}
+
+Write-Host "Verified package manifest and DLL hash: $archivePath"

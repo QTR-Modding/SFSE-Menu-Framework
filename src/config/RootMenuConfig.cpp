@@ -7,6 +7,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <set>
 #include <string>
 
@@ -14,8 +15,8 @@ namespace SFSEMenuFramework::RootMenuConfig
 {
 	namespace
 	{
-		// Directly adapted from SKSE Menu Framework 3 RootMenuConfig.cpp at
-		// commit 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0).
+		// Directly adapted from SKSE Menu Framework 3 RootMenuConfig.cpp through
+		// commit c8cfc5c93fa3b5f6261cef695ab814e4467dd980 (GPL-3.0).
 		// The path and namespace are changed for SFSE; bounded error handling and
 		// save-result propagation are Starfield-port corrections.
 		constexpr char configPath[]{ "Data/SFSE/Plugins/SFSEMenuFrameworkMenuConfig.json" };
@@ -32,6 +33,7 @@ namespace SFSEMenuFramework::RootMenuConfig
 
 		MenuNames favoriteMenus;
 		MenuNames archivedMenus;
+		std::mutex menuMutex;
 
 		void DiscardTemporaryConfig() noexcept
 		{
@@ -174,6 +176,7 @@ namespace SFSEMenuFramework::RootMenuConfig
 
 	bool Load() noexcept
 	{
+		std::scoped_lock lock{ menuMutex };
 		favoriteMenus.clear();
 		archivedMenus.clear();
 
@@ -214,16 +217,83 @@ namespace SFSEMenuFramework::RootMenuConfig
 		}
 	}
 
-	bool IsFavorite(std::string_view a_menuName) noexcept { return favoriteMenus.contains(a_menuName); }
-	bool IsArchived(std::string_view a_menuName) noexcept { return archivedMenus.contains(a_menuName); }
+	bool IsFavorite(std::string_view a_menuName) noexcept
+	{
+		std::scoped_lock lock{ menuMutex };
+		return favoriteMenus.contains(a_menuName);
+	}
+	bool IsArchived(std::string_view a_menuName) noexcept
+	{
+		std::scoped_lock lock{ menuMutex };
+		return archivedMenus.contains(a_menuName);
+	}
 	bool SetFavorite(std::string_view a_menuName, bool a_favorite) noexcept
 	{
+		std::scoped_lock lock{ menuMutex };
 		return SetMenuState(
 			favoriteMenus, a_menuName, a_favorite, MenuList::Favorites);
 	}
 	bool SetArchived(std::string_view a_menuName, bool a_archived) noexcept
 	{
+		std::scoped_lock lock{ menuMutex };
 		return SetMenuState(
 			archivedMenus, a_menuName, a_archived, MenuList::Archived);
+	}
+
+	bool RenameMenu(
+		std::string_view a_oldName,
+		std::string_view a_newName) noexcept
+	{
+		std::scoped_lock lock{ menuMutex };
+		try {
+			MenuNames nextFavorites = favoriteMenus;
+			MenuNames nextArchived = archivedMenus;
+			bool changed{};
+			if (nextFavorites.erase(a_oldName) > 0) {
+				nextFavorites.emplace(a_newName);
+				changed = true;
+			}
+			if (nextArchived.erase(a_oldName) > 0) {
+				nextArchived.emplace(a_newName);
+				changed = true;
+			}
+			if (!changed) {
+				return true;
+			}
+
+			const bool saved = Save(nextFavorites, nextArchived);
+			favoriteMenus.swap(nextFavorites);
+			archivedMenus.swap(nextArchived);
+			return saved;
+		} catch (const std::exception& exception) {
+			logger::error(
+				"Could not rename root menu configuration entry '{}': {}",
+				a_oldName, exception.what());
+			return false;
+		}
+	}
+
+	bool RemoveMenu(std::string_view a_menuName) noexcept
+	{
+		std::scoped_lock lock{ menuMutex };
+		try {
+			MenuNames nextFavorites = favoriteMenus;
+			MenuNames nextArchived = archivedMenus;
+			bool changed = nextFavorites.erase(a_menuName) > 0;
+			changed = nextArchived.erase(a_menuName) > 0 || changed;
+			if (!changed) {
+				return true;
+			}
+
+			const bool saved = Save(nextFavorites, nextArchived);
+			favoriteMenus.swap(nextFavorites);
+			archivedMenus.swap(nextArchived);
+			return saved;
+		} catch (const std::exception& exception) {
+			logger::error(
+				"Could not remove root menu configuration entry '{}': {}",
+				a_menuName, exception.what());
+			return false;
+		}
 	}
 }

@@ -292,12 +292,11 @@ namespace SFSEMenuFramework::InputCapture
 			if (a_button.value == 0.0F) {
 				gamePadToggle.HoldTriggered = false;
 			}
-			if (mainWindow->IsOpen.load(std::memory_order_acquire)) {
-				return initialPress && WindowManager::SetMainWindowOpen(false);
-			}
-
 			if (mode == FrameworkSettings::ToggleMode::Off) {
 				return false;
+			}
+			if (mainWindow->IsOpen.load(std::memory_order_acquire)) {
+				return initialPress && WindowManager::SetMainWindowOpen(false);
 			}
 
 			const bool toggle = EvaluateToggle(a_button, mode, gamePadToggle);

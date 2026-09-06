@@ -18,6 +18,7 @@
 #include <cfloat>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -32,15 +33,16 @@ namespace
 	using MenuNode = SFSEMenuFramework::PanelRegistry::MenuNode;
 	using MenuNodePointer = SFSEMenuFramework::PanelRegistry::MenuNodePointer;
 	using MenuTreePointer = SFSEMenuFramework::PanelRegistry::MenuTreePointer;
+	using RootState = SFSEMenuFramework::PanelRegistry::RootState;
 
 	// The tree/filter/favorites/archive shell below directly adapts
-	// SKSE Menu Framework 3 UI.cpp and RootMenuConfig.cpp at commit
-	// 928e01ab459822a8d233ab99f0419ea1de23c775 (GPL-3.0).
-	// Process-lifetime nodes and copy-on-write child lists preserve its direct
-	// registration tree while remaining safe for cross-thread registrations.
+	// SKSE Menu Framework 3 UI.cpp and RootMenuConfig.cpp through commit
+	// c8cfc5c93fa3b5f6261cef695ab814e4467dd980 (GPL-3.0).
+	// Reference-counted snapshots and copy-on-write child lists preserve its
+	// direct registration tree while allowing callback-safe mutations.
 	ImGuiTextFilter rootFilter;
 	MenuNodePointer selectedNode;
-	std::string pendingArchiveMenu;
+	MenuNodePointer pendingArchiveMenu;
 	bool archiveConfirmationRequested{};
 	bool menuConfigSaveFailed{};
 	std::uint64_t observedMainSessionGeneration{};
@@ -77,6 +79,72 @@ namespace
 			});
 	}
 
+	[[nodiscard]] MenuNodePointer FindNodeByIdentity(
+		const MenuNodePointer& a_node,
+		std::uint64_t          a_identity)
+	{
+		if (!a_node) {
+			return nullptr;
+		}
+		if (a_node->Identity == a_identity) {
+			return a_node;
+		}
+		const auto children =
+			a_node->Children.load(std::memory_order_acquire);
+		if (!children) {
+			return nullptr;
+		}
+		for (const auto& child : *children) {
+			if (auto found = FindNodeByIdentity(child, a_identity)) {
+				return found;
+			}
+		}
+		return nullptr;
+	}
+
+	[[nodiscard]] MenuNodePointer FindNodeByIdentity(
+		const MenuTreePointer& a_nodes,
+		std::uint64_t          a_identity)
+	{
+		if (!a_nodes || a_identity == 0) {
+			return nullptr;
+		}
+		for (const auto& node : *a_nodes) {
+			if (auto found = FindNodeByIdentity(node, a_identity)) {
+				return found;
+			}
+		}
+		return nullptr;
+	}
+
+	[[nodiscard]] bool ContainsNode(
+		const MenuNodePointer& a_root,
+		const MenuNodePointer& a_node)
+	{
+		return a_node &&
+			FindNodeByIdentity(a_root, a_node->Identity) != nullptr;
+	}
+
+	void PushNodeID(std::uint64_t a_identity)
+	{
+		ImGui::PushID(static_cast<int>(a_identity >> 32));
+		ImGui::PushID(static_cast<int>(a_identity));
+	}
+
+	void PopNodeID()
+	{
+		ImGui::PopID();
+		ImGui::PopID();
+	}
+
+	[[nodiscard]] ImGuiID GetNodeID(std::uint64_t a_identity)
+	{
+		PushNodeID(a_identity);
+		const auto id = ImGui::GetID("##MenuNode");
+		PopNodeID();
+		return id;
+	}
+
 	void RenderTooltip(const char* a_text)
 	{
 		if (!ImGui::IsItemHovered()) {
@@ -88,20 +156,20 @@ namespace
 	}
 
 	void SetRootMenuArchived(
-		std::string_view a_menuName,
-		bool             a_archived)
+		const MenuNodePointer& a_menu,
+		bool                   a_archived)
 	{
-		const bool saved = SFSEMenuFramework::RootMenuConfig::SetArchived(
-			a_menuName,
+		if (!a_menu) {
+			return;
+		}
+		const bool saved = SFSEMenuFramework::PanelRegistry::SetRootArchived(
+			a_menu->Identity,
 			a_archived);
 		menuConfigSaveFailed = !saved;
 		if (!saved) {
 			return;
 		}
-		if (a_archived && selectedNode &&
-			selectedNode->FullPath.starts_with(a_menuName) &&
-			selectedNode->FullPath.size() > a_menuName.size() &&
-			selectedNode->FullPath[a_menuName.size()] == '/') {
+		if (a_archived && ContainsNode(a_menu, selectedNode)) {
 			selectedNode.reset();
 		}
 	}
@@ -142,13 +210,11 @@ namespace
 	}
 
 	void RenderRootMenuActions(
-		std::string_view a_menuName,
-		bool             a_favorite,
-		float            a_buttonSize)
+		const MenuNodePointer& a_menu,
+		bool                   a_favorite,
+		float                  a_buttonSize)
 	{
-		ImGui::PushID(
-			a_menuName.data(),
-			a_menuName.data() + a_menuName.size());
+		PushNodeID(a_menu->Identity);
 		ImGui::PushStyleColor(
 			ImGuiCol_Button,
 			ImVec4{ 0.0F, 0.0F, 0.0F, 0.0F });
@@ -158,8 +224,8 @@ namespace
 				"##Favorite",
 				ImVec2{ a_buttonSize, a_buttonSize })) {
 			menuConfigSaveFailed =
-				!SFSEMenuFramework::RootMenuConfig::SetFavorite(
-					a_menuName,
+				!SFSEMenuFramework::PanelRegistry::SetRootFavorite(
+					a_menu->Identity,
 					!a_favorite);
 		}
 		RenderFavoriteStar(a_favorite);
@@ -168,13 +234,13 @@ namespace
 
 		ImGui::TableSetColumnIndex(2);
 		if (ImGui::Button("-", ImVec2{ a_buttonSize, a_buttonSize })) {
-			pendingArchiveMenu = a_menuName;
+			pendingArchiveMenu = a_menu;
 			archiveConfirmationRequested = true;
 		}
 		RenderTooltip("Archive menu");
 
 		ImGui::PopStyleColor();
-		ImGui::PopID();
+		PopNodeID();
 	}
 
 	void RenderLiteralTextClipped(
@@ -220,7 +286,7 @@ namespace
 		const auto* labelBegin = a_node->Name.data();
 		const auto* labelEnd = labelBegin + a_node->Name.size();
 		const bool nodeOpen = ImGui::TreeNodeBehavior(
-			ImGui::GetCurrentWindow()->GetID(a_node.get()),
+			GetNodeID(a_node->Identity),
 			flags,
 			labelBegin,
 			labelEnd);
@@ -258,8 +324,10 @@ namespace
 		if (roots) {
 			archivedMenus.reserve(roots->size());
 			for (const auto& root : *roots) {
-				if (SFSEMenuFramework::RootMenuConfig::IsArchived(
-						root->Name)) {
+				const auto state =
+					SFSEMenuFramework::PanelRegistry::GetRootState(
+						root->Identity);
+				if (state && state->Archived) {
 					archivedMenus.push_back(root);
 				}
 			}
@@ -281,7 +349,7 @@ namespace
 				window->DC.CursorPos.y + window->DC.CurrLineTextBaseOffset
 			};
 
-			ImGui::PushID(root.get());
+			PushNodeID(root->Identity);
 			const bool restore = ImGui::Selectable(
 				"##RestoreArchivedMenu",
 				false,
@@ -291,10 +359,10 @@ namespace
 				root->Name,
 				textMinimum,
 				ImGui::GetItemRectMax());
-			ImGui::PopID();
+			PopNodeID();
 
 			if (restore) {
-				SetRootMenuArchived(root->Name, false);
+				SetRootMenuArchived(root, false);
 			}
 		}
 
@@ -308,10 +376,15 @@ namespace
 	{
 		constexpr char popupTitle[] =
 			"Archive menu##ArchiveRootMenuConfirmation";
-		if (archiveConfirmationRequested) {
-			ImGui::OpenPopup(popupTitle);
-			archiveConfirmationRequested = false;
+		if (pendingArchiveMenu) {
+			pendingArchiveMenu = FindNodeByIdentity(
+				SFSEMenuFramework::PanelRegistry::GetMenuTree(),
+				pendingArchiveMenu->Identity);
 		}
+		if (archiveConfirmationRequested && pendingArchiveMenu) {
+			ImGui::OpenPopup(popupTitle);
+		}
+		archiveConfirmationRequested = false;
 
 		const auto* viewport = ImGui::GetMainViewport();
 		ImGui::SetNextWindowPos(
@@ -324,18 +397,23 @@ namespace
 				ImGuiWindowFlags_AlwaysAutoResize)) {
 			return;
 		}
+		if (!pendingArchiveMenu) {
+			ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+			return;
+		}
 
 		ImGui::TextUnformatted("Archive this menu?");
-		ImGui::TextUnformatted(pendingArchiveMenu.c_str());
+		ImGui::TextUnformatted(pendingArchiveMenu->Name.c_str());
 		ImGui::Separator();
 		if (ImGui::Button("Yes")) {
 			SetRootMenuArchived(pendingArchiveMenu, true);
-			pendingArchiveMenu.clear();
+			pendingArchiveMenu.reset();
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("No")) {
-			pendingArchiveMenu.clear();
+			pendingArchiveMenu.reset();
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndPopup();
@@ -432,6 +510,9 @@ namespace
 	void RenderNavigation()
 	{
 		const auto roots = SFSEMenuFramework::PanelRegistry::GetMenuTree();
+		if (selectedNode) {
+			selectedNode = FindNodeByIdentity(roots, selectedNode->Identity);
+		}
 		auto selectedPanel = selectedNode ? GetPanel(*selectedNode) : nullptr;
 		if (!IsPanelEnabled(selectedPanel)) {
 			selectedPanel.reset();
@@ -474,37 +555,43 @@ namespace
 				ImGuiStyleVar_FramePadding,
 				ImVec2{ 0.0F, 5.0F * uiScale });
 
-			std::vector<MenuNodePointer> rootMenus;
+			struct RootMenuEntry final
+			{
+				MenuNodePointer Node;
+				RootState       State;
+			};
+			std::vector<RootMenuEntry> rootMenus;
 			if (roots) {
 				rootMenus.reserve(roots->size());
 				for (const auto& root : *roots) {
-					if (root && HasEnabledChild(*root)) {
-						rootMenus.push_back(root);
+					const auto state = root ?
+						SFSEMenuFramework::PanelRegistry::GetRootState(
+							root->Identity) :
+						std::nullopt;
+					if (state && HasEnabledChild(*root)) {
+						rootMenus.push_back({ root, *state });
 					}
 				}
 			}
 			std::stable_sort(rootMenus.begin(), rootMenus.end(),
 				[](const auto& a_left, const auto& a_right) {
-					const bool leftFavorite =
-						SFSEMenuFramework::RootMenuConfig::IsFavorite(a_left->Name);
-					const bool rightFavorite =
-						SFSEMenuFramework::RootMenuConfig::IsFavorite(a_right->Name);
-					if (leftFavorite != rightFavorite) {
-						return leftFavorite;
+					if (a_left.State.Favorite != a_right.State.Favorite) {
+						return a_left.State.Favorite;
 					}
-					return a_left->Name < a_right->Name;
+					return a_left.Node->Name < a_right.Node->Name;
 				});
 
-			for (const auto& root : rootMenus) {
-				if (SFSEMenuFramework::RootMenuConfig::IsArchived(root->Name)) {
+			for (const auto& entry : rootMenus) {
+				const auto& root = entry.Node;
+				if (entry.State.Archived) {
 					continue;
 				}
 
-				const bool favorite = SFSEMenuFramework::RootMenuConfig::IsFavorite(root->Name);
+				const bool favorite = entry.State.Favorite;
 				const bool passesFilter = rootFilter.PassFilter(root->Name.c_str());
 				bool headerOpen{};
 				if (passesFilter) {
-					ImGui::PushID(root.get());
+					PushNodeID(root->Identity);
 					constexpr ImGuiTableFlags rowFlags =
 						ImGuiTableFlags_SizingStretchProp |
 						ImGuiTableFlags_NoSavedSettings |
@@ -536,10 +623,10 @@ namespace
 							root->Name,
 							textMinimum,
 							ImGui::GetItemRectMax());
-						RenderRootMenuActions(root->Name, favorite, buttonSize);
+						RenderRootMenuActions(root, favorite, buttonSize);
 						ImGui::EndTable();
 					}
-					ImGui::PopID();
+					PopNodeID();
 				}
 				if (headerOpen) {
 					const auto children = root->Children.load(std::memory_order_acquire);
