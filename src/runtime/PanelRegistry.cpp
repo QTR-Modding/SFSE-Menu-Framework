@@ -20,7 +20,7 @@ namespace SFSEMenuFramework
 	namespace
 	{
 		// Rename/delete behavior adapts SKSE Menu Framework 3 UI.cpp at
-		// c8cfc5c93fa3b5f6261cef695ab814e4467dd980 (GPL-3.0). SFSE uses
+		// accepted base 8a366c4a3db7317655cec8379e48c43140c9fe7d (GPL-3.0). SFSE uses
 		// immutable path-copy publication instead of mutating render-owned nodes.
 		enum class MenuMutation
 		{

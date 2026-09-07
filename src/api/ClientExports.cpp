@@ -10,7 +10,7 @@
 #include <string_view>
 
 // Direct client exports port the framework boundary from SKSE Menu Framework
-// through commit c8cfc5c93fa3b5f6261cef695ab814e4467dd980. Client callbacks call the
+// through accepted base 8a366c4a3db7317655cec8379e48c43140c9fe7d. Client callbacks call the
 // cimgui exports compiled into this DLL, so the real ImGui context never leaves
 // the framework.
 namespace

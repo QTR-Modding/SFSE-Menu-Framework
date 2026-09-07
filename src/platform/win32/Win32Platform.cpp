@@ -1,8 +1,9 @@
 #include "platform/win32/Win32Platform.h"
 #include "platform/win32/Win32PlatformInternal.h"
 
-#include "input/InputCapture.h"
+#include "input/BindingCapture.h"
 #include "input/GamepadNavigation.h"
+#include "input/InputCapture.h"
 #include "rendering/D3D12Renderer.h"
 #include "runtime/WindowManager.h"
 
@@ -281,6 +282,12 @@ namespace SFSEMenuFramework::Win32Platform
 				if (payloadValid && header.dwType == RIM_TYPEKEYBOARD) {
 					ProcessRawKeyboard(a_window, input.data.keyboard);
 				}
+				if (payloadValid && header.dwType == RIM_TYPEMOUSE &&
+					(input.data.mouse.lLastX != 0 ||
+					 input.data.mouse.lLastY != 0 ||
+					 input.data.mouse.usButtonFlags != 0)) {
+					BindingCapture::ObserveMouseActivity();
+				}
 				const bool acceptingRawInput =
 					Shared().AcceptInput.load(std::memory_order_acquire);
 				const bool currentInputLease =
@@ -384,6 +391,10 @@ namespace SFSEMenuFramework::Win32Platform
 				ProcessLegacyKeyboard(
 					a_window, a_message, a_wParam, a_lParam);
 			}
+			if (IsLegacyMouseMessage(a_message) &&
+				a_message != WM_MOUSELEAVE && a_message != WM_NCMOUSELEAVE) {
+				BindingCapture::ObserveMouseActivity();
+			}
 
 			const bool modalInput =
 				Shared().AcceptInput.load(std::memory_order_acquire) && HasCurrentInputLease();
@@ -401,11 +412,16 @@ namespace SFSEMenuFramework::Win32Platform
 				IsLegacyMouseMessage(a_message) &&
 				Shared().PointerRouteState.load(std::memory_order_acquire) ==
 					PointerRoute::EarlyRaw;
+			const bool suppressCapturedKeyboard =
+				IsKeyMessage(a_message) &&
+				!BindingCapture::ShouldForwardKeyboardMessage(
+					static_cast<std::uint32_t>(a_wParam),
+					a_message == WM_KEYDOWN || a_message == WM_SYSKEYDOWN);
 			if (IsLegacyMouseMessage(a_message) &&
 				!suppressDuplicateLegacyMouse) {
 				UpdateWindowThreadMouseState(a_window, a_message, a_wParam);
 			}
-			if (!suppressDuplicateLegacyMouse) {
+			if (!suppressDuplicateLegacyMouse && !suppressCapturedKeyboard) {
 				static_cast<void>(EnqueueWindowMessage(
 					a_window,
 					a_message,

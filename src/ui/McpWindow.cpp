@@ -37,7 +37,7 @@ namespace
 
 	// The tree/filter/favorites/archive shell below directly adapts
 	// SKSE Menu Framework 3 UI.cpp and RootMenuConfig.cpp through commit
-	// c8cfc5c93fa3b5f6261cef695ab814e4467dd980 (GPL-3.0).
+	// accepted base 8a366c4a3db7317655cec8379e48c43140c9fe7d (GPL-3.0).
 	// Reference-counted snapshots and copy-on-write child lists preserve its
 	// direct registration tree while allowing callback-safe mutations.
 	ImGuiTextFilter rootFilter;
