@@ -30,7 +30,7 @@ namespace SFSEMenuFramework::Fonts
 	{
 		// The configurable range union plus Turkish and Polish additions adapt
 		// SKSE Menu Framework 3 src/FontManager.cpp through commit
-		// c8cfc5c93fa3b5f6261cef695ab814e4467dd980 (GPL-3.0).
+		// accepted base 8a366c4a3db7317655cec8379e48c43140c9fe7d (GPL-3.0).
 		// Greek, Vietnamese, and separate Simplified/Full Chinese choices are
 		// safe extensions using Dear ImGui's built-in range tables.
 		ImFontGlyphRangesBuilder builder;

@@ -3,8 +3,8 @@
 ## SKSE Menu Framework 3
 
 SFSE Menu Framework directly adapts selected implementation behavior and assets
-from [SKSE Menu Framework 3 by SkyrimThiago through commit
-`c8cfc5c93fa3b5f6261cef695ab814e4467dd980`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/c8cfc5c93fa3b5f6261cef695ab814e4467dd980).
+from [SKSE Menu Framework 3 by SkyrimThiago through accepted base
+`8a366c4a3db7317655cec8379e48c43140c9fe7d`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/8a366c4a3db7317655cec8379e48c43140c9fe7d).
 
 The consumer input-event and persistent-HUD registration/dispatch behavior,
 theme loader behavior and `classic.json`, `modern.json`, and
@@ -16,10 +16,17 @@ license is included in
 The escaped-slash parser, last-registration-wins behavior, runtime menu
 rename/delete semantics, Polish glyph range, `OFF` toggle handling, external
 window freeze preference, and `DockingSeparatorSize` theme field adapt the
-corresponding merged source at `c8cfc5c`. Starfield's panel registry performs
+corresponding accepted source at `8a366c4`. Starfield's panel registry performs
 rename/delete with immutable path-copy snapshots instead of the source's
 queued raw-pointer tree mutation; this preserves callback safety while keeping
 the same client-visible next-frame result.
+
+The press-to-bind state machine, active-device selection, capture controls, and
+shortcut warnings adapt the user-authored commits from `5b269fa` through
+[`e297bbdadd1d54c862068f714672db4eae4f93ff`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/e297bbdadd1d54c862068f714672db4eae4f93ff).
+Starfield uses lossless Win32 keyboard transitions plus its native input queue;
+whole-batch ownership and keyboard correlation prevent captured input from
+reaching the game or client callbacks across those two threads.
 
 The root-menu favorite and archive actions retain the adapted behavior, but
 SFSE Menu Framework renders them in separate table cells instead of overlaying

@@ -3,6 +3,7 @@
 #include "appearance/FontManager.h"
 #include "appearance/ThemeManager.h"
 #include "config/FrameworkSettings.h"
+#include "input/BindingCapture.h"
 #include "input/GamepadNavigation.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/WindowManager.h"
@@ -21,7 +22,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 namespace SFSEMenuFramework::SettingsWindow
 {
@@ -79,32 +79,203 @@ namespace SFSEMenuFramework::SettingsWindow
 			return true;
 		}
 
-		[[nodiscard]] bool RenderBinding(
-			const char* a_label, const char* a_id,
-			std::span<const FrameworkSettings::Binding> a_bindings,
-			std::uint32_t& a_current)
+		// The press-to-bind controls and warnings adapt the approved
+		// QTR-Modding/SKSE-Menu-Framework-3 user-authored commits 5b269fa through
+		// e297bbd (GPL-3.0). Text remains embedded English in this port.
+		struct PendingToggleChange final
 		{
-			const auto current = std::ranges::find(
-				a_bindings, a_current, &FrameworkSettings::Binding::Code);
-			bool changed{};
-			ImGui::TextUnformatted(a_label);
-			if (ImGui::BeginCombo(
-					a_id, current == a_bindings.end() ? "UNKNOWN" : current->Name.data())) {
-				for (const auto& binding : a_bindings) {
-					const bool selected = binding.Code == a_current;
-					ImGui::PushID(static_cast<int>(binding.Code));
-					if (ImGui::Selectable(binding.Name.data(), selected)) {
-						a_current = binding.Code;
-						changed = true;
-					}
-					if (selected) {
-						ImGui::SetItemDefaultFocus();
-					}
-					ImGui::PopID();
-				}
-				ImGui::EndCombo();
+			BindingCapture::Device       Device{ BindingCapture::Device::Keyboard };
+			std::uint32_t                Key{ BindingCapture::unboundKey };
+			FrameworkSettings::ToggleMode Mode{ FrameworkSettings::ToggleMode::SinglePress };
+			const char*                  Warning{ nullptr };
+			bool                         OpenRequested{};
+		};
+
+		PendingToggleChange pendingToggleChange;
+
+		[[nodiscard]] std::string_view GetBindingName(
+			BindingCapture::Device a_device, std::uint32_t a_key) noexcept
+		{
+			const auto name = a_device == BindingCapture::Device::Keyboard ?
+				FrameworkSettings::GetKeyboardBindingName(a_key) :
+				FrameworkSettings::GetGamePadBindingName(a_key);
+			return name.empty() ? std::string_view{ "UNKNOWN" } : name;
+		}
+
+		void SaveToggleChange(
+			BindingCapture::Device       a_device,
+			std::uint32_t                a_key,
+			FrameworkSettings::ToggleMode a_mode,
+			bool&                        a_saveFailed,
+			bool&                        a_themeLoadFailed)
+		{
+			const auto previous = FrameworkSettings::CaptureSnapshot();
+			auto updated = previous;
+			if (a_device == BindingCapture::Device::Keyboard) {
+				updated.ToggleKey = a_key;
+				updated.Mode = a_mode;
+			} else {
+				updated.ToggleKeyGamePad = a_key;
+				updated.ModeGamePad = a_mode;
 			}
-			return changed;
+			FrameworkSettings::RestoreSnapshot(updated);
+			ApplyRuntimeSettings();
+			a_saveFailed = !SaveOrRestore(
+				previous, false, a_themeLoadFailed);
+		}
+
+		void RequestToggleChange(
+			BindingCapture::Device       a_device,
+			std::uint32_t                a_key,
+			FrameworkSettings::ToggleMode a_mode,
+			bool&                        a_saveFailed,
+			bool&                        a_themeLoadFailed)
+		{
+			const auto current = FrameworkSettings::CaptureSnapshot();
+			const bool keyboard = a_device == BindingCapture::Device::Keyboard;
+			const auto currentKey = keyboard ?
+				current.ToggleKey : current.ToggleKeyGamePad;
+			const auto currentMode = keyboard ?
+				current.Mode : current.ModeGamePad;
+			if (a_key == currentKey && a_mode == currentMode) {
+				return;
+			}
+
+			const char* warning{};
+			if ((a_key == BindingCapture::unboundKey && a_key != currentKey) ||
+				(a_mode == FrameworkSettings::ToggleMode::Off &&
+				 a_mode != currentMode)) {
+				warning =
+					"This device will have no enabled shortcut.\n"
+					"Make sure you have another way to reopen this menu.";
+			} else if (!keyboard && (a_key == 4096 || a_key == 8192) &&
+				(a_key != currentKey ||
+				 (currentMode == FrameworkSettings::ToggleMode::Off &&
+				  a_mode != currentMode))) {
+				warning = a_key == 4096 ?
+					"A is also the controller's Confirm button.\n"
+					"While this shortcut is enabled, selecting an item will close this menu." :
+					"B is also the controller's Back/Cancel button.\n"
+					"With this shortcut enabled, it closes the entire MCP before\n"
+					"the normal cancel or focused-window close behavior.";
+			}
+
+			if (warning) {
+				pendingToggleChange = {
+					a_device, a_key, a_mode, warning, true
+				};
+				BindingCapture::BeginConfirmation();
+				return;
+			}
+			SaveToggleChange(
+				a_device, a_key, a_mode, a_saveFailed, a_themeLoadFailed);
+		}
+
+		void RenderBindingConfirmation(
+			bool& a_saveFailed, bool& a_themeLoadFailed)
+		{
+			constexpr char title[]{ "Change Shortcut?###BindingWarning" };
+			if (pendingToggleChange.OpenRequested) {
+				ImGui::OpenPopup(title);
+				pendingToggleChange.OpenRequested = false;
+			}
+			if (!ImGui::BeginPopupModal(
+					title, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+				return;
+			}
+			if (!BindingCapture::IsConfirming()) {
+				BindingCapture::Acknowledge();
+				pendingToggleChange = {};
+				ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+				return;
+			}
+
+			ImGui::TextUnformatted(pendingToggleChange.Warning);
+			ImGui::Separator();
+			if (ImGui::IsWindowAppearing()) {
+				ImGui::NavRestoreHighlightAfterMove();
+			}
+			const bool cancel = ImGui::Button("Cancel");
+			ImGui::SetItemDefaultFocus();
+			ImGui::SameLine();
+			const bool confirm = ImGui::Button("Change Anyway");
+			if (cancel || confirm) {
+				if (confirm && !cancel) {
+					SaveToggleChange(
+						pendingToggleChange.Device,
+						pendingToggleChange.Key,
+						pendingToggleChange.Mode,
+						a_saveFailed,
+						a_themeLoadFailed);
+				}
+				BindingCapture::Acknowledge();
+				pendingToggleChange = {};
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+
+		void RenderKeyBinding(
+			std::uint32_t                 a_binding,
+			BindingCapture::Device        a_device,
+			FrameworkSettings::ToggleMode a_mode,
+			bool&                         a_saveFailed,
+			bool&                         a_themeLoadFailed)
+		{
+			ImGui::PushID("ToggleKey");
+			constexpr char title[]{ "Set Binding###CaptureBinding" };
+			constexpr char clearLabel[]{ "Clear" };
+			const auto clearWidth =
+				ImGui::CalcTextSize(clearLabel).x +
+				ImGui::GetStyle().FramePadding.x * 2.0F;
+			const auto bindingWidth = (std::max)(
+				ImGui::CalcItemWidth() - clearWidth -
+					ImGui::GetStyle().ItemSpacing.x,
+				ImGui::GetFrameHeight());
+			const auto name = GetBindingName(a_device, a_binding);
+			if (ImGui::Button(
+					name.data(), ImVec2{ bindingWidth, 0.0F })) {
+				BindingCapture::Begin(a_device);
+				ImGui::OpenPopup(title);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(clearLabel) &&
+				a_binding != BindingCapture::unboundKey) {
+				RequestToggleChange(
+					a_device, BindingCapture::unboundKey, a_mode,
+					a_saveFailed, a_themeLoadFailed);
+			}
+
+			if (ImGui::BeginPopupModal(
+					title, nullptr,
+					ImGuiWindowFlags_AlwaysAutoResize |
+						ImGuiWindowFlags_NoNavInputs)) {
+				auto newKey = a_binding;
+				auto state = BindingCapture::Poll(newKey, a_device);
+				ImGui::TextUnformatted(
+					a_device == BindingCapture::Device::Keyboard ?
+						"Press and release a key. Escape cancels." :
+						"Press and release a controller button. Escape cancels.");
+				ImGui::BeginDisabled(state == BindingCapture::State::Pressed);
+				if (ImGui::Button("Cancel")) {
+					state = BindingCapture::State::Cancelled;
+				}
+				ImGui::EndDisabled();
+				if (state == BindingCapture::State::Idle ||
+					state == BindingCapture::State::Complete ||
+					state == BindingCapture::State::Cancelled) {
+					BindingCapture::Acknowledge();
+					ImGui::CloseCurrentPopup();
+				}
+				ImGui::EndPopup();
+				if (state == BindingCapture::State::Complete) {
+					RequestToggleChange(
+						a_device, newKey, a_mode,
+						a_saveFailed, a_themeLoadFailed);
+				}
+			}
+			ImGui::PopID();
 		}
 
 		[[nodiscard]] bool ToggleButton(const char* a_label, bool* a_value)
@@ -454,33 +625,26 @@ namespace SFSEMenuFramework::SettingsWindow
 				changed = ToggleButton(toggle.Label, &(edited.*toggle.Value)) || changed;
 			}
 
-			struct InputSetting final
-			{
-				const char* ModeLabel;
-				const char* ModeID;
-				FrameworkSettings::ToggleMode FrameworkSettings::SettingsSnapshot::* Mode;
-				const char* KeyLabel;
-				const char* KeyID;
-				std::span<const FrameworkSettings::Binding> Bindings;
-				std::uint32_t FrameworkSettings::SettingsSnapshot::* Key;
-			};
-			const std::array inputs{
-				InputSetting{ "Toggle mode (keyboard)", "##KeyboardToggleMode",
-					&FrameworkSettings::SettingsSnapshot::Mode, "Toggle key (keyboard)",
-					"##KeyboardToggleKey", FrameworkSettings::GetKeyboardBindings(),
-					&FrameworkSettings::SettingsSnapshot::ToggleKey },
-				InputSetting{ "Toggle mode (gamepad)", "##GamePadToggleMode",
-					&FrameworkSettings::SettingsSnapshot::ModeGamePad, "Toggle key (gamepad)",
-					"##GamePadToggleKey", FrameworkSettings::GetGamePadBindings(),
-					&FrameworkSettings::SettingsSnapshot::ToggleKeyGamePad }
-			};
-			for (const auto& input : inputs) {
-				ImGui::Separator();
-				changed = RenderToggleMode(
-					input.ModeLabel, input.ModeID, edited.*input.Mode) || changed;
-				changed = RenderBinding(
-					input.KeyLabel, input.KeyID, input.Bindings, edited.*input.Key) || changed;
+			const auto inputDevice = BindingCapture::GetActiveDevice();
+			const bool keyboard =
+				inputDevice == BindingCapture::Device::Keyboard;
+			const auto binding = keyboard ?
+				edited.ToggleKey : edited.ToggleKeyGamePad;
+			auto toggleMode = keyboard ?
+				edited.Mode : edited.ModeGamePad;
+			ImGui::Separator();
+			if (RenderToggleMode(
+					"Toggle mode", "##ToggleMode", toggleMode)) {
+				RequestToggleChange(
+					inputDevice, binding, toggleMode,
+					saveFailed, themeLoadFailed);
 			}
+			ImGui::Separator();
+			ImGui::TextUnformatted("Toggle key");
+			RenderKeyBinding(
+				binding, inputDevice, toggleMode,
+				saveFailed, themeLoadFailed);
+			RenderBindingConfirmation(saveFailed, themeLoadFailed);
 
 			if (changed || themeChanged) {
 				if (changed) {
@@ -528,6 +692,8 @@ namespace SFSEMenuFramework::SettingsWindow
 
 	void Close() noexcept
 	{
+		BindingCapture::Acknowledge();
+		pendingToggleChange = {};
 		isOpen = false;
 		focusRequested = false;
 	}

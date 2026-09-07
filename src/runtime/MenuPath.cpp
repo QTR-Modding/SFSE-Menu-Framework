@@ -12,7 +12,7 @@ namespace SFSEMenuFramework::MenuPath
 	std::optional<Segments> Parse(std::string_view a_path)
 	{
 		// This parser adapts SKSE Menu Framework 3 MenuPath.cpp at commit
-		// c8cfc5c93fa3b5f6261cef695ab814e4467dd980 (GPL-3.0).
+		// accepted base 8a366c4a3db7317655cec8379e48c43140c9fe7d (GPL-3.0).
 		if (a_path.empty() || a_path.size() > maximumPathLength) {
 			return std::nullopt;
 		}

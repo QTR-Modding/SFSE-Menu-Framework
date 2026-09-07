@@ -1,6 +1,7 @@
 #include "input/InputCapture.h"
 
 #include "config/FrameworkSettings.h"
+#include "input/BindingCapture.h"
 #include "input/GamepadNavigation.h"
 #include "input/InputEventManager.h"
 #include "runtime/WindowManager.h"
@@ -124,6 +125,7 @@ namespace SFSEMenuFramework::InputCapture
 			captureFaulted.store(true, std::memory_order_release);
 			modal.store(false, std::memory_order_release);
 			pendingKeyboardSuppression.store(0, std::memory_order_release);
+			BindingCapture::Abort();
 			WindowManager::CloseAllBlockingWindows();
 			if (!eventLimitLogged.test_and_set(std::memory_order_relaxed)) {
 				logger::critical(
@@ -313,35 +315,63 @@ namespace SFSEMenuFramework::InputCapture
 				return;
 			}
 
-			const bool keyboardEdgeMatched =
-				a_queueHead && TryClaimKeyboardSuppression(a_queueHead);
-
 			bool stateChanged{};
 			bool stateChangedByGamepad{};
 			const bool modalAtBatchStart =
 				modal.load(std::memory_order_acquire);
 			if (modalAtBatchStart || IsOperational()) {
-				auto event = a_queueHead;
-				std::size_t eventCount{};
-				// Match SKSE Menu Framework ordering: its own open/close edge is
-				// decided before any consumer sees the native event batch.
-				while (event && eventCount < maximumInputEvents) {
-					if (event->eventType == RE::InputEvent::EventType::kButton) {
-						const auto& button =
-							static_cast<const RE::ButtonEvent&>(*event);
-						if (!keyboardEdgeMatched && !stateChanged) {
-							stateChanged = ProcessGamePadOpenClose(button);
-							stateChangedByGamepad = stateChanged;
-						}
-					}
-					event = event->next;
-					++eventCount;
-				}
-				if (event) {
+				const auto bindingBatch =
+					BindingCapture::ProcessNativeBatch(
+						a_queueHead, maximumInputEvents);
+				if (bindingBatch.Overflowed) {
 					// Partial capture is not a safe modal state. Fail open for future
 					// batches and let the lifecycle owner close or suspend the menu.
 					FaultCaptureOnEventLimit();
 				} else {
+					const bool keyboardEdgeMatched =
+						a_queueHead &&
+						TryClaimKeyboardSuppression(a_queueHead);
+					if (bindingBatch.OwnsBatch) {
+						const auto generation =
+							WindowManager::GetBlockingWindowOpenGeneration();
+						for (auto event = a_queueHead; event;
+							event = event->next) {
+							const bool capturedGamepadCancel =
+								bindingBatch.SuppressGamepadCancel &&
+								event->eventType ==
+									RE::InputEvent::EventType::kButton &&
+								event->deviceType ==
+									RE::InputEvent::DeviceType::kGamepad &&
+								static_cast<const RE::ButtonEvent&>(*event).idCode ==
+									8192;
+							if (!capturedGamepadCancel &&
+								(bindingBatch.ForwardAllToImGui ||
+								(event->eventType ==
+										RE::InputEvent::EventType::kButton &&
+								 static_cast<const RE::ButtonEvent&>(*event).value ==
+									0.0F))) {
+								GamepadNavigation::CaptureNativeEvent(
+									*event, generation, true);
+							}
+							const_cast<RE::InputEvent*>(event)->status =
+								RE::InputEvent::Status::kStop;
+						}
+						ForwardInput(a_receiver, a_queueHead);
+						return;
+					}
+
+					// Match SKSE Menu Framework ordering: its own open/close edge is
+					// decided before any consumer sees the native event batch.
+					for (auto event = a_queueHead; event; event = event->next) {
+						if (event->eventType == RE::InputEvent::EventType::kButton &&
+							!keyboardEdgeMatched && !stateChanged) {
+							const auto& button =
+								static_cast<const RE::ButtonEvent&>(*event);
+							stateChanged = ProcessGamePadOpenClose(button);
+							stateChangedByGamepad = stateChanged;
+						}
+					}
+
 					// SKSE Menu Framework tests ImGui activity once for the whole
 					// native batch. Keep that decision stable if rendering publishes a
 					// new frame while Starfield is walking this queue.
@@ -352,7 +382,7 @@ namespace SFSEMenuFramework::InputCapture
 					// Every registered callback sees the event in registration order.
 					// A true result consumes only that event; Starfield represents
 					// consumption with kStop instead of Skyrim's queue relinking.
-					for (event = a_queueHead; event; event = event->next) {
+					for (auto event = a_queueHead; event; event = event->next) {
 						auto* mutableEvent = const_cast<RE::InputEvent*>(event);
 						if (dispatchConsumerInput &&
 							InputEventManager::Dispatch(mutableEvent)) {
@@ -372,12 +402,14 @@ namespace SFSEMenuFramework::InputCapture
 					const bool captureBatch = modalAtBatchStart ||
 						modal.load(std::memory_order_acquire) ||
 						blockingOpenedDuringBatch;
-					if (stateChangedByGamepad && blockingGenerationAfterConsumers != 0) {
+					if (stateChangedByGamepad &&
+						blockingGenerationAfterConsumers != 0) {
 						GamepadNavigation::ObserveGamepadActivity(
 							blockingGenerationAfterConsumers);
 					}
 					if (captureBatch && !keyboardEdgeMatched && !stateChanged) {
-						for (event = a_queueHead; event; event = event->next) {
+						for (auto event = a_queueHead; event;
+							event = event->next) {
 							GamepadNavigation::CaptureNativeEvent(
 								*event,
 								blockingGenerationAfterConsumers,
@@ -391,7 +423,8 @@ namespace SFSEMenuFramework::InputCapture
 						// stopped gives later receivers the corresponding behavior.
 						const bool preservePrintScreen =
 							captureBatch && !keyboardEdgeMatched && !stateChanged;
-						for (event = a_queueHead; event; event = event->next) {
+						for (auto event = a_queueHead; event;
+							event = event->next) {
 							if (!preservePrintScreen || !IsPrintScreen(*event)) {
 								auto* mutableEvent =
 									const_cast<RE::InputEvent*>(event);

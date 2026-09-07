@@ -2,6 +2,7 @@
 
 #include "appearance/fonts/ConsumerFontScope.h"
 #include "config/FrameworkSettings.h"
+#include "input/BindingCapture.h"
 #include "input/GamepadNavigation.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/EventManager.h"
@@ -317,6 +318,9 @@ namespace SFSEMenuFramework
 		if (!EventManager::SetMainWindowState(window->IsOpen, a_open)) {
 			return false;
 		}
+		if (!a_open) {
+			BindingCapture::Acknowledge();
+		}
 		window->BlockUserInput.store(true, std::memory_order_release);
 		static_cast<void>(RefreshState(*registry));
 		static_cast<void>(Win32Platform::PostHostWindowCallback());
@@ -336,6 +340,7 @@ namespace SFSEMenuFramework
 
 	void WindowManager::CloseAllBlockingWindows() noexcept
 	{
+		BindingCapture::Abort();
 		auto* registry = GetWindowRegistry();
 		if (!registry) {
 			return;

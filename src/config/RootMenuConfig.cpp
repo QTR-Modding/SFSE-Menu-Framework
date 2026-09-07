@@ -16,7 +16,7 @@ namespace SFSEMenuFramework::RootMenuConfig
 	namespace
 	{
 		// Directly adapted from SKSE Menu Framework 3 RootMenuConfig.cpp through
-		// commit c8cfc5c93fa3b5f6261cef695ab814e4467dd980 (GPL-3.0).
+		// accepted base 8a366c4a3db7317655cec8379e48c43140c9fe7d (GPL-3.0).
 		// The path and namespace are changed for SFSE; bounded error handling and
 		// save-result propagation are Starfield-port corrections.
 		constexpr char configPath[]{ "Data/SFSE/Plugins/SFSEMenuFrameworkMenuConfig.json" };

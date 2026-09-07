@@ -1,6 +1,7 @@
 #include "platform/win32/Win32PlatformInternal.h"
 
 #include "config/FrameworkSettings.h"
+#include "input/BindingCapture.h"
 #include "input/InputCapture.h"
 #include "runtime/WindowManager.h"
 
@@ -73,6 +74,7 @@ namespace SFSEMenuFramework::Win32Platform
 		auto& state = State<KeyboardToggleState>();
 		CancelKeyboardHold();
 		InputCapture::CancelPendingKeyboardSuppression();
+		BindingCapture::Abort();
 		state.Down.fill(false);
 		state.LastPress = {};
 		state.LastPressDIK = 0;
@@ -293,6 +295,7 @@ namespace SFSEMenuFramework::Win32Platform
 			dik != 0 && dik < state.Down.size() && state.Down[dik] &&
 			::GetForegroundWindow() == a_window &&
 			InputCapture::IsOperational() &&
+			!BindingCapture::IsActive() &&
 			WindowManager::IsHotkeyEnabled() && mainWindow &&
 			!mainWindow->IsOpen.load(std::memory_order_acquire) &&
 			FrameworkSettings::GetToggleMode() ==
@@ -326,6 +329,18 @@ namespace SFSEMenuFramework::Win32Platform
 			}
 			const bool wasDown = state.Down[dik];
 			state.Down[dik] = a_transition.Down;
+			if (wasDown != a_transition.Down) {
+				BindingCapture::ProcessKeyboardTransition(
+					dik,
+					a_transition.EngineEventID,
+					a_transition.Down);
+			}
+			if (BindingCapture::IsActive()) {
+				if (!a_transition.Down && state.HoldDIK == dik) {
+					CancelKeyboardHold();
+				}
+				return true;
+			}
 			if (!a_transition.Down) {
 				if (state.HoldDIK == dik) {
 					CancelKeyboardHold();

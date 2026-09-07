@@ -28,6 +28,11 @@ pause and blur preferences, font face, variable weight, logical size, UI
 scale, rendering mode, and optional language glyph ranges. Appearance changes
 preview live and `Save` persists them.
 
+The shortcut controls follow the active input device. Select the displayed
+binding, then press and release the replacement key or controller button.
+`Escape` cancels capture. In shortcut warnings, `Escape` or controller `B`
+cancels the change; `Clear` disables that device's binding after confirmation.
+
 The default appearance uses the `STARFIELD` theme, Space Grotesk variable font
 at weight 300, 40 logical pixels, 100% UI scale, and FreeType auto-hinting.
 Jost Book and Medium are bundled as fallbacks. Additional direct-child `.ttf`
@@ -148,7 +153,7 @@ xmake f -m releasedbg
 xmake
 xmake package
 powershell -File scripts/Verify-Package.ps1 `
-    -Archive build/packages/SFSEMenuFramework-0.12.0.zip `
+    -Archive build/packages/SFSEMenuFramework-0.13.0.zip `
     -BuiltDll build/windows/x64/releasedbg/SFSEMenuFramework.dll
 ```
 
@@ -166,8 +171,10 @@ Original SFSE Menu Framework code is licensed under
 SKSE Menu Framework-derived portions remain GPL-3.0-only as detailed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-This project is a Starfield port of selected merged behavior from
-[SKSE Menu Framework 3 by SkyrimThiago through commit `c8cfc5c`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/c8cfc5c93fa3b5f6261cef695ab814e4467dd980).
+This project is a Starfield port of selected behavior from
+[SKSE Menu Framework 3 by SkyrimThiago through accepted base `8a366c4`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/8a366c4a3db7317655cec8379e48c43140c9fe7d),
+plus the user-authored press-to-bind changes from `5b269fa` through
+[`e297bbd`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/e297bbdadd1d54c862068f714672db4eae4f93ff).
 The DirectX 12 renderer, early Raw Input bridge, stable callback snapshots,
 live font-atlas transaction, and variable-font controls are Starfield-specific.
 Exact source revisions, borrowed implementation boundaries, licenses,

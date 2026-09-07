@@ -15,9 +15,12 @@ The implementation is organized by responsibility:
 - `appearance`: live font/theme ownership; `appearance/fonts` separates font
   discovery, glyph ranges, atlas construction, and consumer stack isolation.
 - `ui`: the framework control panel and settings window.
-- `input`: the game-input capture hook, consumer callbacks, keyboard suppression,
-  and sole-source native gamepad handoff to the render thread. The Win32
-  backend's independent XInput polling is disabled to prevent competing edges.
+- `input`: the game-input capture hook, consumer callbacks, keyboard
+  suppression, press-to-bind state, and sole-source native gamepad handoff to
+  the render thread. Binding capture owns each native batch atomically and
+  correlates lossless Win32 keyboard sequences with Starfield's later events.
+  The Win32 backend's independent XInput polling is disabled to prevent
+  competing edges.
 - `lifecycle`: framework startup and ownership of game input, cursor, pause, and blur.
 - `platform/win32`: host-window discovery, subclassing, and keyboard/pointer routing.
 - `rendering`: D3D12/ImGui lifetime and render-hook installation.
@@ -33,6 +36,8 @@ Some files remain larger when one shared lock or lifetime makes a split harder t
   font-atlas resource retirement, descriptor-heap restoration, and frame
   lifecycle as one GPU transaction.
 - `input/InputCapture.cpp` owns one input-device hook and its lossless keyboard-edge token protocol.
+- `input/BindingCapture.cpp` owns press-to-bind state, active-device
+  selection, and the Win32-to-native sequence correlation boundary.
 - `input/GamepadNavigation.cpp` owns the bounded native-event bridge, ImGui
   gamepad mapping, cancel-to-close fallback, and active mouse/controller cursor
   policy.
