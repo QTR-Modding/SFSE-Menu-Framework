@@ -41,6 +41,8 @@ namespace SFSEMenuFramework::SettingsWindow
 		bool fontSettingsInvalid{};
 		bool saveFailed{};
 		bool themeLoadFailed{};
+		bool fontEditPending{};
+		FrameworkSettings::FontSettings pendingFontSettings{};
 
 		struct BackgroundPreview final
 		{
@@ -424,10 +426,12 @@ namespace SFSEMenuFramework::SettingsWindow
 			bool                                   a_changed)
 		{
 			if (a_changed) {
+				fontEditPending = true;
 				fontSettingsInvalid =
 					!FrameworkSettings::ValidateFontSettings(a_settings);
 			}
 			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				fontEditPending = false;
 				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(a_settings);
 			}
 		}
@@ -482,10 +486,11 @@ namespace SFSEMenuFramework::SettingsWindow
 
 		void RenderFontSettings(bool& a_saveFailed)
 		{
-			static FrameworkSettings::FontSettings pending{};
+			auto& pending = pendingFontSettings;
 			const auto active = FontManager::GetActiveInfo();
 			if (fontSettingsRefreshRequested) {
 				pending = active.Settings;
+				fontEditPending = false;
 				fontSettingsRefreshRequested = false;
 				fontSettingsInvalid = false;
 			}
@@ -673,7 +678,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 		}
 
-		void RenderFrameworkSettings()
+		void RenderAppearanceSettings()
 		{
 			const auto settingsBeforeRender = FrameworkSettings::CaptureSnapshot();
 			bool themeChanged{};
@@ -709,10 +714,14 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 
 			RenderBackgroundControls();
-			CursorSettings::Render(saveFailed);
-			SoundSettings::Render(saveFailed);
+			if (themeChanged) {
+				saveFailed = !SaveOrRestore(settingsBeforeRender, false, themeLoadFailed);
+			}
+		}
 
-			RenderFontSettings(saveFailed);
+		void RenderControlSettings()
+		{
+			const auto settingsBeforeRender = FrameworkSettings::CaptureSnapshot();
 			auto edited = FrameworkSettings::CaptureSnapshot();
 			bool changed{};
 
@@ -750,19 +759,64 @@ namespace SFSEMenuFramework::SettingsWindow
 				saveFailed, themeLoadFailed);
 			RenderBindingConfirmation(saveFailed, themeLoadFailed);
 
-			if (changed || themeChanged) {
-				if (changed) {
-					FrameworkSettings::RestoreSnapshot(edited);
-				}
+			if (changed) {
+				FrameworkSettings::RestoreSnapshot(edited);
 				ApplyRuntimeSettings();
 				saveFailed = !SaveOrRestore(
 					settingsBeforeRender, false, themeLoadFailed);
 			}
 
+		}
+
+		void FinishTabEdits()
+		{
+			CursorSettings::FinishEdit(saveFailed);
+			SoundSettings::FinishEdit(saveFailed);
+			for (auto& control : backgroundControls) FinishBackgroundEdit(control);
+			if (fontEditPending) {
+				fontEditPending = false;
+				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(pendingFontSettings);
+			}
+		}
+
+		void RenderFrameworkSettings()
+		{
+			// Adapts SettingsTabs in QTR's SFSE-Performance-Overlay at
+			// 79fc5a56fce21bc1a77d6f66fa73c2be14180f3c (GPL-3.0).
+			struct Tab { const char* Name; void (*Render)(); };
+			const std::array tabs{
+				Tab{ "Appearance", RenderAppearanceSettings },
+				Tab{ "Fonts", [] { RenderFontSettings(saveFailed); } },
+				Tab{ "Cursor", [] { CursorSettings::Render(saveFailed); } },
+				Tab{ "Controls", RenderControlSettings },
+				Tab{ "Sounds", [] { SoundSettings::Render(saveFailed); } }
+			};
+			static const char* selectedTab{};
+			if (ImGui::BeginTabBar("FrameworkSettings", ImGuiTabBarFlags_FittingPolicyScroll)) {
+				for (const auto& tab : tabs) {
+					if (!ImGui::BeginTabItem(tab.Name)) continue;
+					if (selectedTab != tab.Name) {
+						FinishTabEdits();
+						selectedTab = tab.Name;
+					}
+					const float footerHeight = ImGui::GetFrameHeightWithSpacing() +
+						ImGui::GetTextLineHeightWithSpacing() * 2.0F;
+					const float height = (std::max)(ImGui::GetFrameHeight(),
+						ImGui::GetContentRegionAvail().y - footerHeight);
+					if (ImGui::BeginChild(tab.Name, ImVec2{ 0.0F, height })) {
+						ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.8F);
+						tab.Render();
+						ImGui::PopItemWidth();
+					}
+					ImGui::EndChild();
+					ImGui::EndTabItem();
+				}
+				ImGui::EndTabBar();
+			}
+
 			ImGui::Spacing();
 			if (ImGui::Button("Reset to defaults")) {
-				CursorSettings::FinishEdit(saveFailed);
-                SoundSettings::FinishEdit(saveFailed);
+				FinishTabEdits();
 				const auto settingsBeforeReset = FrameworkSettings::CaptureSnapshot();
 				FrameworkSettings::ResetDefaults();
 				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(
@@ -815,11 +869,7 @@ namespace SFSEMenuFramework::SettingsWindow
 
 	void Close() noexcept
 	{
-		CursorSettings::FinishEdit(saveFailed);
-		SoundSettings::FinishEdit(saveFailed);
-		for (auto& control : backgroundControls) {
-			FinishBackgroundEdit(control);
-		}
+		FinishTabEdits();
 		BindingCapture::Acknowledge();
 		pendingToggleChange = {};
 		isOpen = false;
@@ -865,17 +915,7 @@ namespace SFSEMenuFramework::SettingsWindow
 		}
 
 		if (!closeRequested && drawContents) {
-			const float windowWidth = ImGui::GetContentRegionAvail().x;
-			const float contentWidth = windowWidth * 0.8F;
-			const float offset = (windowWidth - contentWidth) * 0.5F;
-			if (offset > 0.0F) {
-				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset);
-			}
-			ImGui::BeginGroup();
-			ImGui::PushItemWidth(contentWidth);
 			RenderFrameworkSettings();
-			ImGui::PopItemWidth();
-			ImGui::EndGroup();
 		}
 		ImGui::End();
 	}

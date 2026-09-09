@@ -42,12 +42,11 @@ namespace SFSEMenuFramework::SoundSettings
 
     void Render(bool& saveFailed)
     {
-        // Finish a released volume edit even when the section was collapsed.
+        // Finish a released volume edit before rendering the next frame.
         if (pendingSave && !ImGui::IsAnyItemActive()) {
             saveFailed = !FrameworkSettings::Save();
             pendingSave = false;
         }
-        if (!ImGui::CollapsingHeader("Sounds")) return;
         if (!discovered) Discover();
         auto snapshot = FrameworkSettings::CaptureSnapshot();
         auto& sounds = snapshot.Sounds;
