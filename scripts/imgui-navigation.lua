@@ -1,0 +1,19 @@
+-- Port SKSE-MF 8fb2d295's ItemAdd observer into the compiled ImGui source.
+-- Keep the pinned checkout and public ImGui ABI unchanged.
+function main(target)
+    local source = io.readfile("extern/imgui/imgui.cpp"):gsub("\r\n", "\n")
+    local needle = "    g.LastItemData.StatusFlags = ImGuiItemStatusFlags_None;"
+    local first, last = source:find(needle, 1, true)
+    assert(first and not source:find(needle, last + 1, true), "ImGui ItemAdd observer needs review: source changed")
+    source = source:sub(1, last) ..
+        "\n    if (id != 0 && GItemAddObserver != nullptr)\n        GItemAddObserver(&g, window, &g.LastItemData);" ..
+        source:sub(last + 1)
+    source = '#define IMGUI_DEFINE_MATH_OPERATORS\n#include "ItemObserver.h"\n' ..
+        'static ImGui::ImGuiItemAddObserver GItemAddObserver = nullptr;\n' ..
+        'void ImGui::SetItemAddObserver(ImGuiItemAddObserver observer) { GItemAddObserver = observer; }\n' .. source
+    local generated = path.join(target:autogendir(), "imgui_navigation.cpp")
+    if not os.isfile(generated) or io.readfile(generated) ~= source then
+        io.writefile(generated, source)
+    end
+    target:add("files", generated)
+end

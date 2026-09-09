@@ -8,6 +8,7 @@ namespace SFSEMenuFramework
 	{
 	public:
 		static bool Install();
+		static bool ConsumeGamepadBack();
 
 	private:
 		static void __stdcall Render();

@@ -220,6 +220,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 	ToggleMode GetToggleMode() noexcept { return GetValues().Mode; }
 	std::uint32_t GetToggleKeyGamePad() noexcept { return GetValues().ToggleKeyGamePad; }
 	ToggleMode GetToggleModeGamePad() noexcept { return GetValues().ModeGamePad; }
+	bool GetPlayStationIcons() noexcept { return GetValues().PlayStationIcons; }
 	bool GetFreezeTimeOnMenu() noexcept { return GetValues().FreezeTimeOnMenu; }
 	bool GetBlurBackgroundOnMenu() noexcept { return GetValues().BlurBackgroundOnMenu; }
 	float GetBackgroundOpacity() noexcept { return GetValues().BackgroundOpacity; }

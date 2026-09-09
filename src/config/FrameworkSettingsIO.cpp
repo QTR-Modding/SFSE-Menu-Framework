@@ -412,6 +412,8 @@ namespace SFSEMenuFramework::FrameworkSettings
 			});
 		profile.Read(sectionName, L"ToggleModeGamePad", loaded.ModeGamePad,
 			defaultValues.ModeGamePad, ParseToggleMode);
+		profile.Read(sectionName, L"PlayStationIcons", loaded.PlayStationIcons,
+			defaultValues.PlayStationIcons, ParseBool);
 		profile.Read(sectionName, L"FreezeTimeOnMenu", loaded.FreezeTimeOnMenu,
 			defaultValues.FreezeTimeOnMenu, ParseBool);
 		profile.Read(sectionName, L"BlurBackgroundOnMenu", loaded.BlurBackgroundOnMenu,
@@ -483,6 +485,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 			profile.Write(sectionName, L"ToggleKeyGamePad",
 				GetGamePadBindingName(saved.ToggleKeyGamePad));
 			profile.Write(sectionName, L"ToggleModeGamePad", ToggleModeName(saved.ModeGamePad));
+			profile.Write(sectionName, L"PlayStationIcons", saved.PlayStationIcons ? L"1" : L"0");
 			profile.Write(sectionName, L"FreezeTimeOnMenu",
 				saved.FreezeTimeOnMenu ? L"1" : L"0");
 			profile.Write(sectionName, L"BlurBackgroundOnMenu",

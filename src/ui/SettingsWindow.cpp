@@ -738,6 +738,12 @@ namespace SFSEMenuFramework::SettingsWindow
 				changed = ToggleButton(toggle.Label, &(edited.*toggle.Value)) || changed;
 			}
 
+			int iconStyle = edited.PlayStationIcons ? 1 : 0;
+			if (ImGui::Combo("Controller icons", &iconStyle, "Xbox\0PlayStation\0")) {
+				edited.PlayStationIcons = iconStyle == 1;
+				changed = true;
+			}
+
 			const auto inputDevice = BindingCapture::GetActiveDevice();
 			const bool keyboard =
 				inputDevice == BindingCapture::Device::Keyboard;
@@ -860,6 +866,8 @@ namespace SFSEMenuFramework::SettingsWindow
 			Close();
 		}
 	}
+
+	bool IsOpen() noexcept { return isOpen; }
 
 	void Open() noexcept
 	{

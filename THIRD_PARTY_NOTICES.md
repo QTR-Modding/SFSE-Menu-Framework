@@ -43,6 +43,15 @@ The native controller-button to ImGui navigation mapping additionally adapts
 Starfield's native thumbstick events and cross-thread handoff are
 Starfield-specific.
 
+Gamepad control traversal, item observation, focus highlighting, context-sensitive
+icon prompts, Options navigation and Back handling adapt `GamepadNavigation.cpp`,
+`UI.cpp` and the ImGui `ItemAdd` observer at
+[`8fb2d295aee582a24204b015f39214ad43717728`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/8fb2d295aee582a24204b015f39214ad43717728)
+under GPL-3.0-only. Starfield retains its native input queue and D3D12
+completion-protected texture uploads. An Xbox/PlayStation selector replaces
+Skyrim's controller-type query. ImGui Icons artwork is a separate dependency,
+not bundled or relicensed here.
+
 These SKSE Menu Framework-derived portions remain GPL-3.0-only. The separate
 exceptions in this repository do not relicense those portions.
 
