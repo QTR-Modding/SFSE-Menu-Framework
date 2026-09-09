@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -35,6 +36,43 @@ namespace SFSEMenuFramework::SettingsWindow
 		bool focusRequested{};
 		bool fontSettingsRefreshRequested{ true };
 		bool fontSettingsInvalid{};
+		bool saveFailed{};
+		bool themeLoadFailed{};
+
+		struct BackgroundPreview final
+		{
+			float Original{};
+			float Preview{};
+		};
+		struct BackgroundControl final
+		{
+			const char* Label;
+			const char* Hint;
+			float (*Read)() noexcept;
+			bool (*Write)(float) noexcept;
+			bool (*Queue)(float) noexcept;
+			std::optional<BackgroundPreview> Edit;
+		};
+		std::array backgroundControls{
+			BackgroundControl{ "Background opacity",
+				"Adjusts panel backgrounds without fading text or controls.",
+				FrameworkSettings::GetBackgroundOpacity, FrameworkSettings::SetBackgroundOpacity,
+				ThemeManager::QueueBackgroundOpacity, {} },
+			BackgroundControl{ "Wallpaper opacity",
+				"Multiplies the wallpaper opacity chosen by the theme author.",
+				FrameworkSettings::GetWallpaperOpacity, FrameworkSettings::SetWallpaperOpacity,
+				ThemeManager::QueueWallpaperOpacity, {} },
+			BackgroundControl{ "Wallpaper dimming",
+				"Darkens the wallpaper for readability without dimming text or controls.",
+				FrameworkSettings::GetWallpaperDimming, FrameworkSettings::SetWallpaperDimming,
+				ThemeManager::QueueWallpaperDimming, {} }
+		};
+
+		bool HasBackgroundEdits() noexcept
+		{
+			return std::ranges::any_of(backgroundControls,
+				[](const auto& control) { return control.Edit.has_value(); });
+		}
 
 		void ApplyRuntimeSettings()
 		{
@@ -63,6 +101,66 @@ namespace SFSEMenuFramework::SettingsWindow
 			a_themeLoadFailed = !ThemeManager::QueueConfiguredTheme();
 			ApplyRuntimeSettings();
 			return false;
+		}
+
+		void FinishBackgroundEdit(BackgroundControl& a_control) noexcept
+		{
+			if (!a_control.Edit) {
+				return;
+			}
+			const auto edit = *a_control.Edit;
+			a_control.Edit.reset();
+			if (!a_control.Write(edit.Preview)) {
+				themeLoadFailed = true;
+				static_cast<void>(a_control.Queue(edit.Original));
+				return;
+			}
+			if (FrameworkSettings::Save()) {
+				saveFailed = false;
+				return;
+			}
+			static_cast<void>(a_control.Write(edit.Original));
+			themeLoadFailed = !a_control.Queue(edit.Original);
+			saveFailed = true;
+		}
+
+		void RenderBackgroundControls()
+		{
+			for (std::size_t index = 0; index < backgroundControls.size(); ++index) {
+				auto& control = backgroundControls[index];
+				if (index != 0 && !ThemeManager::IsWallpaperSelected()) {
+					FinishBackgroundEdit(control);
+					continue;
+				}
+				const auto configured = control.Read();
+				const auto displayed = control.Edit ? control.Edit->Preview : configured;
+				int percentage = static_cast<int>(std::lround(displayed * 100.0F));
+				ImGui::TextUnformatted(control.Label);
+				if (ImGui::IsItemHovered()) {
+					ImGui::SetTooltip("%s", control.Hint);
+				}
+				ImGui::PushID(control.Label);
+				if (ImGui::SliderInt("##Value", &percentage, 0, 100, "%d%%",
+					ImGuiSliderFlags_AlwaysClamp)) {
+					const auto preview = static_cast<float>(percentage) / 100.0F;
+					themeLoadFailed = !control.Queue(preview);
+					if (!themeLoadFailed) {
+						if (!control.Edit) {
+							control.Edit = BackgroundPreview{ configured, preview };
+						} else {
+							control.Edit->Preview = preview;
+						}
+					}
+				}
+				if (ImGui::IsItemDeactivatedAfterEdit()) {
+					FinishBackgroundEdit(control);
+				}
+				ImGui::PopID();
+			}
+			if (ThemeManager::HasWallpaperUploadError()) {
+				ImGui::TextColored(ImVec4{ 1.0F, 0.4F, 0.4F, 1.0F },
+					"Could not upload the wallpaper. Reselect the theme to retry.");
+			}
 		}
 
 		[[nodiscard]] bool RenderToggleMode(
@@ -573,8 +671,6 @@ namespace SFSEMenuFramework::SettingsWindow
 
 		void RenderFrameworkSettings()
 		{
-			static bool saveFailed{};
-			static bool themeLoadFailed{};
 			const auto settingsBeforeRender = FrameworkSettings::CaptureSnapshot();
 			bool themeChanged{};
 
@@ -607,6 +703,8 @@ namespace SFSEMenuFramework::SettingsWindow
 				}
 				ImGui::EndCombo();
 			}
+
+			RenderBackgroundControls();
 
 			RenderFontSettings(saveFailed);
 			auto edited = FrameworkSettings::CaptureSnapshot();
@@ -671,7 +769,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			if (themeLoadFailed) {
 				ImGui::TextColored(
 					ImVec4{ 1.0F, 0.35F, 0.35F, 1.0F },
-					"Could not load the selected theme");
+					"Could not apply the selected appearance");
 			}
 			if (saveFailed) {
 				ImGui::TextColored(
@@ -684,6 +782,23 @@ namespace SFSEMenuFramework::SettingsWindow
 		}
 	}
 
+	void UpdateLifecycle() noexcept
+	{
+		static std::uint64_t observedMainSessionGeneration{};
+		const auto generation =
+			WindowManager::GetMainWindowSessionGeneration();
+		if (generation == 0) {
+			if (isOpen || HasBackgroundEdits()) {
+				Close();
+			}
+			return;
+		}
+		if (generation != observedMainSessionGeneration) {
+			observedMainSessionGeneration = generation;
+			Close();
+		}
+	}
+
 	void Open() noexcept
 	{
 		isOpen = true;
@@ -692,6 +807,9 @@ namespace SFSEMenuFramework::SettingsWindow
 
 	void Close() noexcept
 	{
+		for (auto& control : backgroundControls) {
+			FinishBackgroundEdit(control);
+		}
 		BindingCapture::Acknowledge();
 		pendingToggleChange = {};
 		isOpen = false;
@@ -719,16 +837,19 @@ namespace SFSEMenuFramework::SettingsWindow
 			WindowPlacement::GetName(WindowPlacement::BuiltInWindow::Settings),
 			nullptr, windowFlags);
 		WindowPlacement::Capture(WindowPlacement::BuiltInWindow::Settings);
+		if (drawContents) {
+			ThemeManager::RenderCurrentWindowBackdrop();
+		}
 		const bool closeRequested =
 			GamepadNavigation::ConsumeCloseRequestForCurrentWindow(
 				WindowManager::GetBlockingWindowOpenGeneration());
 		if (closeRequested) {
-			isOpen = false;
+			Close();
 		}
 		if (!closeRequested && drawContents && ImGui::BeginMenuBar()) {
 			ImGui::TextUnformatted("Settings");
 			if (SFSEMenuFramework::UI::RenderCloseButton()) {
-				isOpen = false;
+				Close();
 			}
 			ImGui::EndMenuBar();
 		}

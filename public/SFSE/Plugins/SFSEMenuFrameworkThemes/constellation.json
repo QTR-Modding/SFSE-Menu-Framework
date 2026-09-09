@@ -1,0 +1,123 @@
+{
+  "Alpha": 1.0,
+  "DisabledAlpha": 0.5,
+  "Backdrop": {
+    "Type": "Stars",
+    "StarColor": "#D8EBF58C",
+    "AccentColor": "#E5BD66B8",
+    "Density": 0.62
+  },
+  "WindowPadding": [
+    20.0,
+    16.0
+  ],
+  "WindowRounding": 0.0,
+  "WindowBorderSize": 2.0,
+  "ChildRounding": 0.0,
+  "ChildBorderSize": 1.0,
+  "PopupRounding": 0.0,
+  "PopupBorderSize": 2.0,
+  "FramePadding": [
+    14.0,
+    8.0
+  ],
+  "FrameRounding": 2.0,
+  "FrameBorderSize": 1.0,
+  "ItemSpacing": [
+    12.0,
+    10.0
+  ],
+  "ItemInnerSpacing": [
+    8.0,
+    6.0
+  ],
+  "CellPadding": [
+    12.0,
+    8.0
+  ],
+  "IndentSpacing": 28.0,
+  "ColumnsMinSpacing": 8.0,
+  "ScrollbarSize": 16.0,
+  "ScrollbarRounding": 0.0,
+  "GrabMinSize": 14.0,
+  "GrabRounding": 2.0,
+  "TabRounding": 0.0,
+  "TabBorderSize": 1.0,
+  "TabBarBorderSize": 1.0,
+  "ButtonTextAlign": [
+    0.5,
+    0.5
+  ],
+  "SelectableTextAlign": [
+    0.0,
+    0.5
+  ],
+  "SeparatorTextBorderSize": 1.0,
+  "SeparatorTextAlign": [
+    0.0,
+    0.5
+  ],
+  "SeparatorTextPadding": [
+    12.0,
+    4.0
+  ],
+  "MouseCursorScale": 1.0,
+  "AntiAliasedLines": true,
+  "AntiAliasedLinesUseTex": true,
+  "AntiAliasedFill": true,
+  "ImGuiCol": {
+    "Text": "#F4F7F8FF",
+    "TextDisabled": "#8D9AA6FF",
+    "WindowBg": "#050A12EA",
+    "ChildBg": "#0B1722CC",
+    "PopupBg": "#08121DF4",
+    "Border": "#6F899FB8",
+    "BorderShadow": "#00000000",
+    "FrameBg": "#122231E8",
+    "FrameBgHovered": "#28465CFF",
+    "FrameBgActive": "#3C617AFF",
+    "TitleBg": "#07101BE6",
+    "TitleBgActive": "#102234F2",
+    "TitleBgCollapsed": "#07101BB8",
+    "MenuBarBg": "#07101BE8",
+    "ScrollbarBg": "#03070DB8",
+    "ScrollbarGrab": "#48667BCC",
+    "ScrollbarGrabHovered": "#6F91A6E6",
+    "ScrollbarGrabActive": "#B6CAD5F2",
+    "CheckMark": "#EAF5F8FF",
+    "SliderGrab": "#79BDD3E6",
+    "SliderGrabActive": "#D8F4FCFF",
+    "Button": "#122231E8",
+    "ButtonHovered": "#2B4C62FF",
+    "ButtonActive": "#416B84FF",
+    "Header": "#36566DFF",
+    "HeaderHovered": "#28465CFF",
+    "HeaderActive": "#4B7188FF",
+    "Separator": "#6F899F99",
+    "SeparatorHovered": "#A6C2D1CC",
+    "SeparatorActive": "#E9F4F8FF",
+    "ResizeGrip": "#6F899F33",
+    "ResizeGripHovered": "#9FC5D899",
+    "ResizeGripActive": "#D8F4FCCC",
+    "Tab": "#0E1D2AFF",
+    "TabHovered": "#2B4C62FF",
+    "TabActive": "#193246FF",
+    "TabUnfocused": "#07101BFF",
+    "TabUnfocusedActive": "#102538FF",
+    "PlotLines": "#8EC4D8FF",
+    "PlotLinesHovered": "#D9F0F8FF",
+    "PlotHistogram": "#E5BD66FF",
+    "PlotHistogramHovered": "#F3D889FF",
+    "TableHeaderBg": "#13283ACC",
+    "TableBorderStrong": "#6F899FCC",
+    "TableBorderLight": "#6F899F66",
+    "TableRowBg": "#00000000",
+    "TableRowBgAlt": "#1932462B",
+    "TextSelectedBg": "#A8D5E84A",
+    "DragDropTarget": "#E5BD66FF",
+    "NavHighlight": "#EAF5F8FF",
+    "NavWindowingHighlight": "#F4F7F8B3",
+    "NavWindowingDimBg": "#050A1299",
+    "ModalWindowDimBg": "#02050AC0"
+  }
+}

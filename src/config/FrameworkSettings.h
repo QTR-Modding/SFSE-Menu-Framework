@@ -70,6 +70,9 @@ namespace SFSEMenuFramework::FrameworkSettings
 		ToggleMode    ModeGamePad{};
 		bool          FreezeTimeOnMenu{};
 		bool          BlurBackgroundOnMenu{};
+		float         BackgroundOpacity{};
+		float         WallpaperOpacity{};
+		float         WallpaperDimming{};
 		MenuStyleName MenuStyle{};
 		FontSettings  Fonts{};
 	};
@@ -102,6 +105,9 @@ namespace SFSEMenuFramework::FrameworkSettings
 	[[nodiscard]] ToggleMode    GetToggleModeGamePad() noexcept;
 	[[nodiscard]] bool          GetFreezeTimeOnMenu() noexcept;
 	[[nodiscard]] bool          GetBlurBackgroundOnMenu() noexcept;
+	[[nodiscard]] float         GetBackgroundOpacity() noexcept;
+	[[nodiscard]] float GetWallpaperOpacity() noexcept;
+	[[nodiscard]] float GetWallpaperDimming() noexcept;
 	[[nodiscard]] MenuStyleName GetMenuStyle() noexcept;
 	[[nodiscard]] FontSettings  GetFontSettings() noexcept;
 	[[nodiscard]] FontSettings  GetDefaultFontSettings() noexcept;
@@ -123,6 +129,9 @@ namespace SFSEMenuFramework::FrameworkSettings
 		float a_tolerance = 0.0F, bool a_ignoreNameCase = false) noexcept;
 	[[nodiscard]] bool ValidateFontSettings(const FontSettings& a_settings) noexcept;
 
+	[[nodiscard]] bool SetBackgroundOpacity(float a_opacity) noexcept;
+	[[nodiscard]] bool SetWallpaperOpacity(float) noexcept;
+	[[nodiscard]] bool SetWallpaperDimming(float) noexcept;
 	[[nodiscard]] bool SetMenuStyle(std::string_view a_name) noexcept;
 	[[nodiscard]] bool SetFontSettings(const FontSettings& a_settings) noexcept;
 }

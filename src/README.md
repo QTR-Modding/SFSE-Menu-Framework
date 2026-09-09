@@ -1,73 +1,47 @@
-# Source architecture
+# Source layout
 
-This directory contains the private implementation of SFSE Menu Framework.
-Client mods use the separate header-only SFSE-MCP package. The framework DLL
-owns ImGui and exposes the matching direct and generated cimgui exports.
+The framework DLL owns ImGui. Client mods use the separate SFSE-MCP SDK.
 
-The implementation is organized by responsibility:
+## Where to look
 
-- `api`: direct SFSE-MCP exports and host-internal callback types.
-- `runtime`: lifecycle/HUD dispatch, panel/window registration, callback
-  snapshots, consumer validation, and escaped menu-path parsing. Panel-tree
-  mutations publish immutable path copies; stable node identities preserve UI
-  selection and navigation state across rename/delete operations.
-- `config`: framework settings, persistence, and root-menu visibility.
-- `appearance`: live font/theme ownership; `appearance/fonts` separates font
-  discovery, glyph ranges, atlas construction, and consumer stack isolation.
-- `ui`: the framework control panel and settings window.
-- `input`: the game-input capture hook, consumer callbacks, keyboard
-  suppression, press-to-bind state, and sole-source native gamepad handoff to
-  the render thread. Binding capture owns each native batch atomically and
-  correlates lossless Win32 keyboard sequences with Starfield's later events.
-  The Win32 backend's independent XInput polling is disabled to prevent
-  competing edges.
-- `lifecycle`: framework startup and ownership of game input, cursor, pause, and blur.
-- `platform/win32`: host-window discovery, subclassing, and keyboard/pointer routing.
-- `rendering`: D3D12/ImGui lifetime and render-hook installation.
+- `plugin.cpp`: SFSE entry point, messages and startup order.
+- `PCH.h`: shared precompiled header.
+- `api/`: exports called by client mods.
+- `runtime/`: page/window registration, menu paths, events and HUD callbacks.
+- `config/`: settings, saved state, favorites and archived menus.
+- `appearance/`: fonts, themes, stars and wallpapers.
+- `appearance/fonts/`: font discovery, glyph ranges, atlas building and font stacks.
+- `ui/`: the Mod Control Panel and Settings window.
+- `input/`: game input capture, shortcut binding and gamepad navigation.
+- `lifecycle/`: startup and control of game input, cursor, pause and blur.
+- `platform/win32/`: game-window discovery and Windows input handling.
+- `rendering/`: D3D12 resources and render hooks.
 
-`plugin.cpp` owns only the SFSE entry point, message listener, and top-level
-installation order. `PCH.h` is the target-wide precompiled header.
+## Ownership
 
-## Cohesive larger units
+Keep related state with the code that creates and releases it:
 
-Some files remain larger when one shared lock or lifetime makes a split harder to audit:
+- `D3D12Renderer.cpp` manages the ImGui context and frame resources together.
+  Fonts, wallpapers and their descriptors stay alive until the GPU finishes
+  using them. `D3D12Texture.cpp` handles their shared upload path.
+- `RenderHooks.cpp` installs the Scaleform hooks.
+  `D3D12CommandListHooks.cpp` handles command-list hooks and device checks.
+- `Win32Platform.cpp` owns the window subclass and shared input state.
+  Keyboard, pointer and ImGui-backend work live in the neighboring files.
+- `InputCapture.cpp` and `BindingCapture.cpp` keep keyboard event matching
+  with their input-capture and rebinding state machines. `GamepadNavigation.cpp`
+  owns controller navigation and cursor switching. Gamepad input comes from
+  Starfield; separate Win32-backend XInput polling is disabled.
+- `CallbackRegistry.h` shares registration and callback-lifetime handling.
+  Each event, input or HUD manager decides when to dispatch its callbacks.
+- `MenuOwnership.cpp` pairs taking game input, cursor, pause and blur control
+  with releasing them.
+- `FontManager.cpp` coordinates live font replacement. The files under
+  `appearance/fonts/` handle discovery, selection, building and per-callback
+  font-stack cleanup.
+- `WallpaperImage.cpp` decodes images; `WallpaperDrawing.cpp` fits them to
+  windows. Opacity previews reuse the loaded image.
 
-- `rendering/D3D12Renderer.cpp` owns the ImGui context, D3D12 backend,
-  font-atlas resource retirement, descriptor-heap restoration, and frame
-  lifecycle as one GPU transaction.
-- `input/InputCapture.cpp` owns one input-device hook and its lossless keyboard-edge token protocol.
-- `input/BindingCapture.cpp` owns press-to-bind state, active-device
-  selection, and the Win32-to-native sequence correlation boundary.
-- `input/GamepadNavigation.cpp` owns the bounded native-event bridge, ImGui
-  gamepad mapping, cancel-to-close fallback, and active mouse/controller cursor
-  policy.
-- `runtime/CallbackRegistry.h` shares callback lifetime and snapshot handling
-  across lifecycle events, HUD callbacks, and input callbacks. Each manager
-  retains its own dispatch policy.
-- `lifecycle/MenuOwnership.cpp` owns the balanced acquisition and release of game input, cursor, pause, and blur.
-
-Within `platform/win32`, `Win32Platform.cpp` owns host-window discovery,
-subclass lifetime, and raw-packet reading/type dispatch; `Win32Keyboard.cpp`
-owns toggle-key state,
-`Win32Pointer.cpp` owns cursor and capture state, and `Win32Backend.cpp`
-owns the queued-input and Dear ImGui backend transactions. Their few shared
-atomics live in one `SharedState` object owned by `Win32Platform.cpp` and are
-visible only through `Win32PlatformInternal.h`.
-
-Within `rendering`, `RenderHooks.cpp` owns the Scaleform render-pass seam and
-transactional vtable patching, while `D3D12CommandListHooks.cpp` owns the
-command-list hooks, Streamline/native-device validation, self-test, and render
-region tracking.
-
-Within `appearance/fonts`, `FontCatalog.cpp` validates and discovers files and
-their sidecars, `GlyphRanges.cpp` builds optional Unicode coverage,
-`FontBuildPlan.cpp` selects assets and fallback roles, and `FontComposer.cpp`
-performs Dear ImGui composition and validation. `FontAtlasBuilder.cpp` owns the
-explicit retry ladder, while `ConsumerFontScope.cpp` contains each plugin
-callback's font-stack mutations. `appearance/FontManager.cpp` only coordinates
-live generation replacement and GPU upload.
-
-Internal headers expose only the contracts required across these units.
-Registry storage and lifecycle state remain private to their owning translation
-units; only the per-entry state required by another unit crosses a private
-internal header.
+Some of these files are larger because splitting their shared state or resource
+lifetime would make changes harder to follow. Internal headers should expose only
+what another file needs; keep storage and implementation details with their owner.

@@ -7,11 +7,15 @@ from [SKSE Menu Framework 3 by SkyrimThiago through accepted base
 `8a366c4a3db7317655cec8379e48c43140c9fe7d`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/8a366c4a3db7317655cec8379e48c43140c9fe7d).
 
 The consumer input-event and persistent-HUD registration/dispatch behavior,
-theme loader behavior and `classic.json`, `modern.json`, and
-`skyrimDefault.json`, together with the font discovery, fallback, and live
+theme loader behavior and `classic.json` and `modern.json`,
+together with the font discovery, fallback, and live
 rebuild request sequence, are used under GNU GPL version 3. The complete
 license is included in
 [COPYING](COPYING).
+
+`blackest sea.json` and `the void.json` adapt the SkyrimDefault preset at
+`928e01ab459822a8d233ab99f0419ea1de23c775` under the same GPL-3.0 terms,
+with a monochrome palette and optional procedural stars.
 
 The escaped-slash parser, last-registration-wins behavior, runtime menu
 rename/delete semantics, Polish glyph range, `OFF` toggle handling, external
@@ -54,7 +58,8 @@ SFSE Menu Framework vendors the official Dear ImGui `v1.90.8-docking`
 annotated tag (tag object
 `2ae16655a7072546bb23a3dfc8e1735cf0185b29`) at peeled source commit
 `6d948ab47ecf984239af01434f3ed03808dbf188` and adapts its DirectX 12 font
-texture creation/upload sequence for checked, per-generation live replacement.
+texture creation/upload sequence for checked font and wallpaper uploads, with
+resources retained until GPU completion.
 Its FreeType builder is compiled through a narrow project bridge that selects
 an OpenType variable-weight coordinate without changing public ImGui layouts.
 The native gamepad bridge also adapts the Win32 backend's four-direction analog

@@ -1,8 +1,8 @@
 # SFSE Menu Framework
 
-SFSE Menu Framework is a native Starfield Script Extender plugin that lets
-other C++ SFSE plugins add ImGui pages and windows without owning a renderer,
-input hook, ImGui context, or ImGui implementation.
+An in-game settings menu for C++ Starfield mods, based on SkyrimThiago's
+SKSE Menu Framework. Mod authors use [SFSE-MCP](https://github.com/QTR-Modding/SFSE-MCP)
+to add pages and windows; the framework handles ImGui, rendering and input.
 
 ## Requirements
 
@@ -10,173 +10,143 @@ input hook, ImGui context, or ImGui implementation.
 - SFSE 0.2.21
 - Address Library for Starfield 1.16.244
 
-Building also requires Xmake 3.0.9 or newer and a C++23-capable MSVC toolchain.
+## Getting started
 
-## Controls and appearance
+Install the mod with your mod manager, or copy the archive's `SFSE` folder
+into Starfield's `Data` folder. Launch through SFSE, then press **F1**.
 
-- Press `F1` once to open or close the Mod Control Panel.
-- On a gamepad, double-press Start to open it; one press closes it.
-- Use the D-pad or left stick to navigate and `A` to activate. `B` cancels the
-  current interaction or selection first; with nothing selected, it closes the
-  focused built-in window.
-- Hold `X`, then use the left stick to move a window or the D-pad to resize it.
-- Controller input hides the software cursor; moving or clicking the mouse restores it.
-- Press `Escape` while it is open to return control to Starfield.
+- **F1:** open or close the panel.
+- **Gamepad Start:** double-press to open; press once to close.
+- **D-pad / left stick:** navigate. **A:** select. **B:** cancel the current
+  selection or interaction, then close the focused built-in window.
+- **Hold X:** move a window with the left stick or resize it with the D-pad.
+- **Escape:** close the main panel.
+- **Options > Resume Game:** return control to the game while leaving the panel visible.
 
-`Options > Open Settings` controls the theme, input bindings, toggle modes,
-pause and blur preferences, font face, variable weight, logical size, UI
-scale, rendering mode, and optional language glyph ranges. Appearance changes
-preview live and `Save` persists them.
+Gamepad input hides the cursor; using the mouse brings it back.
+The menu can open before game data finishes loading.
 
-The shortcut controls follow the active input device. Select the displayed
-binding, then press and release the replacement key or controller button.
-`Escape` cancels capture. In shortcut warnings, `Escape` or controller `B`
-cancels the change; `Clear` disables that device's binding after confirmation.
+## Settings
 
-The default appearance uses the `STARFIELD` theme, Space Grotesk variable font
-at weight 300, 40 logical pixels, 100% UI scale, and FreeType auto-hinting.
-Jost Book and Medium are bundled as fallbacks. Additional direct-child `.ttf`
-and `.otf` files in `Data/SFSE/Plugins/Fonts` become available after restart.
-Additional theme JSON files using the bundled schema belong in
-`Data/SFSE/Plugins/SFSEMenuFrameworkThemes`.
+Open **Options > Open Settings** to change the theme, font, size, weight,
+UI scale, opacity, shortcuts, pause or blur. Font changes preview live; press
+**Save** to keep them. Background sliders save when you release them.
+If saving a background change fails, Settings shows an error and reverts it.
 
-Slash-delimited registrations form a collapsible navigation tree. Top-level
-sections can be searched, favorited, archived, and restored. Menu state and
-window placement are stored under `Data/SFSE/Plugins`. Main and Settings window
-layouts survive restarts in display-relative coordinates; `Options > Reset
-Windows` restores both to their defaults.
+To change a shortcut, select its binding and press and release the new key or
+button. **Escape** cancels. **Clear** disables that device's shortcut after
+confirmation; **Escape** or gamepad **B** dismisses a warning without changing it.
 
-Prefix a literal slash in a menu name with a backslash (`\/`). The separate
-SDK provides `FullPathAddSectionItem`, `RenameSection`, `DeleteSection`, and
-`GetMenuFrameworkAPIVersion`. Use API version `1` to detect runtime
-rename/delete support. `GetMenuFrameworkVersion` remains a legacy
-source-compatible release projection and must not be used as a capability gate.
+The default is **STARFIELD** with Space Grotesk at weight 300. Other themes are
+**CONSTELLATION** (stars), **BLACKEST SEA** (black and white with stars),
+**THE VOID** (black and white without stars), and **UNITY** (wallpaper and gold accents).
 
-The panel can open as soon as Starfield's window and renderer are ready, before
-`kPostDataLoad`. Consumer callbacks that use game data must gate that work at
-their own appropriate SFSE lifecycle boundary.
+You can search, favorite, archive and restore mod sections. Settings and window
+positions are saved under `Data/SFSE/Plugins`. Use **Options > Reset Windows**
+to restore the main and Settings windows.
 
-## C++ client API
+For more fonts, place `.ttf` or `.otf` files directly in
+`Data/SFSE/Plugins/Fonts`, then restart the game.
 
-Clients use the separate MIT-licensed, header-only
-[SFSE-MCP](https://github.com/QTR-Modding/SFSE-MCP) package:
+## Adding a menu to your mod
 
-```cpp
-#include <SFSEMCP/SFSEMenuFramework.hpp>
+Use the MIT-licensed [SFSE-MCP SDK](https://github.com/QTR-Modding/SFSE-MCP).
+It is available as a single header or through vcpkg. You do not need to compile
+ImGui into your plugin.
 
-void __stdcall DrawSettings()
+See the [example mod](https://github.com/QTR-Modding/SFSE-Menu-Framework-Example)
+for working pages, windows, input listeners, events and HUD elements.
+Register during SFSE `kPostLoad`; callbacks that need game data must wait until
+that data is ready.
+
+## Custom themes
+
+Themes are JSON files in `Data/SFSE/Plugins/SFSEMenuFrameworkThemes`.
+Copy a bundled theme to get started. No C++ or extra DLL is needed.
+
+<details>
+<summary>Theme format, stars and wallpapers</summary>
+
+Use a unique printable ASCII filename of at most 63 characters, excluding
+`.json`. The name appears in uppercase in Settings. Restart to discover a new
+theme; reselect an existing one to reload its JSON and image.
+
+Missing fields use the built-in dark style. `ImGuiCol` colors use
+`#RRGGBBAA`; style values such as `"WindowPadding": [20, 16]` control layout.
+`Alpha` fades everything, including text. Use background color alpha instead
+when text should stay fully visible.
+
+For a wallpaper:
+
+```json
 {
-    ImGuiMCP::TextUnformatted("Hello from Starfield");
-    if (ImGuiMCP::Button("Increment")) {
-        // Handle the button.
-    }
-}
-
-void RegisterMenu()
-{
-    SFSEMenuFramework::SetSection("My Plugin");
-    SFSEMenuFramework::AddSectionItem("Settings/General", &DrawSettings);
-}
-```
-
-Register during SFSE `kPostLoad`. The framework exports
-`SFSEPlugin_Preload` so its DLL and symbols are mapped before ordinary client
-plugins load.
-
-The client compiles and links no Dear ImGui implementation. Every `ImGuiMCP`
-wrapper resolves an `ig*` export from `SFSEMenuFramework.dll`, and the
-framework executes the call against its own ImGui context.
-
-### Standalone windows
-
-```cpp
-MENU_WINDOW window{};
-
-void __stdcall DrawWindow()
-{
-    bool open = window->IsOpen.load();
-    if (ImGuiMCP::Begin("My Plugin Window", &open)) {
-        ImGuiMCP::TextUnformatted("Standalone content");
-    }
-    ImGuiMCP::End();
-    window->IsOpen.store(open);
-}
-
-void RegisterWindow()
-{
-    window = SFSEMenuFramework::AddWindow(&DrawWindow, true);
+  "Backdrop": {
+    "Type": "Wallpaper",
+    "Image": "wallpapers/my-theme.png",
+    "Opacity": 1.0,
+    "Darkening": 0.0
+  },
+  "ImGuiCol": {
+    "Text": "#F5F1E8FF",
+    "WindowBg": "#050710EF",
+    "ChildBg": "#00000000"
+  }
 }
 ```
 
-`WindowInterface::IsOpen` and `BlockUserInput` are atomic. The second
-`AddWindow` parameter is named `blockUserInput` because it initializes
-`BlockUserInput`; correcting the old parameter name does not affect C++ call
-compatibility. The `AddWindowWithView` signature is retained; Starfield creates a
-normal framework window and ignores `viewName` because the pinned Skyrim host
-never implemented the view-specific export.
+- Image paths are relative to the JSON's folder and must stay inside it.
+  Use printable ASCII paths, PNG/JPG/JPEG files up to 32 MiB, and images
+  no larger than 4096 pixels per side.
+- The image is centered and cropped to fill the main and Settings windows
+  without stretching. Transparent child backgrounds reveal it beneath the
+  sidebar and content. It stays fixed while scrolling.
+- `Opacity` and `Darkening` range from 0 to 1; their defaults are 1 and 0.
+  User wallpaper opacity multiplies the theme's opacity, and dimming adds
+  darkness. Background opacity fades the wallpaper too. Text is unaffected.
+- Unreadable images prevent the theme from loading. If the GPU upload fails,
+  the panel keeps its colors and Settings shows an error; reselect to retry.
+- Mod-created windows inherit the colors, but not the backdrop.
 
-### Lifecycle, input, and HUD callbacks
+For stars, use `"Type": "Stars"`. Optional fields are `StarColor`,
+`AccentColor` (`#RRGGBBAA`) and `Density` (0–1).
+Omit `Backdrop` or use `"Type": "None"` for a plain background.
 
-`AddEvent` exposes `kOpenMenu`, `kCloseMenu`, `kBeforeRender`, and
-`kAfterRender`. Higher priorities run first. `AddInputEvent` can consume a
-native `RE::InputEvent` by returning `true`. `AddHudElement` renders every
-framework frame before windows. Delete the returned registration object to
-unregister it.
+Distribute the JSON and artwork in the same folder structure, with any
+required artwork licenses. Fonts remain a separate user setting.
 
-HUD, page, and window callbacks run with the framework's ImGui context active.
-Input callbacks do not run on the render path and must not call ImGui. No
-callback may let an exception cross the framework boundary.
+</details>
 
-Lifecycle event callbacks run on the render thread, but outside an active ImGui
-frame: `kBeforeRender` is dispatched before `ImGui::NewFrame()` and
-`kAfterRender` after `ImGui::Render()`. They must not call `ImGuiMCP`.
+## Building from source
 
-`LoadTexture` and `DisposeTexture` remain in SFSE-MCP for source
-compatibility, but texture support is intentionally deferred. This host does
-not currently export them, so loading returns a null texture and disposal is a
-no-op.
+Requires Xmake 3.0.9+, MSVC with C++23 support, and the Windows SDK.
 
-### Fonts and icons
-
-`SFSEMenuFramework::PushFont` selects a discovered font by filename or stem.
-`FontAwesome::PushSolid`, `PushRegular`, and `PushBrands` select the bundled
-icon faces; pair a successful push with `FontAwesome::Pop`. Cached raw
-`ImFont*` pointers are invalidated by live font rebuilds, so clients should use
-the named font helpers inside each render callback.
-
-## Build
+Builds must be signed. Set `SFSE_MF_SIGNING_CERT` to the thumbprint of a
+CurrentUser/My certificate whose public key matches the adjacent SDK.
+A missing or mismatched key stops the build. This is only needed to build the
+framework, not to use the SDK in a client mod.
 
 ```powershell
+git clone https://github.com/QTR-Modding/SFSE-MCP.git
+git -C SFSE-MCP checkout ed331dab06b3055d2d6731a471bccd3587048a17
 git clone --recurse-submodules https://github.com/QTR-Modding/SFSE-Menu-Framework.git
 cd SFSE-Menu-Framework
 xmake f -m releasedbg
 xmake
 xmake package
-powershell -File scripts/Verify-Package.ps1 `
-    -Archive build/packages/SFSEMenuFramework-0.13.0.zip `
-    -BuiltDll build/windows/x64/releasedbg/SFSEMenuFramework.dll
 ```
 
-To generate a Visual Studio solution:
+The archive is `build/packages/SFSEMenuFramework-0.15.0.zip`.
+To generate a Visual Studio solution, run `xmake project -k vsxmake`.
 
-```powershell
-xmake project -k vsxmake
-```
+For a fork, `scripts/signing/Initialize-Signing.ps1` creates a non-exportable
+key; pair it with your SDK's public-key setting. Do not replace an existing
+signing key: clients built for it will reject the replacement.
 
-## License
+## License and credits
 
-Original SFSE Menu Framework code is licensed under
-[GPL-3.0-only](COPYING) with the
-[Modding Exception and GPL-3.0 Linking Exception](EXCEPTIONS).
-SKSE Menu Framework-derived portions remain GPL-3.0-only as detailed in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[GPL-3.0-only](COPYING), with [exceptions](EXCEPTIONS) for original framework
+code. SKSE Menu Framework-derived code remains GPL-3.0-only.
+The separate client SDK is MIT-licensed.
 
-This project is a Starfield port of selected behavior from
-[SKSE Menu Framework 3 by SkyrimThiago through accepted base `8a366c4`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/8a366c4a3db7317655cec8379e48c43140c9fe7d),
-plus the user-authored press-to-bind changes from `5b269fa` through
-[`e297bbd`](https://github.com/QTR-Modding/SKSE-Menu-Framework-3/tree/e297bbdadd1d54c862068f714672db4eae4f93ff).
-The DirectX 12 renderer, early Raw Input bridge, stable callback snapshots,
-live font-atlas transaction, and variable-font controls are Starfield-specific.
-Exact source revisions, borrowed implementation boundaries, licenses,
-exceptions, and bundled-asset notices are listed in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+See [third-party notices](THIRD_PARTY_NOTICES.md) for SkyrimThiago's source
+revisions, other credits, and font and dependency licenses.
