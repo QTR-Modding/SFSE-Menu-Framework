@@ -24,10 +24,14 @@ $expectedFiles = @(
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk-OFL.txt'
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk[wght].ttf'
 	'Data/SFSE/Plugins/SFSEMenuFramework.dll'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/blackest sea.json'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/constellation.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/classic.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/modern.json'
-	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/skyrimDefault.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/starfield.json'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/the void.json'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/unity.json'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/wallpapers/unity.png'
 	'Data/THIRD_PARTY_NOTICES.md'
 ) | Sort-Object
 

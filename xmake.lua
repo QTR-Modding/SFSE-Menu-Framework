@@ -40,9 +40,10 @@ add_requires("freetype 2.14.1", {
 
 local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
-local plugin_version = "0.13.0"
+local plugin_version = "0.15.0"
 local plugin_author = "Quantumyilmaz"
 local build_staging_dir = path.join(project_root, "build", "staging")
+local sdk_root = path.join(project_root, "..", "SFSE-MCP")
 
 set_project(plugin_name)
 set_version(plugin_version)
@@ -96,6 +97,13 @@ target("imgui", function()
     add_syslinks("d3dcompiler", { public = true })
 end)
 
+target("verify-framework-signature", function()
+    set_kind("binary")
+    set_default(false)
+    add_files(path.join(sdk_root, "tools", "verify_signature.cpp"))
+    add_includedirs(path.join(sdk_root, "include"))
+end)
+
 target(dll_name, function()
 	add_rules("commonlibsf.plugin", {
 		author = plugin_author,
@@ -114,9 +122,10 @@ target(dll_name, function()
     set_pcxxheader("src/PCH.h")
 
     add_deps("imgui")
+    add_deps("verify-framework-signature", { inherit = false })
 	add_packages("nlohmann_json")
     add_defines("_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING")
-    add_syslinks("comctl32")
+    add_syslinks("comctl32", "windowscodecs", "ole32")
     -- Generated from Dear ImGui 1.90.8-docking by cimgui and copied from the
     -- pinned SKSE Menu Framework reference. Compile it directly into the DLL
     -- so every CIMGUI_API entry remains present in the export table.
@@ -128,6 +137,10 @@ target(dll_name, function()
     add_installfiles(
         "public/SFSE/Plugins/SFSEMenuFrameworkThemes/*.json",
         { prefixdir = "SFSE/Plugins/SFSEMenuFrameworkThemes" }
+    )
+    add_installfiles(
+        "public/SFSE/Plugins/SFSEMenuFrameworkThemes/wallpapers/unity.png",
+        { prefixdir = "SFSE/Plugins/SFSEMenuFrameworkThemes/wallpapers" }
     )
     add_installfiles(
         "public/SFSE/Plugins/Fonts/*",
@@ -149,6 +162,14 @@ target(dll_name, function()
             path.absolute(target:installdir()) == path.absolute(build_staging_dir),
             "refusing to build with a non-staging install destination"
         )
+    end)
+    after_build(function(target)
+        os.vrunv("powershell", {
+            "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned", "-File",
+            path.join(project_root, "scripts", "signing", "Sign-Build.ps1"),
+            "-DllPath", target:targetfile(),
+            "-VerifyTool", target:dep("verify-framework-signature"):targetfile()
+        })
     end)
 end)
 

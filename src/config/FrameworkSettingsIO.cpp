@@ -416,6 +416,12 @@ namespace SFSEMenuFramework::FrameworkSettings
 			defaultValues.FreezeTimeOnMenu, ParseBool);
 		profile.Read(sectionName, L"BlurBackgroundOnMenu", loaded.BlurBackgroundOnMenu,
 			defaultValues.BlurBackgroundOnMenu, ParseBool);
+		for (const auto& setting : backgroundSettings) {
+			profile.Read(sectionName, setting.Name, loaded.*setting.Member,
+				defaultValues.*setting.Member, [](std::wstring_view text, float& value) {
+					return ParseNumber(text, value) && value >= 0.0F && value <= 1.0F;
+				});
+		}
 		profile.Read(sectionName, L"MenuStyle", loaded.MenuStyle,
 			defaultValues.MenuStyle, [](std::wstring_view text, MenuStyleName& value) {
 				return ParseName(text, value, true, false);
@@ -458,6 +464,9 @@ namespace SFSEMenuFramework::FrameworkSettings
 				saved.FreezeTimeOnMenu ? L"1" : L"0");
 			profile.Write(sectionName, L"BlurBackgroundOnMenu",
 				saved.BlurBackgroundOnMenu ? L"1" : L"0");
+			for (const auto& setting : backgroundSettings) {
+				profile.Write(sectionName, setting.Name, saved.*setting.Member);
+			}
 			profile.Write(sectionName, L"MenuStyle", saved.MenuStyle.data());
 			profile.Write(fontSectionName, L"PrimaryFont", NameView(saved.Fonts.PrimaryFont));
 			profile.Write(fontSectionName, L"FontRendering",

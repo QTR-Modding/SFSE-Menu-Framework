@@ -1,6 +1,8 @@
 #include "appearance/ThemeManager.h"
 
 #include "appearance/AssetDiscovery.h"
+#include "appearance/ThemeBackdrop.h"
+#include "appearance/WallpaperDrawing.h"
 #include "config/FrameworkSettings.h"
 
 #include <imgui.h>
@@ -44,9 +46,14 @@ namespace SFSEMenuFramework::ThemeManager
 
 		struct ThemeSelection final
 		{
-			ImGuiStyle  BaseStyle;
-			std::size_t Index{ NO_THEME };
-			float       UIScale{ 1.0F };
+			ImGuiStyle           BaseStyle;
+			ThemeBackdrop::Style Backdrop;
+			std::shared_ptr<const WallpaperImage> Image;
+			std::size_t          Index{ NO_THEME };
+			float                UIScale{ 1.0F };
+			float                BackgroundOpacity{ 1.0F };
+			float                WallpaperOpacity{ 1.0F };
+			float                WallpaperDimming{ 0.25F };
 		};
 
 		struct State final
@@ -54,6 +61,8 @@ namespace SFSEMenuFramework::ThemeManager
 			std::vector<ThemeEntry> Themes;
 			std::optional<ThemeSelection> Pending;
 			ThemeSelection Active;
+			std::uintptr_t WallpaperTexture{};
+			bool WallpaperUploadFailed{};
 		};
 
 		[[nodiscard]] State& GetState()
@@ -116,6 +125,20 @@ namespace SFSEMenuFramework::ThemeManager
 		void ApplySelection(const ThemeSelection& a_selection) noexcept
 		{
 			auto style = a_selection.BaseStyle;
+			constexpr ImGuiCol backgroundColors[]{
+				ImGuiCol_WindowBg,
+				ImGuiCol_ChildBg,
+				ImGuiCol_PopupBg,
+				ImGuiCol_TitleBg,
+				ImGuiCol_TitleBgActive,
+				ImGuiCol_TitleBgCollapsed,
+				ImGuiCol_MenuBarBg,
+				ImGuiCol_ScrollbarBg,
+				ImGuiCol_TableHeaderBg
+			};
+			for (const auto color : backgroundColors) {
+				style.Colors[color].w *= a_selection.BackgroundOpacity;
+			}
 			ScaleStyle(style, a_selection.UIScale);
 			ImGui::GetStyle() = style;
 		}
@@ -209,6 +232,49 @@ namespace SFSEMenuFramework::ThemeManager
 				static_cast<float>(value & 0xFF) * scale
 			};
 			return true;
+		}
+
+		[[nodiscard]] bool ReadBackdrop(
+			const nlohmann::json& a_json,
+			ThemeBackdrop::Style& a_result)
+		{
+			const auto* backdrop = FindValue(a_json, "Backdrop");
+			if (!backdrop) {
+				return true;
+			}
+			if (!backdrop->is_object()) {
+				return false;
+			}
+
+			const auto* type = FindValue(*backdrop, "Type");
+			if (!type || !type->is_string()) {
+				return false;
+			}
+			const auto& typeName = type->get_ref<const std::string&>();
+			if (typeName == "None") {
+				a_result = {};
+				return true;
+			}
+			if (typeName == "Wallpaper") {
+				a_result.Kind = ThemeBackdrop::Effect::Wallpaper;
+				return ReadValue(*backdrop, "Opacity", a_result.ImageOpacity, 0.0, 1.0) &&
+					ReadValue(*backdrop, "Darkening", a_result.ImageDarkening, 0.0, 1.0);
+			}
+			if (typeName != "Stars") {
+				return false;
+			}
+			a_result.Kind = ThemeBackdrop::Effect::Stars;
+
+			for (const auto [name, color] : {
+				std::pair{ "StarColor", &ThemeBackdrop::Style::StarColor },
+				std::pair{ "AccentColor", &ThemeBackdrop::Style::AccentColor } }) {
+				const auto* value = FindValue(*backdrop, name);
+				if (value && (!value->is_string() ||
+					!ParseColor(value->get_ref<const std::string&>(), a_result.*color))) {
+					return false;
+				}
+			}
+			return ReadValue(*backdrop, "Density", a_result.Density, 0.0, 1.0);
 		}
 
 		[[nodiscard]] bool ApplyColors(
@@ -349,7 +415,7 @@ namespace SFSEMenuFramework::ThemeManager
 
 		[[nodiscard]] bool LoadTheme(
 			const ThemeEntry& a_theme,
-			ImGuiStyle&       a_style)
+			ThemeSelection&   a_selection)
 		{
 			std::error_code error;
 			const auto size = std::filesystem::file_size(a_theme.Path, error);
@@ -373,10 +439,20 @@ namespace SFSEMenuFramework::ThemeManager
 				return false;
 			}
 
-			BuildBaselineStyle(a_style);
-			if (!ApplyJsonFields(json, a_style)) {
-				logger::warn("Theme '{}' contains an invalid style value", a_theme.Name);
+			BuildBaselineStyle(a_selection.BaseStyle);
+			if (!ApplyJsonFields(json, a_selection.BaseStyle) ||
+				!ReadBackdrop(json, a_selection.Backdrop)) {
+				logger::warn("Theme '{}' contains an invalid style or backdrop value", a_theme.Name);
 				return false;
+			}
+			if (a_selection.Backdrop.Kind == ThemeBackdrop::Effect::Wallpaper) {
+				const auto* path = FindValue(json["Backdrop"], "Image");
+				if (!path || !path->is_string() ||
+					!(a_selection.Image = LoadWallpaperImage(a_theme.Path.parent_path(),
+						path->get_ref<const std::string&>()))) {
+					logger::warn("Theme '{}' has an unreadable or unsupported wallpaper", a_theme.Name);
+					return false;
+				}
 			}
 			return true;
 		}
@@ -400,11 +476,14 @@ namespace SFSEMenuFramework::ThemeManager
 			}
 
 			ThemeSelection selection;
-			if (!LoadTheme(state.Themes[a_index], selection.BaseStyle)) {
+			if (!LoadTheme(state.Themes[a_index], selection)) {
 				return false;
 			}
 			selection.Index = a_index;
 			selection.UIScale = state.Active.UIScale;
+			selection.BackgroundOpacity = state.Active.BackgroundOpacity;
+			selection.WallpaperOpacity = state.Active.WallpaperOpacity;
+			selection.WallpaperDimming = state.Active.WallpaperDimming;
 			ApplySelection(selection);
 			state.Active = std::move(selection);
 			return true;
@@ -412,7 +491,7 @@ namespace SFSEMenuFramework::ThemeManager
 
 		[[nodiscard]] bool TryFallbackTheme()
 		{
-			for (const auto fallback : { "SKYRIMDEFAULT", "CLASSIC" }) {
+			for (const auto fallback : { "STARFIELD", "CLASSIC" }) {
 				const auto index = FindTheme(fallback);
 				if (index != NO_THEME && ApplyImmediately(index)) {
 					return true;
@@ -426,6 +505,9 @@ namespace SFSEMenuFramework::ThemeManager
 	{
 		auto& state = GetState();
 		state.Active.UIScale = FrameworkSettings::GetFontSettings().UIScale;
+		state.Active.BackgroundOpacity = FrameworkSettings::GetBackgroundOpacity();
+		state.Active.WallpaperOpacity = FrameworkSettings::GetWallpaperOpacity();
+		state.Active.WallpaperDimming = FrameworkSettings::GetWallpaperDimming();
 		RefreshThemes();
 
 		const auto configured = FrameworkSettings::GetMenuStyle();
@@ -448,6 +530,8 @@ namespace SFSEMenuFramework::ThemeManager
 		}
 
 		BuildBaselineStyle(state.Active.BaseStyle);
+		state.Active.Backdrop = {};
+		state.Active.Image.reset();
 		state.Active.Index = NO_THEME;
 		ApplySelection(state.Active);
 		logger::warn("No valid JSON theme was available; using the built-in dark style");
@@ -487,13 +571,16 @@ namespace SFSEMenuFramework::ThemeManager
 		}
 
 		ThemeSelection selection;
-		if (!LoadTheme(state.Themes[a_index], selection.BaseStyle) ||
+		if (!LoadTheme(state.Themes[a_index], selection) ||
 			!FrameworkSettings::SetMenuStyle(state.Themes[a_index].Name)) {
 			return false;
 		}
 		selection.Index = a_index;
 		selection.UIScale =
 			state.Pending ? state.Pending->UIScale : state.Active.UIScale;
+		selection.BackgroundOpacity = FrameworkSettings::GetBackgroundOpacity();
+		selection.WallpaperOpacity = FrameworkSettings::GetWallpaperOpacity();
+		selection.WallpaperDimming = FrameworkSettings::GetWallpaperDimming();
 		state.Pending = std::move(selection);
 		return true;
 	}
@@ -516,5 +603,62 @@ namespace SFSEMenuFramework::ThemeManager
 		selection.UIScale = a_scale;
 		state.Pending = std::move(selection);
 		return true;
+	}
+
+	namespace
+	{
+		bool QueueUnitValue(float a_value, float ThemeSelection::* a_member) noexcept
+		{
+			if (!std::isfinite(a_value) || a_value < 0.0F || a_value > 1.0F) {
+				return false;
+			}
+			auto& state = GetState();
+			auto selection = state.Pending ? *state.Pending : state.Active;
+			selection.*a_member = a_value;
+			state.Pending = std::move(selection);
+			return true;
+		}
+	}
+
+	bool QueueBackgroundOpacity(float a_value) noexcept
+	{ return QueueUnitValue(a_value, &ThemeSelection::BackgroundOpacity); }
+	bool QueueWallpaperOpacity(float a_value) noexcept
+	{ return QueueUnitValue(a_value, &ThemeSelection::WallpaperOpacity); }
+	bool QueueWallpaperDimming(float a_value) noexcept
+	{ return QueueUnitValue(a_value, &ThemeSelection::WallpaperDimming); }
+
+	bool IsWallpaperSelected() noexcept
+	{
+		const auto& state = GetState();
+		return (state.Pending ? state.Pending->Backdrop : state.Active.Backdrop).Kind ==
+			ThemeBackdrop::Effect::Wallpaper;
+	}
+
+	std::shared_ptr<const WallpaperImage> GetWallpaperImage() noexcept
+	{ return GetState().Active.Image; }
+
+	void SetWallpaperTexture(std::uintptr_t a_texture, bool a_failed) noexcept
+	{
+		auto& state = GetState();
+		state.WallpaperTexture = a_texture;
+		state.WallpaperUploadFailed = a_failed;
+	}
+
+	bool HasWallpaperUploadError() noexcept { return GetState().WallpaperUploadFailed; }
+
+	void RenderCurrentWindowBackdrop() noexcept
+	{
+		const auto& state = GetState();
+		const auto& active = state.Active;
+		if (active.Image && state.WallpaperTexture) {
+			WallpaperDrawing::RenderCurrentWindow(
+				reinterpret_cast<ImTextureID>(state.WallpaperTexture),
+				ImVec2{ static_cast<float>(active.Image->Width),
+					static_cast<float>(active.Image->Height) },
+				active.BackgroundOpacity * active.WallpaperOpacity * active.Backdrop.ImageOpacity,
+				(1.0F - active.WallpaperDimming) * (1.0F - active.Backdrop.ImageDarkening));
+		} else {
+			ThemeBackdrop::RenderCurrentWindow(active.Backdrop, active.BackgroundOpacity);
+		}
 	}
 }

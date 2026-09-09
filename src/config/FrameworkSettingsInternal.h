@@ -61,6 +61,8 @@ namespace SFSEMenuFramework::FrameworkSettings::Detail
 	inline constexpr float hardMinFontWeight = 1.0F;
 	inline constexpr float hardMaxFontWeight = 1000.0F;
 	inline constexpr float maximumRasterSize = 96.0F;
+	inline constexpr float minimumBackgroundOpacity = 0.0F;
+	inline constexpr float maximumBackgroundOpacity = 1.0F;
 	struct NamedToggleMode final
 	{
 		const wchar_t* Name;
@@ -102,12 +104,26 @@ namespace SFSEMenuFramework::FrameworkSettings::Detail
 		.ModeGamePad = ToggleMode::DoublePress,
 		.FreezeTimeOnMenu = true,
 		.BlurBackgroundOnMenu = true,
+		.BackgroundOpacity = 1.0F,
+		.WallpaperOpacity = 1.0F,
+		.WallpaperDimming = 0.25F,
 		.MenuStyle = MakeName<MenuStyleName>("STARFIELD"),
 		.Fonts = {
 			MakeName<FontFileName>("SpaceGrotesk[wght].ttf"),
 			300.0F, 40.0F, 12.0F, 64.0F, 1.0F, FontRendering::Auto, {} }
 	};
 	inline constexpr const auto& defaultFontSettings = defaultValues.Fonts;
+
+	struct UnitSetting final
+	{
+		const wchar_t* Name;
+		float Values::* Member;
+	};
+	inline constexpr UnitSetting backgroundSettings[]{
+		{ L"BackgroundOpacity", &Values::BackgroundOpacity },
+		{ L"WallpaperOpacity", &Values::WallpaperOpacity },
+		{ L"WallpaperDimming", &Values::WallpaperDimming }
+	};
 
 	template <class Character>
 	[[nodiscard]] std::uint32_t FoldAscii(Character a_character) noexcept

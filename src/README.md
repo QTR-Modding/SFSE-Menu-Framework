@@ -12,7 +12,8 @@ The implementation is organized by responsibility:
   mutations publish immutable path copies; stable node identities preserve UI
   selection and navigation state across rename/delete operations.
 - `config`: framework settings, persistence, and root-menu visibility.
-- `appearance`: live font/theme ownership; `appearance/fonts` separates font
+- `appearance`: live font/theme ownership, image decoding and backdrop drawing;
+  `appearance/fonts` separates font
   discovery, glyph ranges, atlas construction, and consumer stack isolation.
 - `ui`: the framework control panel and settings window.
 - `input`: the game-input capture hook, consumer callbacks, keyboard
@@ -33,7 +34,7 @@ installation order. `PCH.h` is the target-wide precompiled header.
 Some files remain larger when one shared lock or lifetime makes a split harder to audit:
 
 - `rendering/D3D12Renderer.cpp` owns the ImGui context, D3D12 backend,
-  font-atlas resource retirement, descriptor-heap restoration, and frame
+  font and wallpaper resource retirement, descriptor-heap restoration, and frame
   lifecycle as one GPU transaction.
 - `input/InputCapture.cpp` owns one input-device hook and its lossless keyboard-edge token protocol.
 - `input/BindingCapture.cpp` owns press-to-bind state, active-device
@@ -57,7 +58,12 @@ visible only through `Win32PlatformInternal.h`.
 Within `rendering`, `RenderHooks.cpp` owns the Scaleform render-pass seam and
 transactional vtable patching, while `D3D12CommandListHooks.cpp` owns the
 command-list hooks, Streamline/native-device validation, self-test, and render
-region tracking.
+region tracking. `D3D12Texture.cpp` shares the bounded RGBA upload path between
+fonts and wallpapers. Each completion slot owns a two-texture descriptor heap;
+its descriptors and referenced images are retained until that frame completes.
+`WallpaperImage.cpp` owns bounded PNG/JPEG decoding, and `WallpaperDrawing.cpp`
+fits the image to each built-in root window without stretching. Theme selections
+share a decoded image so slider previews do not reload or upload it.
 
 Within `appearance/fonts`, `FontCatalog.cpp` validates and discovers files and
 their sidecars, `GlyphRanges.cpp` builds optional Unicode coverage,

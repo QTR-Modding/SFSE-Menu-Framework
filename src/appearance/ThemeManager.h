@@ -1,6 +1,9 @@
 #pragma once
 
+#include "appearance/WallpaperImage.h"
+
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
@@ -21,4 +24,12 @@ namespace SFSEMenuFramework::ThemeManager
 	[[nodiscard]] bool QueueTheme(std::size_t);
 	[[nodiscard]] bool QueueConfiguredTheme();
 	[[nodiscard]] bool QueueUIScale(float) noexcept;
+	[[nodiscard]] bool QueueBackgroundOpacity(float) noexcept;
+	[[nodiscard]] bool QueueWallpaperOpacity(float) noexcept;
+	[[nodiscard]] bool QueueWallpaperDimming(float) noexcept;
+	[[nodiscard]] bool IsWallpaperSelected() noexcept;
+	[[nodiscard]] std::shared_ptr<const WallpaperImage> GetWallpaperImage() noexcept;
+	void SetWallpaperTexture(std::uintptr_t a_texture, bool a_failed) noexcept;
+	[[nodiscard]] bool HasWallpaperUploadError() noexcept;
+	void RenderCurrentWindowBackdrop() noexcept;
 }

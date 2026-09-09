@@ -167,6 +167,11 @@ namespace SFSEMenuFramework::FrameworkSettings
 		if (std::to_underlying(a_values.ModeGamePad) > std::to_underlying(ToggleMode::Off)) {
 			a_values.ModeGamePad = defaultValues.ModeGamePad;
 		}
+		for (const auto& setting : backgroundSettings) {
+			auto& value = a_values.*setting.Member;
+			value = std::isfinite(value) ? std::clamp(value, 0.0F, 1.0F) :
+				defaultValues.*setting.Member;
+		}
 		if (!IsValidMenuStyleName(NameView(a_values.MenuStyle))) {
 			a_values.MenuStyle = defaultValues.MenuStyle;
 		}
@@ -206,6 +211,9 @@ namespace SFSEMenuFramework::FrameworkSettings
 	ToggleMode GetToggleModeGamePad() noexcept { return GetValues().ModeGamePad; }
 	bool GetFreezeTimeOnMenu() noexcept { return GetValues().FreezeTimeOnMenu; }
 	bool GetBlurBackgroundOnMenu() noexcept { return GetValues().BlurBackgroundOnMenu; }
+	float GetBackgroundOpacity() noexcept { return GetValues().BackgroundOpacity; }
+	float GetWallpaperOpacity() noexcept { return GetValues().WallpaperOpacity; }
+	float GetWallpaperDimming() noexcept { return GetValues().WallpaperDimming; }
 	MenuStyleName GetMenuStyle() noexcept { return GetValues().MenuStyle; }
 	FontSettings GetFontSettings() noexcept { return GetValues().Fonts; }
 	FontSettings GetDefaultFontSettings() noexcept { return defaultFontSettings; }
@@ -289,6 +297,25 @@ namespace SFSEMenuFramework::FrameworkSettings
 	}
 
 	bool ValidateFontSettings(const FontSettings& a_settings) noexcept { return IsValidFontSettings(a_settings); }
+
+	namespace
+	{
+		bool SetUnitValue(float a_value, float Values::* a_member) noexcept
+		{
+			if (!std::isfinite(a_value) || a_value < 0.0F || a_value > 1.0F) {
+				return false;
+			}
+			WriteMember(a_member, a_value);
+			return true;
+		}
+	}
+
+	bool SetBackgroundOpacity(float a_value) noexcept
+	{ return SetUnitValue(a_value, &Values::BackgroundOpacity); }
+	bool SetWallpaperOpacity(float a_value) noexcept
+	{ return SetUnitValue(a_value, &Values::WallpaperOpacity); }
+	bool SetWallpaperDimming(float a_value) noexcept
+	{ return SetUnitValue(a_value, &Values::WallpaperDimming); }
 
 	bool SetMenuStyle(std::string_view a_name) noexcept
 	{

@@ -1,6 +1,7 @@
 #include "ui/McpWindow.h"
 
 #include "appearance/FontManager.h"
+#include "appearance/ThemeManager.h"
 #include "config/FrameworkSettings.h"
 #include "config/RootMenuConfig.h"
 #include "input/GamepadNavigation.h"
@@ -45,7 +46,6 @@ namespace
 	MenuNodePointer pendingArchiveMenu;
 	bool archiveConfirmationRequested{};
 	bool menuConfigSaveFailed{};
-	std::uint64_t observedMainSessionGeneration{};
 
 	constexpr ImGuiTreeNodeFlags baseTreeNodeFlags =
 		ImGuiTreeNodeFlags_OpenOnArrow |
@@ -438,18 +438,6 @@ namespace
 			SFSEMenuFramework::WindowManager::SetMainWindowOpen(false));
 	}
 
-	void ObserveMainOpenSession()
-	{
-		const auto generation =
-			SFSEMenuFramework::WindowManager::GetMainWindowSessionGeneration();
-		if (generation == 0 || generation == observedMainSessionGeneration) {
-			return;
-		}
-
-		observedMainSessionGeneration = generation;
-		SFSEMenuFramework::SettingsWindow::Close();
-	}
-
 	void RenderMainMenuBar()
 	{
 		if (!ImGui::BeginMenuBar()) {
@@ -526,6 +514,7 @@ namespace
 
 		if (ImGui::BeginChild(
 				"TreeView2", ImVec2{ navigationWidth, headerHeight }, ImGuiChildFlags_None)) {
+			SFSEMenuFramework::ThemeManager::RenderCurrentWindowBackdrop();
 			RenderSearchFilter();
 		}
 		ImGui::EndChild();
@@ -535,6 +524,7 @@ namespace
 		if (ImGui::BeginChild(
 				"SFSEModControlPanelModMenuHeader", ImVec2{ 0.0F, headerHeight },
 				ImGuiChildFlags_None)) {
+			SFSEMenuFramework::ThemeManager::RenderCurrentWindowBackdrop();
 			if (selectedPanel) {
 				const std::string_view title = selectedNode->Name;
 				const auto headerSize = ImGui::GetWindowSize();
@@ -551,6 +541,7 @@ namespace
 		if (ImGui::BeginChild(
 				"SFSEModControlPanelTreeView", ImVec2{ navigationWidth, -FLT_MIN },
 				ImGuiChildFlags_Border)) {
+			SFSEMenuFramework::ThemeManager::RenderCurrentWindowBackdrop();
 			ImGui::PushStyleVar(
 				ImGuiStyleVar_FramePadding,
 				ImVec2{ 0.0F, 5.0F * uiScale });
@@ -649,6 +640,7 @@ namespace
 		if (ImGui::BeginChild(
 				"SFSEModControlPanelMenuNode", ImVec2{ 0.0F, -FLT_MIN },
 				ImGuiChildFlags_Border)) {
+			SFSEMenuFramework::ThemeManager::RenderCurrentWindowBackdrop();
 			if (selectedPanel) {
 				SFSEMenuFramework::PanelRegistry::Render(selectedPanel);
 			}
@@ -686,7 +678,6 @@ bool SFSEMenuFramework::McpWindow::Install()
 
 void __stdcall SFSEMenuFramework::McpWindow::Render()
 {
-	ObserveMainOpenSession();
 	WindowPlacement::Apply(WindowPlacement::BuiltInWindow::Main);
 
 	constexpr ImGuiWindowFlags windowFlags =
@@ -698,6 +689,9 @@ void __stdcall SFSEMenuFramework::McpWindow::Render()
 		ImGui::Begin(WindowPlacement::GetName(WindowPlacement::BuiltInWindow::Main),
 			nullptr, windowFlags);
 	WindowPlacement::Capture(WindowPlacement::BuiltInWindow::Main);
+	if (drawContents) {
+		ThemeManager::RenderCurrentWindowBackdrop();
+	}
 	const bool closeRequested =
 		GamepadNavigation::ConsumeCloseRequestForCurrentWindow(
 			WindowManager::GetBlockingWindowOpenGeneration());
