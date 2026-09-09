@@ -1,4 +1,5 @@
 #include "ui/McpWindow.h"
+#include "ui/McpGamepad.h"
 
 #include "appearance/FontManager.h"
 #include "appearance/ThemeManager.h"
@@ -293,13 +294,16 @@ namespace
 		const bool itemClicked = ImGui::IsItemClicked();
 		const bool itemToggledOpen = ImGui::IsItemToggledOpen();
 		const bool gamePadButtonPressed =
-			ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown);
+			ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
 		const bool itemFocused = ImGui::IsItemFocused();
 
 		if ((itemClicked || (gamePadButtonPressed && itemFocused)) &&
 			!itemToggledOpen &&
 			IsPanelEnabled(panel)) {
 			selectedNode = a_node;
+			if (gamePadButtonPressed && itemFocused) {
+				SFSEMenuFramework::McpGamepad::RequestPageFocus();
+			}
 		}
 
 		if (nodeOpen && hasEnabledChild) {
@@ -507,6 +511,13 @@ namespace
 			selectedNode.reset();
 		}
 
+		SFSEMenuFramework::McpGamepad::Begin(
+			!SFSEMenuFramework::GamepadNavigation::ShouldDrawMouseCursor(
+				SFSEMenuFramework::WindowManager::GetBlockingWindowOpenGeneration()),
+			selectedPanel != nullptr);
+		const float footerHeight = SFSEMenuFramework::McpGamepad::GetFooterHeight();
+		const float contentHeight = footerHeight > 0.0F ?
+			-(footerHeight + ImGui::GetStyle().ItemSpacing.y) : -FLT_MIN;
 		const auto available = ImGui::GetContentRegionAvail();
 		const float navigationWidth = available.x * 0.3F;
 		const float uiScale = SFSEMenuFramework::FontManager::GetActiveInfo().Settings.UIScale;
@@ -539,8 +550,9 @@ namespace
 		ImGui::EndChild();
 
 		if (ImGui::BeginChild(
-				"SFSEModControlPanelTreeView", ImVec2{ navigationWidth, -FLT_MIN },
+				"SFSEModControlPanelTreeView", ImVec2{ navigationWidth, contentHeight },
 				ImGuiChildFlags_Border)) {
+			SFSEMenuFramework::McpGamepad::BeginArea(SFSEMenuFramework::McpGamepad::Area::Tree);
 			SFSEMenuFramework::ThemeManager::RenderCurrentWindowBackdrop();
 			ImGui::PushStyleVar(
 				ImGuiStyleVar_FramePadding,
@@ -638,14 +650,16 @@ namespace
 
 		ImGui::SameLine();
 		if (ImGui::BeginChild(
-				"SFSEModControlPanelMenuNode", ImVec2{ 0.0F, -FLT_MIN },
+				"SFSEModControlPanelMenuNode", ImVec2{ 0.0F, contentHeight },
 				ImGuiChildFlags_Border)) {
+			SFSEMenuFramework::McpGamepad::BeginArea(SFSEMenuFramework::McpGamepad::Area::Content);
 			SFSEMenuFramework::ThemeManager::RenderCurrentWindowBackdrop();
 			if (selectedPanel) {
 				SFSEMenuFramework::PanelRegistry::Render(selectedPanel);
 			}
 		}
 		ImGui::EndChild();
+		SFSEMenuFramework::McpGamepad::End();
 	}
 
 }

@@ -20,6 +20,9 @@ into Starfield's `Data` folder. Launch through SFSE, then press **F1**.
 - **D-pad / left stick:** navigate. **A:** select. **B:** cancel the current
   selection or interaction, then close the focused built-in window.
 - **Hold X:** move a window with the left stick or resize it with the D-pad.
+- **RB:** switch between the mod list and the selected page when no control is
+  being edited. Selecting a page with **A** moves focus into it after release.
+  Controller hints appear at the bottom of the panel.
 - **Escape:** close the main panel.
 - **Options > Resume Game:** return control to the game while leaving the panel visible.
 
