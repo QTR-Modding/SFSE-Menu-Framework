@@ -1,4 +1,4 @@
-#include "appearance/ThemeCursor.h"
+#include "appearance/CursorDrawing.h"
 
 #include <Windows.h>
 #include <imgui.h>
@@ -10,6 +10,8 @@
 #include <iostream>
 #include <limits>
 #include <string>
+
+bool TestCursorCatalog(const std::filesystem::path&);
 
 namespace
 {
@@ -52,10 +54,10 @@ int main()
 		image.write(reinterpret_cast<const char*>(png), sizeof(png));
 	}
 
-	const auto empty = ThemeCursor::Load(json::object(), directory);
+	const CursorDrawing::Style empty;
 	Check(!empty.Image && !empty.LoadFailed, "Absent cursor must use the default without an error");
-	json theme{ { "Cursor", { { "Image", "ring.png" } } } };
-	const auto basic = ThemeCursor::Load(theme, directory);
+	json theme{ { "Image", "ring.png" } };
+	const auto basic = CursorDrawing::Load(theme, directory);
 	Check(basic.Image && !basic.LoadFailed, "Valid PNG should load");
 	Check(basic.Size.x == 32 && basic.Hotspot.x == 0, "Defaults should be 32px and top-left");
 	Check(basic.Image && basic.Image->Pixels.size() == 16 &&
@@ -63,30 +65,30 @@ int main()
 	Check(!LoadThemeImage(directory, "ring.png", 1), "Dimension limit must be applied before decoding");
 	for (const auto* path : { "../ring.png", "/ring.png", "C:/ring.png", "missing.png" }) {
 		auto invalid = theme;
-		invalid["Cursor"]["Image"] = path;
-		const auto result = ThemeCursor::Load(invalid, directory);
+		invalid["Image"] = path;
+		const auto result = CursorDrawing::Load(invalid, directory);
 		Check(result.LoadFailed && !result.Image, "Invalid path must fall back");
 	}
 	for (const auto& invalidCursor : { json{}, json{ "ring.png" }, json::object() }) {
-		const auto result = ThemeCursor::Load(json{ { "Cursor", invalidCursor } }, directory);
+		const auto result = CursorDrawing::Load(invalidCursor, directory);
 		Check(result.LoadFailed && !result.Image, "Invalid Cursor object must fall back");
 	}
 	for (const auto& invalidSize : { json{ 0, 32 }, json{ 257, 32 }, json{ "32", 32 },
 		json{ 32 }, json{ 32, 32, 32 }, json{ -1, 32 },
 		json{ std::numeric_limits<double>::infinity(), 32 } }) {
 		auto invalid = theme;
-		invalid["Cursor"]["Size"] = invalidSize;
-		const auto result = ThemeCursor::Load(invalid, directory);
+		invalid["Size"] = invalidSize;
+		const auto result = CursorDrawing::Load(invalid, directory);
 		Check(result.LoadFailed && !result.Image, "Invalid size must fall back");
 	}
 	for (const auto& invalidHotspot : { json{ -0.1, 0.5 }, json{ 0.5, 1.1 }, json{ 0.5 } }) {
 		auto invalid = theme;
-		invalid["Cursor"]["Hotspot"] = invalidHotspot;
-		Check(ThemeCursor::Load(invalid, directory).LoadFailed, "Invalid hotspot must fall back");
+		invalid["Hotspot"] = invalidHotspot;
+		Check(CursorDrawing::Load(invalid, directory).LoadFailed, "Invalid hotspot must fall back");
 	}
-	theme["Cursor"]["Size"] = { 20, 30 };
-	theme["Cursor"]["Hotspot"] = { 0.5, 0.5 };
-	const auto cursor = ThemeCursor::Load(theme, directory);
+	theme["Size"] = { 20, 30 };
+	theme["Hotspot"] = { 0.5, 0.5 };
+	const auto cursor = CursorDrawing::Load(theme, directory);
 	Check(cursor.Image && !cursor.LoadFailed, "Custom size and center hotspot should load");
 
 	ImGui::CreateContext();
@@ -102,18 +104,18 @@ int main()
 	ImGui::NewFrame();
 	ImGui::GetStyle().MouseCursorScale = 2;
 	const auto texture = reinterpret_cast<ImTextureID>(static_cast<std::uintptr_t>(1));
-	Check(!ThemeCursor::Draw(cursor, nullptr), "Failed upload must use the normal cursor");
-	Check(!ThemeCursor::Draw(empty, texture), "Theme without a cursor must use the normal cursor");
+	Check(!CursorDrawing::Draw(cursor, nullptr), "Failed upload must use the normal cursor");
+	Check(!CursorDrawing::Draw(empty, texture), "Theme without a cursor must use the normal cursor");
 	for (const auto shape : { ImGuiMouseCursor_TextInput, ImGuiMouseCursor_ResizeEW,
 		ImGuiMouseCursor_ResizeNS, ImGuiMouseCursor_None }) {
 		ImGui::SetMouseCursor(shape);
-		Check(!ThemeCursor::Draw(cursor, texture), "Special cursor shapes must remain unchanged");
+		Check(!CursorDrawing::Draw(cursor, texture), "Special cursor shapes must remain unchanged");
 	}
 	ImGui::SetMouseCursor(ImGuiMouseCursor_Arrow);
 	io.MouseDrawCursor = false;
-	Check(!ThemeCursor::Draw(cursor, texture), "Hidden/gamepad cursor must stay hidden");
+	Check(!CursorDrawing::Draw(cursor, texture), "Hidden/gamepad cursor must stay hidden");
 	io.MouseDrawCursor = true;
-	Check(ThemeCursor::Draw(cursor, texture), "Normal pointer should use the custom image");
+	Check(CursorDrawing::Draw(cursor, texture), "Normal pointer should use the custom image");
 	const auto* drawList = ImGui::GetForegroundDrawList();
 	Check(drawList->VtxBuffer.Size == 4, "Custom cursor should draw one quad");
 	if (drawList->VtxBuffer.Size == 4) {
@@ -125,9 +127,10 @@ int main()
 	io.MouseDrawCursor = false;
 	ImGui::Render();
 	ImGui::DestroyContext();
+	Check(TestCursorCatalog(directory / "ring.png"), "Cursor catalog and persistence");
 	std::filesystem::remove_all(directory);
 	if (!failures) {
-		std::cout << "Theme cursor tests passed\n";
+		std::cout << "Cursor tests passed\n";
 	}
 	return failures ? 1 : 0;
 }

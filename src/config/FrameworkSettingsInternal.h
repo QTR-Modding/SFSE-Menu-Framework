@@ -110,7 +110,9 @@ namespace SFSEMenuFramework::FrameworkSettings::Detail
 		.MenuStyle = MakeName<MenuStyleName>("STARFIELD"),
 		.Fonts = {
 			MakeName<FontFileName>("SpaceGrotesk[wght].ttf"),
-			300.0F, 40.0F, 12.0F, 64.0F, 1.0F, FontRendering::Auto, {} }
+			300.0F, 40.0F, 12.0F, 64.0F, 1.0F, FontRendering::Auto, {} },
+		.CursorName = MakeName<MenuStyleName>("DEFAULT"),
+		.CursorScale = 1.0F
 	};
 	inline constexpr const auto& defaultFontSettings = defaultValues.Fonts;
 

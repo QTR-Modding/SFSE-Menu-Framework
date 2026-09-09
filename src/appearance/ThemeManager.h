@@ -31,9 +31,5 @@ namespace SFSEMenuFramework::ThemeManager
 	[[nodiscard]] std::shared_ptr<const ThemeImage> GetWallpaperImage() noexcept;
 	void SetWallpaperTexture(std::uintptr_t a_texture, bool a_failed) noexcept;
 	[[nodiscard]] bool HasWallpaperUploadError() noexcept;
-	[[nodiscard]] std::shared_ptr<const ThemeImage> GetCursorImage() noexcept;
-	void SetCursorTexture(std::uintptr_t a_texture, bool a_failed) noexcept;
-	[[nodiscard]] bool HasCursorError() noexcept;
-	[[nodiscard]] bool RenderCursor();
 	void RenderCurrentWindowBackdrop() noexcept;
 }

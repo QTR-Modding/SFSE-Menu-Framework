@@ -175,6 +175,11 @@ namespace SFSEMenuFramework::FrameworkSettings
 		if (!IsValidMenuStyleName(NameView(a_values.MenuStyle))) {
 			a_values.MenuStyle = defaultValues.MenuStyle;
 		}
+		MenuStyleName cursorName{};
+		a_values.CursorName = CopyMenuStyleName(NameView(a_values.CursorName), cursorName) ?
+			cursorName : defaultValues.CursorName;
+		a_values.CursorScale = std::isfinite(a_values.CursorScale) ?
+			std::clamp(a_values.CursorScale, 0.5F, 3.0F) : 1.0F;
 		static_cast<void>(NormalizeFontSettings(a_values.Fonts));
 	}
 
@@ -215,6 +220,25 @@ namespace SFSEMenuFramework::FrameworkSettings
 	float GetWallpaperOpacity() noexcept { return GetValues().WallpaperOpacity; }
 	float GetWallpaperDimming() noexcept { return GetValues().WallpaperDimming; }
 	MenuStyleName GetMenuStyle() noexcept { return GetValues().MenuStyle; }
+	MenuStyleName GetCursorName() noexcept { return GetValues().CursorName; }
+	float GetCursorScale() noexcept { return GetValues().CursorScale; }
+	bool SetCursorName(std::string_view a_name) noexcept
+	{
+		MenuStyleName normalized{};
+		if (!CopyMenuStyleName(a_name, normalized)) {
+			return false;
+		}
+		WriteMember(&Values::CursorName, normalized);
+		return true;
+	}
+	bool SetCursorScale(float a_scale) noexcept
+	{
+		if (!std::isfinite(a_scale) || a_scale < 0.5F || a_scale > 3.0F) {
+			return false;
+		}
+		WriteMember(&Values::CursorScale, a_scale);
+		return true;
+	}
 	FontSettings GetFontSettings() noexcept { return GetValues().Fonts; }
 	FontSettings GetDefaultFontSettings() noexcept { return defaultFontSettings; }
 	SettingsSnapshot CaptureSnapshot() noexcept { return GetValues(); }

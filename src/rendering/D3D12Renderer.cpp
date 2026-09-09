@@ -2,8 +2,10 @@
 #include "rendering/D3D12Texture.h"
 
 #include "appearance/FontManager.h"
+#include "appearance/CursorManager.h"
 #include "appearance/ThemeManager.h"
 #include "input/GamepadNavigation.h"
+#include "config/FrameworkSettings.h"
 #include "input/InputEventManager.h"
 #include "platform/win32/Win32Platform.h"
 #include "runtime/EventManager.h"
@@ -129,7 +131,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			a_state.ActiveImages = {};
 			a_state.Images = {};
 			ThemeManager::SetWallpaperTexture(0, false);
-			ThemeManager::SetCursorTexture(0, false);
+			CursorManager::SetTexture(0, false);
 			for (auto& slot : a_state.CompletionSlots) {
 				slot.Resources.Reset();
 				slot.Images = {};
@@ -376,7 +378,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		[[nodiscard]] bool PrepareThemeImages(RendererState& a_state,
 			ID3D12GraphicsCommandList* a_commandList, std::size_t a_slot)
 		{
-			const std::array images{ ThemeManager::GetWallpaperImage(), ThemeManager::GetCursorImage() };
+			const std::array images{ ThemeManager::GetWallpaperImage(), CursorManager::GetImage() };
 			const auto step = a_state.Device->GetDescriptorHandleIncrementSize(
 				D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 			auto* heap = a_state.CompletionSlots[a_slot].TextureHeap.Get();
@@ -405,7 +407,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 						D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 				}
 				const auto setTexture = i == 0 ?
-					ThemeManager::SetWallpaperTexture : ThemeManager::SetCursorTexture;
+					ThemeManager::SetWallpaperTexture : CursorManager::SetTexture;
 				setTexture(ready ? gpu.ptr : 0, image && !ready);
 			}
 			if (hasImages) {
@@ -562,6 +564,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 		}
 		SettingsWindow::UpdateLifecycle();
 		ThemeManager::ApplyPending();
+		CursorManager::Update();
+		ImGui::GetStyle().MouseCursorScale =
+			FrameworkSettings::GetCursorScale() * FontManager::GetActiveUIScale();
 		const bool hasThemeImages = PrepareThemeImages(rendererState, a_commandList, frameSlot);
 
 		io.DisplayFramebufferScale = ImVec2{
@@ -589,7 +594,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		WindowPlacement::SavePending(mainWindow && mainWindow->IsOpen.load());
 		InputEventManager::SetImGuiItemActive(ImGui::IsAnyItemActive());
 		const bool drawMouseCursor = io.MouseDrawCursor;
-		if (ThemeManager::RenderCursor()) {
+		if (CursorManager::Render()) {
 			io.MouseDrawCursor = false;
 		}
 		ImGui::Render();

@@ -426,6 +426,14 @@ namespace SFSEMenuFramework::FrameworkSettings
 			defaultValues.MenuStyle, [](std::wstring_view text, MenuStyleName& value) {
 				return ParseName(text, value, true, false);
 			});
+		profile.Read(L"Cursor", L"Name", loaded.CursorName, defaultValues.CursorName,
+			[](std::wstring_view text, MenuStyleName& value) {
+				return ParseName(text, value, true, false);
+			});
+		profile.Read(L"Cursor", L"Scale", loaded.CursorScale, defaultValues.CursorScale,
+			[](std::wstring_view text, float& value) {
+				return ParseNumber(text, value) && value >= 0.5F && value <= 3.0F;
+			});
 		profile.Read(fontSectionName, L"PrimaryFont", loaded.Fonts.PrimaryFont,
 			defaultFontSettings.PrimaryFont, [](std::wstring_view text, FontFileName& value) {
 				return ParseName(text, value, false, true);
@@ -468,6 +476,8 @@ namespace SFSEMenuFramework::FrameworkSettings
 				profile.Write(sectionName, setting.Name, saved.*setting.Member);
 			}
 			profile.Write(sectionName, L"MenuStyle", saved.MenuStyle.data());
+			profile.Write(L"Cursor", L"Name", saved.CursorName.data());
+			profile.Write(L"Cursor", L"Scale", saved.CursorScale);
 			profile.Write(fontSectionName, L"PrimaryFont", NameView(saved.Fonts.PrimaryFont));
 			profile.Write(fontSectionName, L"FontRendering",
 				GetFontRenderingName(saved.Fonts.Rendering));

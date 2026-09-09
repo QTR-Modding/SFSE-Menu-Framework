@@ -40,8 +40,9 @@ Keep related state with the code that creates and releases it:
   `appearance/fonts/` handle discovery, selection, building and per-callback
   font-stack cleanup.
 - `ThemeImage.cpp` decodes wallpapers and cursor images; `WallpaperDrawing.cpp`
-  fits wallpapers to windows. `ThemeCursor.cpp` reads cursor settings and draws
-  the pointer. Opacity and UI-scale previews reuse the loaded images.
+  fits wallpapers to windows. `CursorDrawing.cpp` reads cursor metadata and draws
+  the pointer. `CursorManager.cpp` owns discovery and the selected image independently
+  of themes; `ui/CursorSettings.cpp` owns its controls. Opacity and UI-scale previews reuse the loaded images.
 
 Some of these files are larger because splitting their shared state or resource
 lifetime would make changes harder to follow. Internal headers should expose only

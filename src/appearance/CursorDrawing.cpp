@@ -1,11 +1,11 @@
-#include "appearance/ThemeCursor.h"
+#include "appearance/CursorDrawing.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <string>
 
-namespace SFSEMenuFramework::ThemeCursor
+namespace SFSEMenuFramework::CursorDrawing
 {
 	namespace
 	{
@@ -35,22 +35,18 @@ namespace SFSEMenuFramework::ThemeCursor
 		}
 	}
 
-	Style Load(const nlohmann::json& a_theme,
+	Style Load(const nlohmann::json& a_definition,
 		const std::filesystem::path& a_directory)
 	{
 		Style result;
-		const auto cursor = a_theme.find("Cursor");
-		if (cursor == a_theme.end()) {
-			return result;
-		}
 		result.LoadFailed = true;
-		if (!cursor->is_object() ||
-			!ReadPair(*cursor, "Size", result.Size, 1.0F, 256.0F) ||
-			!ReadPair(*cursor, "Hotspot", result.Hotspot, 0.0F, 1.0F)) {
+		if (!a_definition.is_object() ||
+			!ReadPair(a_definition, "Size", result.Size, 1.0F, 256.0F) ||
+			!ReadPair(a_definition, "Hotspot", result.Hotspot, 0.0F, 1.0F)) {
 			return result;
 		}
-		const auto path = cursor->find("Image");
-		if (path == cursor->end() || !path->is_string()) {
+		const auto path = a_definition.find("Image");
+		if (path == a_definition.end() || !path->is_string()) {
 			return result;
 		}
 		result.Image = LoadThemeImage(a_directory, path->get_ref<const std::string&>(), 512);
