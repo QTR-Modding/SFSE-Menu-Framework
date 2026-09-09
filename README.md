@@ -65,7 +65,7 @@ Themes are JSON files in `Data/SFSE/Plugins/SFSEMenuFrameworkThemes`.
 Copy a bundled theme to get started. No C++ or extra DLL is needed.
 
 <details>
-<summary>Theme format, stars and wallpapers</summary>
+<summary>Theme format, stars, wallpapers and cursors</summary>
 
 Use a unique printable ASCII filename of at most 63 characters, excluding
 `.json`. The name appears in uppercase in Settings. Restart to discover a new
@@ -110,6 +110,27 @@ For a wallpaper:
 For stars, use `"Type": "Stars"`. Optional fields are `StarColor`,
 `AccentColor` (`#RRGGBBAA`) and `Density` (0–1).
 Omit `Backdrop` or use `"Type": "None"` for a plain background.
+
+For a custom pointer, add this alongside `Backdrop`:
+
+```json
+"Cursor": {
+  "Image": "cursors/ring.png",
+  "Size": [32, 32],
+  "Hotspot": [0.5, 0.5]
+}
+```
+
+Use a transparent PNG for a circle, ring or any other shape. Image path and file
+limits are the same as wallpapers, but cursor images are limited to 512 pixels
+per side. `Size` is width/height before UI scaling (1–256 each, default 32).
+`MouseCursorScale` also applies. `Hotspot` is the click point within the image:
+`[0, 0]` is top-left (default), `[0.5, 0.5]` is the center; values range from 0 to 1.
+
+Reselect the theme to reload the cursor live. Missing or invalid cursors use the
+normal pointer and show a warning in Settings. Text-entry and resize pointers
+remain unchanged; gamepad navigation still hides the pointer. Omit `Cursor`
+to use the normal pointer everywhere.
 
 Distribute the JSON and artwork in the same folder structure, with any
 required artwork licenses. Fonts remain a separate user setting.

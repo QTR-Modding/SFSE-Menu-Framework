@@ -2,6 +2,7 @@
 
 #include "appearance/AssetDiscovery.h"
 #include "appearance/ThemeBackdrop.h"
+#include "appearance/ThemeCursor.h"
 #include "appearance/WallpaperDrawing.h"
 #include "config/FrameworkSettings.h"
 
@@ -48,7 +49,8 @@ namespace SFSEMenuFramework::ThemeManager
 		{
 			ImGuiStyle           BaseStyle;
 			ThemeBackdrop::Style Backdrop;
-			std::shared_ptr<const WallpaperImage> Image;
+			ThemeCursor::Style Cursor;
+			std::shared_ptr<const ThemeImage> Image;
 			std::size_t          Index{ NO_THEME };
 			float                UIScale{ 1.0F };
 			float                BackgroundOpacity{ 1.0F };
@@ -63,6 +65,8 @@ namespace SFSEMenuFramework::ThemeManager
 			ThemeSelection Active;
 			std::uintptr_t WallpaperTexture{};
 			bool WallpaperUploadFailed{};
+			std::uintptr_t CursorTexture{};
+			bool CursorUploadFailed{};
 		};
 
 		[[nodiscard]] State& GetState()
@@ -439,6 +443,10 @@ namespace SFSEMenuFramework::ThemeManager
 				return false;
 			}
 
+			a_selection.Cursor = ThemeCursor::Load(json, a_theme.Path.parent_path());
+			if (a_selection.Cursor.LoadFailed) {
+				logger::warn("Theme '{}' has an invalid cursor; using the default pointer", a_theme.Name);
+			}
 			BuildBaselineStyle(a_selection.BaseStyle);
 			if (!ApplyJsonFields(json, a_selection.BaseStyle) ||
 				!ReadBackdrop(json, a_selection.Backdrop)) {
@@ -448,7 +456,7 @@ namespace SFSEMenuFramework::ThemeManager
 			if (a_selection.Backdrop.Kind == ThemeBackdrop::Effect::Wallpaper) {
 				const auto* path = FindValue(json["Backdrop"], "Image");
 				if (!path || !path->is_string() ||
-					!(a_selection.Image = LoadWallpaperImage(a_theme.Path.parent_path(),
+					!(a_selection.Image = LoadThemeImage(a_theme.Path.parent_path(),
 						path->get_ref<const std::string&>()))) {
 					logger::warn("Theme '{}' has an unreadable or unsupported wallpaper", a_theme.Name);
 					return false;
@@ -532,6 +540,7 @@ namespace SFSEMenuFramework::ThemeManager
 		BuildBaselineStyle(state.Active.BaseStyle);
 		state.Active.Backdrop = {};
 		state.Active.Image.reset();
+		state.Active.Cursor = {};
 		state.Active.Index = NO_THEME;
 		ApplySelection(state.Active);
 		logger::warn("No valid JSON theme was available; using the built-in dark style");
@@ -634,7 +643,7 @@ namespace SFSEMenuFramework::ThemeManager
 			ThemeBackdrop::Effect::Wallpaper;
 	}
 
-	std::shared_ptr<const WallpaperImage> GetWallpaperImage() noexcept
+	std::shared_ptr<const ThemeImage> GetWallpaperImage() noexcept
 	{ return GetState().Active.Image; }
 
 	void SetWallpaperTexture(std::uintptr_t a_texture, bool a_failed) noexcept
@@ -645,6 +654,31 @@ namespace SFSEMenuFramework::ThemeManager
 	}
 
 	bool HasWallpaperUploadError() noexcept { return GetState().WallpaperUploadFailed; }
+
+	std::shared_ptr<const ThemeImage> GetCursorImage() noexcept
+	{
+		return GetState().Active.Cursor.Image;
+	}
+
+	void SetCursorTexture(std::uintptr_t a_texture, bool a_failed) noexcept
+	{
+		auto& state = GetState();
+		state.CursorTexture = a_texture;
+		state.CursorUploadFailed = a_failed;
+	}
+
+	bool HasCursorError() noexcept
+	{
+		const auto& state = GetState();
+		return state.Active.Cursor.LoadFailed || state.CursorUploadFailed;
+	}
+
+	bool RenderCursor()
+	{
+		const auto& state = GetState();
+		return ThemeCursor::Draw(state.Active.Cursor,
+			reinterpret_cast<ImTextureID>(state.CursorTexture));
+	}
 
 	void RenderCurrentWindowBackdrop() noexcept
 	{

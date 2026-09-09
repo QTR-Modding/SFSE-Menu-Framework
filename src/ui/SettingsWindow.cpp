@@ -157,6 +157,10 @@ namespace SFSEMenuFramework::SettingsWindow
 				}
 				ImGui::PopID();
 			}
+			if (ThemeManager::HasCursorError()) {
+				ImGui::TextColored(ImVec4{ 1.0F, 0.4F, 0.4F, 1.0F },
+					"Could not load the cursor. Using the default pointer. Reselect the theme to retry.");
+			}
 			if (ThemeManager::HasWallpaperUploadError()) {
 				ImGui::TextColored(ImVec4{ 1.0F, 0.4F, 0.4F, 1.0F },
 					"Could not upload the wallpaper. Reselect the theme to retry.");

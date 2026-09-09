@@ -15,6 +15,7 @@
 #include <backends/imgui_impl_dx12.h>
 #include <imgui.h>
 
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -48,6 +49,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		using D3D12Textures::CreateDescriptorHeap;
 		using D3D12Textures::HeapProperties;
 		constexpr std::size_t frameResourceCount = 4;
+		constexpr std::size_t themeImageCount = 2;  // Wallpaper, cursor; font occupies descriptor 0.
 		constexpr std::uint64_t maximumBlockingWindowFrameAgeMilliseconds = 250;
 		constexpr char imguiIniFilename[] =
 			"Data/SFSE/Plugins/SFSEMenuFramework.imgui.ini";
@@ -72,7 +74,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			std::uint32_t LastCompletedValue{ 0 };
 			std::uint32_t PendingValue{ 0 };
 			D3D12Textures::Texture Resources;
-			D3D12Textures::Texture Wallpaper;
+			std::array<D3D12Textures::Texture, themeImageCount> Images;
 			ComPtr<ID3D12DescriptorHeap> TextureHeap;
 		};
 
@@ -84,8 +86,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 			ComPtr<ID3D12Resource>                         CompletionBuffer;
 			std::array<CompletionSlot, frameResourceCount> CompletionSlots{};
 			D3D12Textures::Texture                        ActiveFontResources;
-			D3D12Textures::Texture                          ActiveWallpaper;
-			std::shared_ptr<const WallpaperImage>           Wallpaper;
+			std::array<D3D12Textures::Texture, themeImageCount> ActiveImages;
+			std::array<std::shared_ptr<const ThemeImage>, themeImageCount> Images;
 			std::uint64_t                                  NextFrameIndex{ 0 };
 			ImGuiContext*                                  Context{ nullptr };
 			bool                                           InitializationFailed{ false };
@@ -124,12 +126,13 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 			a_state.RenderTargetHeap.Reset();
 			a_state.ActiveFontResources.Reset();
-			a_state.ActiveWallpaper.Reset();
-			a_state.Wallpaper.reset();
+			a_state.ActiveImages = {};
+			a_state.Images = {};
 			ThemeManager::SetWallpaperTexture(0, false);
+			ThemeManager::SetCursorTexture(0, false);
 			for (auto& slot : a_state.CompletionSlots) {
 				slot.Resources.Reset();
-				slot.Wallpaper.Reset();
+				slot.Images = {};
 				slot.TextureHeap.Reset();
 				slot.PendingValue = 0;
 			}
@@ -186,7 +189,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 				if (!CreateDescriptorHeap(a_state.Device.Get(),
 					D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
 					D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
-					a_state.CompletionSlots[slot].TextureHeap, 2)) {
+					a_state.CompletionSlots[slot].TextureHeap, static_cast<UINT>(1 + themeImageCount))) {
 					return false;
 				}
 				if (!ReadCompletionValue(
@@ -214,7 +217,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			}
 			slot.LastCompletedValue = completedValue;
 			slot.Resources.Reset();
-			slot.Wallpaper.Reset();
+			slot.Images = {};
 			slot.PendingValue = 0;
 			return true;
 		}
@@ -239,9 +242,11 @@ namespace SFSEMenuFramework::D3D12Renderer
 			a_commandList->WriteBufferImmediate(1, &marker, &mode);
 
 			slot.Resources = a_state.ActiveFontResources;
-			slot.Wallpaper = a_state.ActiveWallpaper;
+			slot.Images = a_state.ActiveImages;
 			a_state.ActiveFontResources.UploadBuffer.Reset();
-			a_state.ActiveWallpaper.UploadBuffer.Reset();
+			for (auto& image : a_state.ActiveImages) {
+				image.UploadBuffer.Reset();
+			}
 			++a_state.NextFrameIndex;
 		}
 
@@ -368,37 +373,47 @@ namespace SFSEMenuFramework::D3D12Renderer
 			return true;
 		}
 
-		void PrepareWallpaper(RendererState& a_state,
+		[[nodiscard]] bool PrepareThemeImages(RendererState& a_state,
 			ID3D12GraphicsCommandList* a_commandList, std::size_t a_slot)
 		{
-			const auto image = ThemeManager::GetWallpaperImage();
-			if (image != a_state.Wallpaper) {
-				a_state.Wallpaper = image;
-				a_state.ActiveWallpaper.Reset();
-				if (image && !D3D12Textures::Upload(a_state.Device.Get(), a_commandList,
-					image->Pixels.data(), static_cast<int>(image->Width),
-					static_cast<int>(image->Height), a_state.ActiveWallpaper)) {
-					logger::error("Could not upload theme wallpaper; keeping the theme's panel colors");
+			const std::array images{ ThemeManager::GetWallpaperImage(), ThemeManager::GetCursorImage() };
+			const auto step = a_state.Device->GetDescriptorHandleIncrementSize(
+				D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+			auto* heap = a_state.CompletionSlots[a_slot].TextureHeap.Get();
+			auto cpu = heap->GetCPUDescriptorHandleForHeapStart();
+			auto gpu = heap->GetGPUDescriptorHandleForHeapStart();
+			bool hasImages = false;
+			for (std::size_t i = 0; i < images.size(); ++i) {
+				const auto& image = images[i];
+				auto& texture = a_state.ActiveImages[i];
+				if (image != a_state.Images[i]) {
+					a_state.Images[i] = image;
+					texture.Reset();
+					if (image && !D3D12Textures::Upload(a_state.Device.Get(), a_commandList,
+						image->Pixels.data(), static_cast<int>(image->Width),
+						static_cast<int>(image->Height), texture)) {
+						logger::error("Could not upload theme {}", i == 0 ? "wallpaper" : "cursor");
+					}
 				}
+				cpu.ptr += step;
+				gpu.ptr += step;
+				const bool ready = texture.TextureResource != nullptr;
+				if (ready) {
+					hasImages = true;
+					a_state.Device->CopyDescriptorsSimple(1, cpu,
+						texture.ViewHeap->GetCPUDescriptorHandleForHeapStart(),
+						D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+				}
+				const auto setTexture = i == 0 ?
+					ThemeManager::SetWallpaperTexture : ThemeManager::SetCursorTexture;
+				setTexture(ready ? gpu.ptr : 0, image && !ready);
 			}
-			const bool ready = a_state.ActiveWallpaper.TextureResource != nullptr;
-			if (ready) {
-				const auto step = a_state.Device->GetDescriptorHandleIncrementSize(
-					D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-				auto* heap = a_state.CompletionSlots[a_slot].TextureHeap.Get();
-				auto cpu = heap->GetCPUDescriptorHandleForHeapStart();
-				a_state.Device->CopyDescriptorsSimple(1, cpu,
+			if (hasImages) {
+				a_state.Device->CopyDescriptorsSimple(1, heap->GetCPUDescriptorHandleForHeapStart(),
 					a_state.ActiveFontResources.ViewHeap->GetCPUDescriptorHandleForHeapStart(),
 					D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-				cpu.ptr += step;
-				a_state.Device->CopyDescriptorsSimple(1, cpu,
-					a_state.ActiveWallpaper.ViewHeap->GetCPUDescriptorHandleForHeapStart(),
-					D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-				ThemeManager::SetWallpaperTexture(
-					heap->GetGPUDescriptorHandleForHeapStart().ptr + step, false);
-			} else {
-				ThemeManager::SetWallpaperTexture(0, image != nullptr);
 			}
+			return hasImages;
 		}
 
 		void RemapFontDescriptor(ImDrawData* a_drawData, ImTextureID a_from,
@@ -547,7 +562,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		}
 		SettingsWindow::UpdateLifecycle();
 		ThemeManager::ApplyPending();
-		PrepareWallpaper(rendererState, a_commandList, frameSlot);
+		const bool hasThemeImages = PrepareThemeImages(rendererState, a_commandList, frameSlot);
 
 		io.DisplayFramebufferScale = ImVec2{
 			static_cast<float>(description.Width) / io.DisplaySize.x,
@@ -573,7 +588,13 @@ namespace SFSEMenuFramework::D3D12Renderer
 		const auto* mainWindow = WindowManager::GetMainWindow();
 		WindowPlacement::SavePending(mainWindow && mainWindow->IsOpen.load());
 		InputEventManager::SetImGuiItemActive(ImGui::IsAnyItemActive());
+		const bool drawMouseCursor = io.MouseDrawCursor;
+		if (ThemeManager::RenderCursor()) {
+			io.MouseDrawCursor = false;
+		}
 		ImGui::Render();
+		// The Win32 backend still needs this flag to hide the OS pointer.
+		io.MouseDrawCursor = drawMouseCursor;
 
 		D3D12_RENDER_TARGET_VIEW_DESC renderTargetView{};
 		renderTargetView.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -588,24 +609,23 @@ namespace SFSEMenuFramework::D3D12Renderer
 			&renderTargetView,
 			renderTargetHandle);
 
-		auto* activeFontHeap =
+		auto* textureHeap = hasThemeImages ?
+			rendererState.CompletionSlots[frameSlot].TextureHeap.Get() :
 			rendererState.ActiveFontResources.ShaderHeap.Get();
-		if (!activeFontHeap) {
+		if (!textureHeap) {
 			return;
 		}
-		if (rendererState.ActiveWallpaper.TextureResource) {
-			activeFontHeap = rendererState.CompletionSlots[frameSlot].TextureHeap.Get();
-			RemapFontDescriptor(ImGui::GetDrawData(), io.Fonts->TexID,
-				reinterpret_cast<ImTextureID>(activeFontHeap->GetGPUDescriptorHandleForHeapStart().ptr));
+		const auto fontDescriptor =
+			reinterpret_cast<ImTextureID>(textureHeap->GetGPUDescriptorHandleForHeapStart().ptr);
+		if (hasThemeImages) {
+			RemapFontDescriptor(ImGui::GetDrawData(), io.Fonts->TexID, fontDescriptor);
 		}
-		ID3D12DescriptorHeap* frameworkHeaps[]{ activeFontHeap };
+		ID3D12DescriptorHeap* frameworkHeaps[]{ textureHeap };
 		a_setDescriptorHeaps(a_commandList, 1, frameworkHeaps);
 		a_commandList->OMSetRenderTargets(1, &renderTargetHandle, FALSE, nullptr);
 		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), a_commandList);
-		if (rendererState.ActiveWallpaper.TextureResource) {
-			RemapFontDescriptor(ImGui::GetDrawData(),
-				reinterpret_cast<ImTextureID>(activeFontHeap->GetGPUDescriptorHandleForHeapStart().ptr),
-				io.Fonts->TexID);
+		if (hasThemeImages) {
+			RemapFontDescriptor(ImGui::GetDrawData(), fontDescriptor, io.Fonts->TexID);
 		}
 		MarkFrameSlot(rendererState, commandList2.Get(), frameSlot);
 

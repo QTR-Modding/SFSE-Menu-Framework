@@ -8,7 +8,7 @@
 
 namespace SFSEMenuFramework
 {
-	struct WallpaperImage final
+	struct ThemeImage final
 	{
 		std::uint32_t Width{};
 		std::uint32_t Height{};
@@ -16,6 +16,7 @@ namespace SFSEMenuFramework
 	};
 
 	// Paths are relative to the theme JSON, within the theme directory.
-	[[nodiscard]] std::shared_ptr<const WallpaperImage> LoadWallpaperImage(
-		const std::filesystem::path& a_themeDirectory, std::string_view a_relativePath);
+	[[nodiscard]] std::shared_ptr<const ThemeImage> LoadThemeImage(
+		const std::filesystem::path& a_themeDirectory, std::string_view a_relativePath,
+		std::uint32_t a_maximumDimension = 4096);
 }
