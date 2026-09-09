@@ -9,7 +9,7 @@ The framework DLL owns ImGui. Client mods use the separate SFSE-MCP SDK.
 - `api/`: exports called by client mods.
 - `runtime/`: page/window registration, menu paths, events and HUD callbacks.
 - `config/`: settings, saved state, favorites and archived menus.
-- `appearance/`: fonts, themes, stars and wallpapers.
+- `appearance/`: fonts, themes, stars, wallpapers and custom cursors.
 - `appearance/fonts/`: font discovery, glyph ranges, atlas building and font stacks.
 - `ui/`: the Mod Control Panel and Settings window.
 - `input/`: game input capture, shortcut binding and gamepad navigation.
@@ -22,7 +22,7 @@ The framework DLL owns ImGui. Client mods use the separate SFSE-MCP SDK.
 Keep related state with the code that creates and releases it:
 
 - `D3D12Renderer.cpp` manages the ImGui context and frame resources together.
-  Fonts, wallpapers and their descriptors stay alive until the GPU finishes
+  Fonts, theme images and their descriptors stay alive until the GPU finishes
   using them. `D3D12Texture.cpp` handles their shared upload path.
 - `RenderHooks.cpp` installs the Scaleform hooks.
   `D3D12CommandListHooks.cpp` handles command-list hooks and device checks.
@@ -39,8 +39,10 @@ Keep related state with the code that creates and releases it:
 - `FontManager.cpp` coordinates live font replacement. The files under
   `appearance/fonts/` handle discovery, selection, building and per-callback
   font-stack cleanup.
-- `WallpaperImage.cpp` decodes images; `WallpaperDrawing.cpp` fits them to
-  windows. Opacity previews reuse the loaded image.
+- `ThemeImage.cpp` decodes wallpapers and cursor images; `WallpaperDrawing.cpp`
+  fits wallpapers to windows. `CursorDrawing.cpp` reads cursor metadata and draws
+  the pointer. `CursorManager.cpp` owns discovery and the selected image independently
+  of themes; `ui/CursorSettings.cpp` owns its controls. Opacity and UI-scale previews reuse the loaded images.
 
 Some of these files are larger because splitting their shared state or resource
 lifetime would make changes harder to follow. Internal headers should expose only

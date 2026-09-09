@@ -1,4 +1,4 @@
-#include "appearance/WallpaperImage.h"
+#include "appearance/ThemeImage.h"
 
 #include <Windows.h>
 #include <wincodec.h>
@@ -15,7 +15,6 @@ namespace SFSEMenuFramework
 	{
 		using Microsoft::WRL::ComPtr;
 		constexpr std::uintmax_t maximumFileBytes = 32 * 1024 * 1024;
-		constexpr UINT maximumDimension = 4096;
 
 		struct ComScope final
 		{
@@ -61,8 +60,9 @@ namespace SFSEMenuFramework
 		}
 	}
 
-	std::shared_ptr<const WallpaperImage> LoadWallpaperImage(
-		const std::filesystem::path& a_themeDirectory, std::string_view a_relativePath)
+	std::shared_ptr<const ThemeImage> LoadThemeImage(
+		const std::filesystem::path& a_themeDirectory, std::string_view a_relativePath,
+		std::uint32_t a_maximumDimension)
 	{
 		const auto path = ResolveImagePath(a_themeDirectory, a_relativePath);
 		std::error_code error;
@@ -104,10 +104,11 @@ namespace SFSEMenuFramework
 			FAILED(decoder->GetFrame(0, frame.GetAddressOf()))) {
 			return {};
 		}
-		auto image = std::make_shared<WallpaperImage>();
+		auto image = std::make_shared<ThemeImage>();
 		if (FAILED(frame->GetSize(&image->Width, &image->Height)) ||
 			image->Width == 0 || image->Height == 0 ||
-			image->Width > maximumDimension || image->Height > maximumDimension ||
+			image->Width > (std::min)(a_maximumDimension, 4096U) ||
+			image->Height > (std::min)(a_maximumDimension, 4096U) ||
 			FAILED(factory->CreateFormatConverter(converter.GetAddressOf())) ||
 			FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA,
 				WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "appearance/WallpaperImage.h"
+#include "appearance/ThemeImage.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -28,7 +28,7 @@ namespace SFSEMenuFramework::ThemeManager
 	[[nodiscard]] bool QueueWallpaperOpacity(float) noexcept;
 	[[nodiscard]] bool QueueWallpaperDimming(float) noexcept;
 	[[nodiscard]] bool IsWallpaperSelected() noexcept;
-	[[nodiscard]] std::shared_ptr<const WallpaperImage> GetWallpaperImage() noexcept;
+	[[nodiscard]] std::shared_ptr<const ThemeImage> GetWallpaperImage() noexcept;
 	void SetWallpaperTexture(std::uintptr_t a_texture, bool a_failed) noexcept;
 	[[nodiscard]] bool HasWallpaperUploadError() noexcept;
 	void RenderCurrentWindowBackdrop() noexcept;

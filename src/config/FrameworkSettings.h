@@ -75,6 +75,8 @@ namespace SFSEMenuFramework::FrameworkSettings
 		float         WallpaperDimming{};
 		MenuStyleName MenuStyle{};
 		FontSettings  Fonts{};
+		MenuStyleName CursorName{};
+		float CursorScale{ 1.0F };
 	};
 
 	// Viewport-relative geometry, kept separate from editable framework settings.
@@ -109,6 +111,10 @@ namespace SFSEMenuFramework::FrameworkSettings
 	[[nodiscard]] float GetWallpaperOpacity() noexcept;
 	[[nodiscard]] float GetWallpaperDimming() noexcept;
 	[[nodiscard]] MenuStyleName GetMenuStyle() noexcept;
+	[[nodiscard]] MenuStyleName GetCursorName() noexcept;
+	[[nodiscard]] float GetCursorScale() noexcept;
+	[[nodiscard]] bool SetCursorName(std::string_view) noexcept;
+	[[nodiscard]] bool SetCursorScale(float) noexcept;
 	[[nodiscard]] FontSettings  GetFontSettings() noexcept;
 	[[nodiscard]] FontSettings  GetDefaultFontSettings() noexcept;
 	[[nodiscard]] std::string_view GetFontRenderingName(FontRendering a_rendering) noexcept;

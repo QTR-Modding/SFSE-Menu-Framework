@@ -116,6 +116,34 @@ required artwork licenses. Fonts remain a separate user setting.
 
 </details>
 
+## Custom cursors
+
+Cursor selection is independent of themes. In Settings, choose **Cursor**,
+adjust **Cursor size** live, or use **Default** for the normal pointer.
+**Refresh cursors** rescans the folder and reloads the selected image.
+
+Put PNGs directly in `Data/SFSE/Plugins/SFSEMenuFrameworkCursors`.
+Each PNG appears in the dropdown. Use printable ASCII filenames up to 63
+characters, images up to 512 pixels per side, and files up to 32 MiB.
+
+An optional matching JSON file defines the image's base size and click point.
+For `ring.png`, create `ring.json`:
+
+```json
+{
+  "Size": [32, 32],
+  "Hotspot": [0.5, 0.5]
+}
+```
+
+Size defaults to 32×32 (1–256 per side), multiplied by the cursor-size slider
+and UI scale. Hotspot values range from 0 to 1: top-left is `[0, 0]` (default),
+center is `[0.5, 0.5]`. Metadata files must be at most 64 KiB.
+Invalid or missing images fall back to the normal pointer with a warning, as does
+invalid metadata; omitting metadata is valid. Resize and text pointers stay
+standard, and gamepad navigation hides the cursor. Selection and scale persist
+in the framework INI.
+
 ## Building from source
 
 Requires Xmake 3.0.9+, MSVC with C++23 support, and the Windows SDK.

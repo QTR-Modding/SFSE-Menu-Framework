@@ -8,6 +8,7 @@
 #include "platform/win32/Win32Platform.h"
 #include "runtime/WindowManager.h"
 #include "ui/WindowPlacement.h"
+#include "ui/CursorSettings.h"
 #include "ui/WindowPresentation.h"
 
 #include <imgui.h>
@@ -705,6 +706,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 
 			RenderBackgroundControls();
+			CursorSettings::Render(saveFailed);
 
 			RenderFontSettings(saveFailed);
 			auto edited = FrameworkSettings::CaptureSnapshot();
@@ -755,6 +757,7 @@ namespace SFSEMenuFramework::SettingsWindow
 
 			ImGui::Spacing();
 			if (ImGui::Button("Reset to defaults")) {
+				CursorSettings::FinishEdit(saveFailed);
 				const auto settingsBeforeReset = FrameworkSettings::CaptureSnapshot();
 				FrameworkSettings::ResetDefaults();
 				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(
@@ -807,6 +810,7 @@ namespace SFSEMenuFramework::SettingsWindow
 
 	void Close() noexcept
 	{
+		CursorSettings::FinishEdit(saveFailed);
 		for (auto& control : backgroundControls) {
 			FinishBackgroundEdit(control);
 		}

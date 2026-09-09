@@ -184,3 +184,24 @@ target("menu-path-tests", function()
     add_includedirs("src")
     add_tests("default")
 end)
+
+target("theme-cursor-tests", function()
+    set_kind("binary")
+    set_pcxxheader("src/PCH.h")
+    add_deps("commonlibsf")
+    set_default(false)
+    add_deps("imgui")
+    add_packages("nlohmann_json")
+    add_syslinks("windowscodecs", "ole32")
+    add_files(
+        "tests/ThemeCursorTests.cpp",
+        "tests/CursorCatalogTests.cpp",
+        "src/appearance/CursorManager.cpp",
+        "src/config/FrameworkSettings.cpp",
+        "src/config/FrameworkSettingsIO.cpp",
+        "src/appearance/CursorDrawing.cpp",
+        "src/appearance/ThemeImage.cpp"
+    )
+    add_includedirs("src")
+    add_tests("default")
+end)

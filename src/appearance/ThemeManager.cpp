@@ -48,7 +48,7 @@ namespace SFSEMenuFramework::ThemeManager
 		{
 			ImGuiStyle           BaseStyle;
 			ThemeBackdrop::Style Backdrop;
-			std::shared_ptr<const WallpaperImage> Image;
+			std::shared_ptr<const ThemeImage> Image;
 			std::size_t          Index{ NO_THEME };
 			float                UIScale{ 1.0F };
 			float                BackgroundOpacity{ 1.0F };
@@ -448,7 +448,7 @@ namespace SFSEMenuFramework::ThemeManager
 			if (a_selection.Backdrop.Kind == ThemeBackdrop::Effect::Wallpaper) {
 				const auto* path = FindValue(json["Backdrop"], "Image");
 				if (!path || !path->is_string() ||
-					!(a_selection.Image = LoadWallpaperImage(a_theme.Path.parent_path(),
+					!(a_selection.Image = LoadThemeImage(a_theme.Path.parent_path(),
 						path->get_ref<const std::string&>()))) {
 					logger::warn("Theme '{}' has an unreadable or unsupported wallpaper", a_theme.Name);
 					return false;
@@ -634,7 +634,7 @@ namespace SFSEMenuFramework::ThemeManager
 			ThemeBackdrop::Effect::Wallpaper;
 	}
 
-	std::shared_ptr<const WallpaperImage> GetWallpaperImage() noexcept
+	std::shared_ptr<const ThemeImage> GetWallpaperImage() noexcept
 	{ return GetState().Active.Image; }
 
 	void SetWallpaperTexture(std::uintptr_t a_texture, bool a_failed) noexcept
