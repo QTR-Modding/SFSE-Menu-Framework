@@ -64,11 +64,7 @@ namespace SFSEMenuFramework::Audio
         DWORD WINAPI Worker(void* argument)
         {
             auto& shared = *static_cast<State*>(argument);
-            const auto com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-            if (FAILED(com)) {
-                SetError(shared, "Could not initialize Windows audio.");
-                return 0;
-            }
+            bool comInitialized{};
             IXAudio2* engine{};
             IXAudio2MasteringVoice* master{};
             IXAudio2SourceVoice* voice{};
@@ -107,6 +103,17 @@ namespace SFSEMenuFramework::Audio
                     if (engine) { engine->Release(); engine = nullptr; }
                     WaitForSingleObject(shared.Wake, INFINITE);
                     continue;
+                }
+
+                if (!comInitialized) {
+                    comInitialized = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
+                    if (!comInitialized) {
+                        SetError(shared, "Could not initialize Windows audio. Try Reload sounds.");
+                        // Stay alive; retry only after a request or settings change wakes us.
+                        WaitForSingleObject(shared.Wake, INFINITE);
+                        continue;
+                    }
+                    SetError(shared, {});
                 }
                 if (voice) {
                     XAUDIO2_VOICE_STATE status{};

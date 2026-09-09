@@ -213,6 +213,7 @@ target("sound-wave-tests", function()
     set_default(false)
     add_files("tests/WaveClipTests.cpp", "src/audio/WaveClip.cpp")
     add_includedirs("src")
+    add_tests("default")
 end)
 
 target("sound-interaction-tests", function()
@@ -223,4 +224,5 @@ target("sound-interaction-tests", function()
     add_files("tests/SoundInteractionTests.cpp", "src/audio/InteractionSounds.cpp",
         "src/config/FrameworkSettings.cpp", "src/config/FrameworkSettingsIO.cpp")
     add_includedirs("src")
+    add_tests("default")
 end)
