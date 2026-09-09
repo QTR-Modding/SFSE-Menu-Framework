@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <optional>
 #include <vector>
 
@@ -198,8 +199,52 @@ namespace SFSEMenuFramework::McpGamepad {
             FocusItem(items[index]);
         }
 
+        void MoveSpatially(Area area, ImGuiDir direction) {
+            const auto& items = previousItems[AreaIndex(area)];
+            const auto focused = FindFocusedItem(items);
+            if (!focused) return;
+            const ImRect& origin = items[*focused].Rect;
+            const bool vertical = direction == ImGuiDir_Up || direction == ImGuiDir_Down;
+            const bool forward = direction == ImGuiDir_Right || direction == ImGuiDir_Down;
+            const auto low = [vertical](const ImRect& r) { return vertical ? r.Min.y : r.Min.x; };
+            const auto high = [vertical](const ImRect& r) { return vertical ? r.Max.y : r.Max.x; };
+            const auto crossLow = [vertical](const ImRect& r) { return vertical ? r.Min.x : r.Min.y; };
+            const auto crossHigh = [vertical](const ImRect& r) { return vertical ? r.Max.x : r.Max.y; };
+            std::optional<std::size_t> best;
+            float bestScore = FLT_MAX;
+            for (std::size_t index = 0; index < items.size(); ++index) {
+                if (index == *focused) continue;
+                const ImRect& candidate = items[index].Rect;
+                const float gap = forward ? low(candidate) - high(origin) : low(origin) - high(candidate);
+                if (gap < -0.5f) continue;
+                const float crossGap = std::max({0.0f,
+                    crossLow(candidate) - crossHigh(origin), crossLow(origin) - crossHigh(candidate)});
+                const float score = gap * gap + crossGap * crossGap * 4.0f;
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = index;
+                }
+            }
+            if (best) {
+                focusedIndices[AreaIndex(area)] = *best;
+                FocusItem(items[*best]);
+            }
+        }
+
         void ProcessAreaInput(Area area) {
-            if (activeArea != area || IsPopupBlockingAreaNavigation(area) || ImGui::IsAnyItemActive()) {
+            if (activeArea != area || IsPopupBlockingAreaNavigation(area) ||
+                ImGui::IsAnyItemActive() || GImGui->NavWindowingTarget) {
+                return;
+            }
+
+            if (area == Area::PageContent) {
+                CancelDefaultMoveRequest();
+                const bool left = IsPressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft);
+                const bool right = IsPressed(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight);
+                const bool up = IsPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp);
+                const bool down = IsPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown);
+                if (up != down) MoveSpatially(area, up ? ImGuiDir_Up : ImGuiDir_Down);
+                else if (left != right) MoveSpatially(area, left ? ImGuiDir_Left : ImGuiDir_Right);
                 return;
             }
 
@@ -250,7 +295,7 @@ namespace SFSEMenuFramework::McpGamepad {
                 case Area::PageContent:
                     return {
                         {IconSlot::Up, IconSlot::Down, "Navigate"},
-                        {IconSlot::Left, IconSlot::Right, "Adjust"},
+                        {IconSlot::Left, IconSlot::Right, "Navigate / adjust"},
                         {IconSlot::Confirm, noSecondaryIcon, "Select"},
                         {IconSlot::RightStick, noSecondaryIcon, "Scroll"},
                         {IconSlot::Cancel, noSecondaryIcon, "Back"},
@@ -283,16 +328,12 @@ namespace SFSEMenuFramework::McpGamepad {
             return width;
         }
 
-        void RenderIcon(IconSlot slot, float size) {
-            ImGui::Image(GamepadIcons::GetTexture(slot), ImVec2(size, size));
-        }
-
-        void RenderHint(const Hint& hint, float iconSize) {
+        void RenderHint(const Hint& hint, float iconSize, bool playStation) {
             ImGui::BeginGroup();
-            RenderIcon(hint.PrimaryIcon, iconSize);
+            GamepadIcons::Draw(hint.PrimaryIcon, iconSize, playStation);
             if (hint.SecondaryIcon != IconSlot::Count) {
                 ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-                RenderIcon(hint.SecondaryIcon, iconSize);
+                GamepadIcons::Draw(hint.SecondaryIcon, iconSize, playStation);
             }
             ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
             ImGui::AlignTextToFramePadding();
@@ -481,6 +522,12 @@ namespace SFSEMenuFramework::McpGamepad {
         }
     }
 
+    bool CanHandleBack(const ImGuiWindow* mainWindow) {
+        const auto* context = ImGui::GetCurrentContext();
+        return mainWindow && context && context->NavWindow && !context->NavWindowingTarget &&
+               IsWindowInside(context->NavWindow, mainWindow);
+    }
+
     BackAction ResolveBack(bool hasPage) {
         if (ImGui::IsAnyItemActive() ||
             ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
@@ -560,7 +607,7 @@ namespace SFSEMenuFramework::McpGamepad {
         return ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().WindowPadding.y;
     }
 
-    void RenderHintBar(bool hasPage) {
+    void RenderHintBar(bool hasPage, bool playStation) {
         if (!IsPanelNavigationActive()) {
             return;
         }
@@ -570,15 +617,6 @@ namespace SFSEMenuFramework::McpGamepad {
             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         ImGui::BeginChild("##MCPGamepadHints", ImVec2(0.0f, height), ImGuiChildFlags_None, flags);
         ImGui::Separator();
-
-        if (!GamepadIcons::IsAvailable()) {
-            const char* warning = "ImGui Icons is required for controller prompts.";
-            const float warningWidth = ImGui::CalcTextSize(warning).x;
-            ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), (ImGui::GetWindowSize().x - warningWidth) * 0.5f));
-            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s", warning);
-            ImGui::EndChild();
-            return;
-        }
 
         const std::vector<Hint> hints = GetHints(hasPage);
         const float iconSize = ImGui::GetTextLineHeight();
@@ -593,7 +631,7 @@ namespace SFSEMenuFramework::McpGamepad {
 
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), (ImGui::GetWindowSize().x - totalWidth) * 0.5f));
         for (std::size_t index = 0; index < hints.size(); ++index) {
-            RenderHint(hints[index], iconSize);
+            RenderHint(hints[index], iconSize, playStation);
             if (index + 1 < hints.size()) {
                 ImGui::SameLine(0.0f, itemSpacing);
             }

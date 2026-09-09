@@ -1,109 +1,68 @@
 #include "appearance/GamepadIcons.h"
 
+#include <imgui.h>
 #include <algorithm>
-#include <array>
-#include <format>
-#include <string>
-#include <system_error>
 
 namespace SFSEMenuFramework::GamepadIcons
 {
-	namespace
-	{
-		// Icon names, paths and all-or-nothing availability follow SKSE-MF
-		// GamepadNavigation.cpp at 8fb2d295aee582a24204b015f39214ad43717728 (GPL-3.0).
-		struct IconAsset
-		{
-			std::shared_ptr<const ThemeImage> Image;
-			ImTextureID Texture{};
-		};
+    void Draw(Slot slot, float size, bool playStation)
+    {
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const ImVec2 center(origin.x + size * 0.5f, origin.y + size * 0.5f);
+        const float radius = size * 0.43f;
+        const float stroke = std::max(1.0f, size * 0.055f);
+        const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+        auto* draw = ImGui::GetWindowDrawList();
+        const auto point = [&](float x, float y) {
+            return ImVec2(center.x + x * radius, center.y + y * radius);
+        };
+        const auto label = [&](const char* text) {
+            const float fontSize = size * 0.60f;
+            auto* font = ImGui::GetFont();
+            const ImVec2 extent = font->CalcTextSizeA(fontSize, size, 0.0f, text);
+            draw->AddText(font, fontSize,
+                ImVec2(center.x - extent.x * 0.5f, center.y - extent.y * 0.5f), color, text);
+        };
 
-		std::array<IconAsset, count> assets;
-		bool initialized{};
-		bool usesPlayStation{};
-		bool missingIconsLogged{};
-		const std::filesystem::path iconDirectory{ "Data/Interface/ImGuiIcons/Icons" };
-
-		const char* IconName(Slot a_slot, bool a_playStation)
-		{
-			switch (a_slot) {
-			case Slot::Up:
-				return "Up";
-			case Slot::Down:
-				return "Down";
-			case Slot::Left:
-				return "Left";
-			case Slot::Right:
-				return "Right";
-			case Slot::Confirm:
-				return a_playStation ? "PS3_A" : "360_A";
-			case Slot::Cancel:
-				return a_playStation ? "PS3_B" : "360_B";
-			case Slot::Options:
-				return a_playStation ? "PS3_X" : "360_X";
-			case Slot::RightShoulder:
-				return a_playStation ? "PS3_RB" : "360_RB";
-			case Slot::RightStick:
-				return a_playStation ? "PS3_R3" : "360_RS";
-			case Slot::Count:
-				return "UnknownKey";
-			}
-			return "UnknownKey";
-		}
-	}
-
-	void Update(bool a_playStation)
-	{
-		if (initialized && usesPlayStation == a_playStation) {
-			return;
-		}
-		initialized = true;
-		usesPlayStation = a_playStation;
-
-		for (std::size_t index = 0; index < assets.size(); ++index) {
-			auto& asset = assets[index];
-			asset = {};
-			const auto name = std::format("{}.png", IconName(static_cast<Slot>(index), a_playStation));
-			const auto path = iconDirectory / name;
-			std::error_code error;
-			if (!std::filesystem::exists(path, error) || error) {
-				if (!missingIconsLogged) {
-					logger::error("ImGui Icons is required for gamepad prompts; missing '{}'", path.string());
-					missingIconsLogged = true;
-				}
-				continue;
-			}
-
-			asset.Image = LoadThemeImage(iconDirectory, name);
-			if (!asset.Image && !missingIconsLogged) {
-				logger::error("Could not load required ImGui Icons texture '{}'", path.string());
-				missingIconsLogged = true;
-			}
-		}
-	}
-
-	std::shared_ptr<const ThemeImage> GetImage(std::size_t a_index) noexcept
-	{
-		return a_index < assets.size() ? assets[a_index].Image : nullptr;
-	}
-
-	void SetTexture(std::size_t a_index, std::uintptr_t a_texture) noexcept
-	{
-		if (a_index < assets.size()) {
-			assets[a_index].Texture = reinterpret_cast<ImTextureID>(a_texture);
-		}
-	}
-
-	ImTextureID GetTexture(Slot a_slot) noexcept
-	{
-		const auto index = static_cast<std::size_t>(a_slot);
-		return index < assets.size() ? assets[index].Texture : nullptr;
-	}
-
-	bool IsAvailable() noexcept
-	{
-		return initialized && std::ranges::all_of(assets, [](const auto& asset) {
-			return asset.Texture != nullptr;
-		});
-	}
+        switch (slot) {
+        case Slot::Up:
+            draw->AddTriangleFilled(point(0, -0.8f), point(-0.7f, 0.5f), point(0.7f, 0.5f), color);
+            break;
+        case Slot::Down:
+            draw->AddTriangleFilled(point(0, 0.8f), point(-0.7f, -0.5f), point(0.7f, -0.5f), color);
+            break;
+        case Slot::Left:
+            draw->AddTriangleFilled(point(-0.8f, 0), point(0.5f, -0.7f), point(0.5f, 0.7f), color);
+            break;
+        case Slot::Right:
+            draw->AddTriangleFilled(point(0.8f, 0), point(-0.5f, -0.7f), point(-0.5f, 0.7f), color);
+            break;
+        case Slot::RightShoulder:
+            draw->AddRect(point(-1, -0.7f), point(1, 0.7f), color, size * 0.12f, 0, stroke);
+            label(playStation ? "R1" : "RB");
+            break;
+        case Slot::RightStick:
+            draw->AddCircle(center, radius, color, 0, stroke);
+            label(playStation ? "R3" : "RS");
+            break;
+        case Slot::Confirm:
+        case Slot::Cancel:
+        case Slot::Options:
+            draw->AddCircle(center, radius, color, 0, stroke);
+            if (!playStation) {
+                label(slot == Slot::Confirm ? "A" : slot == Slot::Cancel ? "B" : "X");
+            } else if (slot == Slot::Confirm) {
+                draw->AddLine(point(-0.45f, -0.45f), point(0.45f, 0.45f), color, stroke);
+                draw->AddLine(point(-0.45f, 0.45f), point(0.45f, -0.45f), color, stroke);
+            } else if (slot == Slot::Cancel) {
+                draw->AddCircle(center, radius * 0.55f, color, 0, stroke);
+            } else {
+                draw->AddRect(point(-0.45f, -0.45f), point(0.45f, 0.45f), color, 0, 0, stroke);
+            }
+            break;
+        case Slot::Count:
+            break;
+        }
+        ImGui::Dummy(ImVec2(size, size));
+    }
 }

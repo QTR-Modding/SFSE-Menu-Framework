@@ -1,5 +1,7 @@
 #pragma once
 
+struct ImGuiWindow;
+
 
 namespace SFSEMenuFramework::McpGamepad {
     enum class Area { PageTree, PageContent, OptionsMenu, Popup, Count };
@@ -21,6 +23,7 @@ namespace SFSEMenuFramework::McpGamepad {
     void NotifyPageClosed();
 
     enum class BackAction { PassToImGui, PoppedPage, CloseMenu };
+    bool CanHandleBack(const ImGuiWindow* mainWindow);
     BackAction ResolveBack(bool hasPage);
 
     void PushFocusStyle();
@@ -28,5 +31,5 @@ namespace SFSEMenuFramework::McpGamepad {
     void RenderFocusedItemHighlight();
 
     float GetHintBarHeight();
-    void RenderHintBar(bool hasPage);
+    void RenderHintBar(bool hasPage, bool playStation = false);
 }

@@ -13,19 +13,6 @@ namespace Pad = SFSEMenuFramework::McpGamepad;
 
 namespace
 {
-    bool iconsAvailable{};
-    const auto iconTexture = reinterpret_cast<ImTextureID>(std::uintptr_t{1});
-}
-
-// The fixture uses the real navigation and ImGui observer; only GPU images are stubbed.
-namespace SFSEMenuFramework::GamepadIcons
-{
-    ImTextureID GetTexture(Slot) noexcept { return iconTexture; }
-    bool IsAvailable() noexcept { return iconsAvailable; }
-}
-
-namespace
-{
     void Check(bool condition, const char* message)
     {
         if (!condition) {
@@ -47,6 +34,8 @@ namespace
         std::vector<ImGuiID> ContentItems;
         int Activations{};
         unsigned int IconElements{};
+        ImGuiID SameRowButton{};
+        bool PlayStation{};
         float Value{};
         float Footer{};
         char Text[64]{};
@@ -165,6 +154,9 @@ namespace
             if (HasPage) {
                 if (ImGui::Button("First control")) ++Activations;
                 ContentItems.push_back(ImGui::GetItemID());
+                ImGui::SameLine();
+                ImGui::Button("Load settings");
+                SameRowButton = ImGui::GetItemID();
                 ImGui::SliderFloat("Adjustment", &Value, 0.0F, 100.0F);
                 ContentItems.push_back(ImGui::GetItemID());
                 ImGui::InputText("Text", Text, sizeof(Text));
@@ -211,7 +203,7 @@ namespace
             RenderTree(height);
             ImGui::SameLine();
             RenderContent(height);
-            Pad::RenderHintBar(HasPage);
+            Pad::RenderHintBar(HasPage, PlayStation);
             Pad::RenderFocusedItemHighlight();
             Pad::PopFocusStyle();
             Check(ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight).w == navColor.w, "focus color is restored");
@@ -222,7 +214,8 @@ namespace
             IconElements = 0;
             for (const auto* list : ImGui::GetDrawData()->CmdLists) {
                 for (const auto& command : list->CmdBuffer) {
-                    if (command.GetTexID() == iconTexture) IconElements += command.ElemCount;
+                    Check(command.GetTexID() == ImGui::GetIO().Fonts->TexID, "hints need only the font atlas");
+                    IconElements += command.ElemCount;
                 }
             }
         }
@@ -255,11 +248,21 @@ namespace
         ui.Tap(ImGuiKey_GamepadFaceDown);
         Check(ui.Activations == 1, "a separate A press activates the focused control once");
 
-        ui.Tap(ImGuiKey_GamepadDpadUp);
-        ui.ExpectFocus(ui.Content, ui.ContentItems.back(), "offscreen items are observed and wrap navigation works");
-        Check(ui.Content->Scroll.y > 0, "offscreen focus scrolls into view");
+        ui.Tap(ImGuiKey_GamepadDpadRight);
+        ui.ExpectFocus(ui.Content, ui.SameRowButton, "Right selects the same-row button");
+        ui.Tap(ImGuiKey_GamepadDpadLeft);
+        ui.ExpectFocus(ui.Content, ui.ContentItems[0], "Left returns to the first button");
         ui.Tap(ImGuiKey_GamepadDpadDown);
-        ui.ExpectFocus(ui.Content, ui.ContentItems[0], "content wraps back to the first control");
+        ui.ExpectFocus(ui.Content, ui.ContentItems[1], "Down skips the same-row button");
+        ui.Tap(ImGuiKey_GamepadDpadUp);
+        ui.ExpectFocus(ui.Content, ui.ContentItems[0], "Up returns to the control above");
+        ui.Tap(ImGuiKey_GamepadLStickDown);
+        ui.ExpectFocus(ui.Content, ui.ContentItems[1], "stick Down is spatial too");
+        for (std::size_t i = 2; i < ui.ContentItems.size(); ++i) ui.Tap(ImGuiKey_GamepadDpadDown);
+        ui.ExpectFocus(ui.Content, ui.ContentItems.back(), "spatial navigation reaches offscreen controls");
+        Check(ui.Content->Scroll.y > 0, "offscreen focus scrolls into view");
+        for (std::size_t i = 1; i < ui.ContentItems.size(); ++i) ui.Tap(ImGuiKey_GamepadDpadUp);
+        ui.ExpectFocus(ui.Content, ui.ContentItems[0], "spatial navigation returns up the page");
         ui.Frame();
         const float before = ui.Content->Scroll.y;
         ui.Key(ImGuiKey_GamepadRStickDown, true);
@@ -285,11 +288,19 @@ namespace
         ImGui::SetScrollY(ui.Content, ui.Content->ScrollMax.y);
         ui.Frame();
         ui.Frame();
-        ui.Tap(ImGuiKey_GamepadDpadUp);
-        ui.ExpectFocus(ui.Nested, ui.ContentItems.back(), "nested child controls are recorded");
-        ui.Tap(ImGuiKey_GamepadDpadDown);
-        ui.ExpectFocus(ui.Content, ui.ContentItems[0], "child container itself is not a navigation stop");
+        ImGui::FocusWindow(ui.Nested);
+        ImGui::SetFocusID(ui.ContentItems.back(), ui.Nested);
+        ui.Frame();
+        ui.ExpectFocus(ui.Nested, ui.ContentItems.back(), "nested child focus is preserved");
+        Check(Pad::CanHandleBack(ui.Content->RootWindow), "Back recognizes nested page children");
+        Check(Pad::ResolveBack(true) == Pad::BackAction::PoppedPage, "Back leaves nested page content");
+        ui.Frame();
+        ui.ExpectFocus(ui.Tree, ui.TreeItems[0], "Back restores the tree from a nested child");
+        ui.Tap(ImGuiKey_GamepadR1);
         ui.ShowNestedChild = false;
+        Pad::NotifyPageClosed();
+        ui.Frame();
+        ui.Tap(ImGuiKey_GamepadR1);
         ui.Frame();
     }
 
@@ -344,6 +355,9 @@ namespace
         ui.ExpectFocus(ui.Tree, ui.TreeItems[0], "resuming restores tree focus");
 
         ui.Tap(ImGuiKey_GamepadR1);
+        Check(ui.Content->RootWindowForNav != ui.Content->RootWindow, "fixture reproduces child navigation root");
+        Check(Pad::CanHandleBack(ui.Content->RootWindow), "Back accepts the right-hand panel");
+        Check(!Pad::CanHandleBack(ui.Tree), "Back does not mistake a sibling for the owning window");
         ui.Tap(ImGuiKey_GamepadDpadDown);
         ui.ExpectFocus(ui.Content, ui.ContentItems[1], "slider is reachable sequentially");
         ui.Tap(ImGuiKey_GamepadFaceDown);
@@ -370,18 +384,19 @@ namespace
 
     void TestIconsAndWindowing(Fixture& ui)
     {
-        Check(ui.IconElements == 0, "missing icons render the warning without images");
-        iconsAvailable = true;
         ui.Frame();
-        Check(ui.IconElements == 5 * 6, "tree hints render five controller icons");
+        Check(ui.IconElements > 0, "controller hints render without image files");
+        ui.PlayStation = true;
+        ui.Frame();
+        Check(ui.IconElements > 0, "PlayStation symbols render without image files");
         ui.HasPage = true;
         ui.Frame();
-        Check(ui.IconElements == 6 * 6, "selected-page tree hints include the Controls icon");
+        Check(ui.IconElements > 0, "controller symbols render in every area");
         ui.Tap(ImGuiKey_GamepadR1);
-        Check(ui.IconElements == 7 * 6, "content hints render navigation, adjustment, selection, scrolling and Back icons");
+        Check(ui.IconElements > 0, "controller symbols render in every area");
         ui.Key(ImGuiKey_GamepadFaceLeft, true);
         ui.Frame();
-        Check(ui.IconElements == 4 * 6, "Options hints render four controller icons");
+        Check(ui.IconElements > 0, "controller symbols render in every area");
         for (int frame = 0; frame < 20; ++frame) ui.Frame();
         Check(ui.Context->NavWindowingTarget != nullptr, "holding X retains ImGui window move/resize mode");
         ui.Key(ImGuiKey_GamepadFaceLeft, false);

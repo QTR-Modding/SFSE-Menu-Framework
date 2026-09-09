@@ -4,7 +4,6 @@
 
 #include "appearance/FontManager.h"
 #include "appearance/CursorManager.h"
-#include "appearance/GamepadIcons.h"
 #include "appearance/ThemeManager.h"
 #include "input/GamepadNavigation.h"
 #include "config/FrameworkSettings.h"
@@ -53,8 +52,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		using D3D12Textures::CreateDescriptorHeap;
 		using D3D12Textures::HeapProperties;
 		constexpr std::size_t frameResourceCount = 4;
-		constexpr std::size_t themeImageCount = 2;  // Wallpaper and cursor.
-		constexpr std::size_t imageCount = themeImageCount + GamepadIcons::count;  // Font is descriptor 0.
+		constexpr std::size_t imageCount = 2;  // Wallpaper and cursor; font is descriptor 0.
 		constexpr std::uint64_t maximumBlockingWindowFrameAgeMilliseconds = 250;
 		constexpr char imguiIniFilename[] =
 			"Data/SFSE/Plugins/SFSEMenuFramework.imgui.ini";
@@ -135,9 +133,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 			a_state.Images = {};
 			ThemeManager::SetWallpaperTexture(0, false);
 			CursorManager::SetTexture(0, false);
-			for (std::size_t index = 0; index < GamepadIcons::count; ++index) {
-				GamepadIcons::SetTexture(index, 0);
-			}
 			for (auto& slot : a_state.CompletionSlots) {
 				slot.Resources.Reset();
 				slot.Images = {};
@@ -387,9 +382,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 			std::array<std::shared_ptr<const ThemeImage>, imageCount> images{
 				ThemeManager::GetWallpaperImage(), CursorManager::GetImage()
 			};
-			for (std::size_t index = 0; index < GamepadIcons::count; ++index) {
-				images[themeImageCount + index] = GamepadIcons::GetImage(index);
-			}
 			const auto step = a_state.Device->GetDescriptorHandleIncrementSize(
 				D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 			auto* heap = a_state.CompletionSlots[a_slot].TextureHeap.Get();
@@ -405,11 +397,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 					if (image && !D3D12Textures::Upload(a_state.Device.Get(), a_commandList,
 						image->Pixels.data(), static_cast<int>(image->Width),
 						static_cast<int>(image->Height), texture)) {
-						if (i < themeImageCount) {
-							logger::error("Could not upload theme {}", i == 0 ? "wallpaper" : "cursor");
-						} else {
-							logger::error("Could not upload required ImGui Icons texture {}", i - themeImageCount);
-						}
+						logger::error("Could not upload theme {}", i == 0 ? "wallpaper" : "cursor");
 					}
 				}
 				cpu.ptr += step;
@@ -421,13 +409,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 						texture.ViewHeap->GetCPUDescriptorHandleForHeapStart(),
 						D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 				}
-				if (i < themeImageCount) {
-					const auto setTexture = i == 0 ?
-						ThemeManager::SetWallpaperTexture : CursorManager::SetTexture;
-					setTexture(ready ? gpu.ptr : 0, image && !ready);
-				} else {
-					GamepadIcons::SetTexture(i - themeImageCount, ready ? gpu.ptr : 0);
-				}
+				const auto setTexture = i == 0 ?
+					ThemeManager::SetWallpaperTexture : CursorManager::SetTexture;
+				setTexture(ready ? gpu.ptr : 0, image && !ready);
 			}
 			if (hasImages) {
 				a_state.Device->CopyDescriptorsSimple(1, heap->GetCPUDescriptorHandleForHeapStart(),
@@ -584,12 +568,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 		SettingsWindow::UpdateLifecycle();
 		ThemeManager::ApplyPending();
 		CursorManager::Update();
-		const auto* iconWindow = WindowManager::GetMainWindow();
-		if (iconWindow && iconWindow->IsOpen.load(std::memory_order_acquire) &&
-			!GamepadNavigation::ShouldDrawMouseCursor(
-				WindowManager::GetBlockingWindowOpenGeneration())) {
-			GamepadIcons::Update(FrameworkSettings::GetPlayStationIcons());
-		}
 		ImGui::GetStyle().MouseCursorScale =
 			FrameworkSettings::GetCursorScale() * FontManager::GetActiveUIScale();
 		const bool hasThemeImages = PrepareThemeImages(rendererState, a_commandList, frameSlot);

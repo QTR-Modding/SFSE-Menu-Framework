@@ -9,8 +9,6 @@ to add pages and windows; the framework handles ImGui, rendering and input.
 - Starfield 1.16.244
 - SFSE 0.2.21
 - Address Library for Starfield 1.16.244
-- [ImGui Icons](https://www.nexusmods.com/skyrimspecialedition/mods/114790) for controller prompts.
-  Copy its `Interface/ImGuiIcons/Icons` PNG folder into Starfield's `Data/Interface/ImGuiIcons/Icons`.
 
 ## Getting started
 
@@ -19,7 +17,8 @@ into Starfield's `Data` folder. Launch through SFSE, then press **F1**.
 
 - **F1:** open or close the panel.
 - **Gamepad Start:** double-press to open; press once to close.
-- **D-pad / left stick Up/Down:** cycle through controls. **Left/Right:** adjust.
+- **D-pad / left stick:** navigate by direction within pages; Up/Down cycles the mod list.
+  Select a slider before using Left/Right to adjust it.
 - **A:** select a page or control. **B:** cancel an edit or popup, return from the
   page to the mod list, then close the panel.
 - **Right stick:** scroll the current panel.

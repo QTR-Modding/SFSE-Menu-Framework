@@ -679,7 +679,7 @@ namespace
 			SFSEMenuFramework::McpGamepad::EndArea();
 		}
 		ImGui::EndChild();
-		SFSEMenuFramework::McpGamepad::RenderHintBar(selectedPanel != nullptr);
+		SFSEMenuFramework::McpGamepad::RenderHintBar(selectedPanel != nullptr, SFSEMenuFramework::FrameworkSettings::GetPlayStationIcons());
 	}
 
 }
@@ -762,8 +762,7 @@ bool SFSEMenuFramework::McpWindow::ConsumeGamepadBack()
 	}
 	const auto* window = ImGui::FindWindowByName(
 		WindowPlacement::GetName(WindowPlacement::BuiltInWindow::Main));
-	if (!window || context->NavWindow->RootWindowForNav != window ||
-		context->NavWindowingTarget) {
+	if (!McpGamepad::CanHandleBack(window)) {
 		return false;
 	}
 	switch (McpGamepad::ResolveBack(selectedNode != nullptr)) {
