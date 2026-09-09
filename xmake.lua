@@ -56,6 +56,9 @@ add_rules("mode.debug", "mode.releasedbg", "mode.release")
 add_rules("plugin.vsxmake.autoupdate")
 
 target("imgui", function()
+    on_load(function(target)
+        import("scripts.imgui-audio", { rootdir = project_root })(target)
+    end)
     set_kind("static")
     set_default(false)
     set_license("MIT")
@@ -64,7 +67,6 @@ target("imgui", function()
         "extern/imgui/imgui.cpp",
         "extern/imgui/imgui_demo.cpp",
         "extern/imgui/imgui_tables.cpp",
-        "extern/imgui/imgui_widgets.cpp",
         "extern/imgui/backends/imgui_impl_win32.cpp",
         "extern/imgui_bridge/FontVariation.cpp",
         "extern/imgui_bridge/imgui_freetype_bridge.cpp"
@@ -125,7 +127,7 @@ target(dll_name, function()
     add_deps("verify-framework-signature", { inherit = false })
 	add_packages("nlohmann_json")
     add_defines("_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING")
-    add_syslinks("comctl32", "windowscodecs", "ole32")
+    add_syslinks("comctl32", "windowscodecs", "ole32", "xaudio2")
     -- Generated from Dear ImGui 1.90.8-docking by cimgui and copied from the
     -- pinned SKSE Menu Framework reference. Compile it directly into the DLL
     -- so every CIMGUI_API entry remains present in the export table.
@@ -204,4 +206,21 @@ target("theme-cursor-tests", function()
     )
     add_includedirs("src")
     add_tests("default")
+end)
+
+target("sound-wave-tests", function()
+    set_kind("binary")
+    set_default(false)
+    add_files("tests/WaveClipTests.cpp", "src/audio/WaveClip.cpp")
+    add_includedirs("src")
+end)
+
+target("sound-interaction-tests", function()
+    set_kind("binary")
+    set_default(false)
+    set_targetdir(path.join(project_root, "build", "sound-tests"))
+    add_deps("imgui")
+    add_files("tests/SoundInteractionTests.cpp", "src/audio/InteractionSounds.cpp",
+        "src/config/FrameworkSettings.cpp", "src/config/FrameworkSettingsIO.cpp")
+    add_includedirs("src")
 end)

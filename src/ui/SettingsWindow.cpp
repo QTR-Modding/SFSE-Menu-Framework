@@ -1,4 +1,6 @@
 #include "ui/SettingsWindow.h"
+#include "ui/SoundSettings.h"
+#include "audio/InteractionSounds.h"
 
 #include "appearance/FontManager.h"
 #include "appearance/ThemeManager.h"
@@ -396,6 +398,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			ImGui::PopID();
 			if (clicked) {
 				*a_value = !*a_value;
+				Audio::RequestInteraction(*a_value ? Audio::Event::ToggleOn : Audio::Event::ToggleOff);
 			}
 
 			const float offset = *a_value ? 1.0F : 0.0F;
@@ -707,6 +710,7 @@ namespace SFSEMenuFramework::SettingsWindow
 
 			RenderBackgroundControls();
 			CursorSettings::Render(saveFailed);
+			SoundSettings::Render(saveFailed);
 
 			RenderFontSettings(saveFailed);
 			auto edited = FrameworkSettings::CaptureSnapshot();
@@ -758,6 +762,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			ImGui::Spacing();
 			if (ImGui::Button("Reset to defaults")) {
 				CursorSettings::FinishEdit(saveFailed);
+                SoundSettings::FinishEdit(saveFailed);
 				const auto settingsBeforeReset = FrameworkSettings::CaptureSnapshot();
 				FrameworkSettings::ResetDefaults();
 				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(
@@ -811,6 +816,7 @@ namespace SFSEMenuFramework::SettingsWindow
 	void Close() noexcept
 	{
 		CursorSettings::FinishEdit(saveFailed);
+		SoundSettings::FinishEdit(saveFailed);
 		for (auto& control : backgroundControls) {
 			FinishBackgroundEdit(control);
 		}

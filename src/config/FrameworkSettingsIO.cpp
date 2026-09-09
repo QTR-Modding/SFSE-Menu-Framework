@@ -434,6 +434,21 @@ namespace SFSEMenuFramework::FrameworkSettings
 			[](std::wstring_view text, float& value) {
 				return ParseNumber(text, value) && value >= 0.5F && value <= 3.0F;
 			});
+		profile.Read(L"Sounds", L"Enabled", loaded.Sounds.Enabled, false, ParseBool);
+		profile.Read(L"Sounds", L"Volume", loaded.Sounds.Volume, 0.35F,
+			[](std::wstring_view text, float& value) {
+				return ParseNumber(text, value) && value >= 0 && value <= 1;
+			});
+		for (std::size_t index = 0; index < Audio::eventCount; ++index) {
+			auto& binding = loaded.Sounds.Bindings[index];
+			const auto& fallback = defaultValues.Sounds.Bindings[index];
+			const auto section = Audio::descriptions[index].Section;
+			profile.Read(section, L"Enabled", binding.Enabled, fallback.Enabled, ParseBool);
+			profile.Read(section, L"File", binding.File, fallback.File,
+				[](std::wstring_view text, std::array<char, 64>& value) {
+					return ParseName(text, value, false, false) && IsValidSoundFileName(NameView(value));
+				});
+		}
 		profile.Read(fontSectionName, L"PrimaryFont", loaded.Fonts.PrimaryFont,
 			defaultFontSettings.PrimaryFont, [](std::wstring_view text, FontFileName& value) {
 				return ParseName(text, value, false, true);
@@ -478,6 +493,14 @@ namespace SFSEMenuFramework::FrameworkSettings
 			profile.Write(sectionName, L"MenuStyle", saved.MenuStyle.data());
 			profile.Write(L"Cursor", L"Name", saved.CursorName.data());
 			profile.Write(L"Cursor", L"Scale", saved.CursorScale);
+			profile.Write(L"Sounds", L"Enabled", saved.Sounds.Enabled ? L"1" : L"0");
+			profile.Write(L"Sounds", L"Volume", saved.Sounds.Volume);
+			for (std::size_t index = 0; index < Audio::eventCount; ++index) {
+				const auto& binding = saved.Sounds.Bindings[index];
+				const auto section = Audio::descriptions[index].Section;
+				profile.Write(section, L"Enabled", binding.Enabled ? L"1" : L"0");
+				profile.Write(section, L"File", NameView(binding.File));
+			}
 			profile.Write(fontSectionName, L"PrimaryFont", NameView(saved.Fonts.PrimaryFont));
 			profile.Write(fontSectionName, L"FontRendering",
 				GetFontRenderingName(saved.Fonts.Rendering));

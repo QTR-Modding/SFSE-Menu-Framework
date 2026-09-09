@@ -180,6 +180,12 @@ namespace SFSEMenuFramework::FrameworkSettings
 			cursorName : defaultValues.CursorName;
 		a_values.CursorScale = std::isfinite(a_values.CursorScale) ?
 			std::clamp(a_values.CursorScale, 0.5F, 3.0F) : 1.0F;
+		a_values.Sounds.Volume = std::isfinite(a_values.Sounds.Volume) ?
+			std::clamp(a_values.Sounds.Volume, 0.0F, 1.0F) : 0.35F;
+		for (auto& binding : a_values.Sounds.Bindings) {
+			if (!IsValidSoundFileName(NameView(binding.File)) ||
+				EqualsIgnoreCaseAscii(NameView(binding.File), "DEFAULT")) binding.File = Audio::defaultFile;
+		}
 		static_cast<void>(NormalizeFontSettings(a_values.Fonts));
 	}
 
@@ -222,6 +228,13 @@ namespace SFSEMenuFramework::FrameworkSettings
 	MenuStyleName GetMenuStyle() noexcept { return GetValues().MenuStyle; }
 	MenuStyleName GetCursorName() noexcept { return GetValues().CursorName; }
 	float GetCursorScale() noexcept { return GetValues().CursorScale; }
+	Audio::Settings GetSoundSettings() noexcept { return GetValues().Sounds; }
+	bool IsValidSoundFileName(std::string_view name) noexcept
+	{
+		return EqualsIgnoreCaseAscii(name, "DEFAULT") ||
+			(IsValidLeafName(name, Audio::defaultFile.size()) && name.size() > 4 &&
+			 EqualsIgnoreCaseAscii(name.substr(name.size() - 4), ".wav"));
+	}
 	bool SetCursorName(std::string_view a_name) noexcept
 	{
 		MenuStyleName normalized{};
