@@ -48,6 +48,19 @@ to restore the main and Settings windows.
 For more fonts, place `.ttf` or `.otf` files directly in
 `Data/SFSE/Plugins/Fonts`, then restart the game.
 
+## Menu sounds
+
+In **Options > Open Settings > Sounds**, enable sounds and choose a file for
+each event. Every event has its own toggle; volume and selections apply live
+and save automatically. Sounds are off by default and independent of themes.
+
+For custom sounds, put 16-bit PCM WAV files directly in
+`Data/SFSE/Plugins/SFSEMenuFrameworkSounds`, then select **Reload sounds**.
+Use mono/stereo audio, 8–192 kHz, up to 5 seconds and 4 MiB per file. Filenames
+must be printable ASCII, at most 63 characters including `.wav`.
+**Default** uses a quiet built-in tone; **Preview** plays your selection.
+No changes to client mods are required for standard ImGui widgets.
+
 ## Adding a menu to your mod
 
 Use the MIT-licensed [SFSE-MCP SDK](https://github.com/QTR-Modding/SFSE-MCP).

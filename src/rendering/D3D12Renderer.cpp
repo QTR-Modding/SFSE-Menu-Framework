@@ -1,4 +1,5 @@
 #include "rendering/D3D12Renderer.h"
+#include "audio/MenuSounds.h"
 #include "rendering/D3D12Texture.h"
 
 #include "appearance/FontManager.h"
@@ -587,6 +588,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			lifecycleSnapshot);
 		const auto repeatTiming = GamepadNavigation::ApplyRepeatTiming();
 		ImGui::NewFrame();
+		Audio::BeginFrame();
 		GamepadNavigation::RestoreRepeatTiming(repeatTiming);
 		HudManager::Render();
 		const auto renderedGeneration = WindowManager::RenderOpenWindows();
@@ -597,6 +599,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		if (CursorManager::Render()) {
 			io.MouseDrawCursor = false;
 		}
+		Audio::EndFrame();
 		ImGui::Render();
 		// The Win32 backend still needs this flag to hide the OS pointer.
 		io.MouseDrawCursor = drawMouseCursor;
