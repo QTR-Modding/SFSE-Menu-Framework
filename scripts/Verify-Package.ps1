@@ -24,6 +24,8 @@ $expectedFiles = @(
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk-OFL.txt'
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk[wght].ttf'
 	'Data/SFSE/Plugins/SFSEMenuFramework.dll'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkCursors/ring.json'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkCursors/ring.png'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/blackest sea.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/constellation.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/classic.json'
@@ -33,7 +35,7 @@ $expectedFiles = @(
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/unity.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/wallpapers/unity.png'
 	'Data/THIRD_PARTY_NOTICES.md'
-) | Sort-Object
+) | ForEach-Object { $_.Substring(5) } | Sort-Object
 
 $archivePath = (Resolve-Path -LiteralPath $Archive).Path
 $builtDllPath = (Resolve-Path -LiteralPath $BuiltDll).Path
@@ -52,7 +54,7 @@ try {
 		throw "Package manifest mismatch:`n$details"
 	}
 
-	$dllEntry = $zip.GetEntry('Data/SFSE/Plugins/SFSEMenuFramework.dll')
+	$dllEntry = $zip.GetEntry('SFSE/Plugins/SFSEMenuFramework.dll')
 	$entryStream = $dllEntry.Open()
 	try {
 		$sha256 = [System.Security.Cryptography.SHA256]::Create()
@@ -66,7 +68,14 @@ try {
 	} finally {
 		$entryStream.Dispose()
 	}
-	$builtDllHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $builtDllPath).Hash
+	$builtStream = [IO.File]::OpenRead($builtDllPath)
+	$builtSha = [Security.Cryptography.SHA256]::Create()
+	try {
+		$builtDllHash = [BitConverter]::ToString($builtSha.ComputeHash($builtStream)).Replace('-', '')
+	} finally {
+		$builtStream.Dispose()
+		$builtSha.Dispose()
+	}
 	if ($archiveDllHash -ne $builtDllHash) {
 		throw 'Packaged DLL does not match the reviewed build output.'
 	}

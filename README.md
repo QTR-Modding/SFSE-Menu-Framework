@@ -180,10 +180,10 @@ git clone --recurse-submodules https://github.com/QTR-Modding/SFSE-Menu-Framewor
 cd SFSE-Menu-Framework
 xmake f -m releasedbg
 xmake
-xmake package
 ```
 
-The archive is written to `build/packages/`.
+Release and releasedbg builds automatically prepare `build/staging/` and a ZIP
+in `build/packages/`, excluding debug symbols and personal settings.
 To generate a Visual Studio solution, run `xmake project -k vsxmake`.
 
 For a fork, `scripts/signing/Initialize-Signing.ps1` creates a non-exportable
