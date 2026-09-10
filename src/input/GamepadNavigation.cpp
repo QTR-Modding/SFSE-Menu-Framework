@@ -27,6 +27,7 @@ namespace SFSEMenuFramework::GamepadNavigation
 	{
 		constexpr std::size_t queueCapacity = 512;
 		constexpr float       activityThreshold = 0.10F;
+		constexpr float       stickDeadzone = 0.30F;
 		constexpr float       gamepadRepeatDelay = 0.625F;
 		constexpr float       gamepadRepeatRate = 0.125F;
 
@@ -356,8 +357,11 @@ namespace SFSEMenuFramework::GamepadNavigation
 			pending.Kind = stick.IsLeft() ? EventKind::LeftStick : EventKind::RightStick;
 			pending.X = std::clamp(stick.xValue, -1.0F, 1.0F);
 			pending.Y = std::clamp(stick.yValue, -1.0F, 1.0F);
-			active = std::abs(pending.X) > activityThreshold ||
-				std::abs(pending.Y) > activityThreshold;
+			// Centre drift must neither navigate nor switch away from the mouse.
+			// Queue a zero on return to neutral so held ImGui directions release.
+			if (std::abs(pending.X) <= stickDeadzone) pending.X = 0.0F;
+			if (std::abs(pending.Y) <= stickDeadzone) pending.Y = 0.0F;
+			active = pending.X != 0.0F || pending.Y != 0.0F;
 			sequenceActive = active;
 		} else {
 			return;

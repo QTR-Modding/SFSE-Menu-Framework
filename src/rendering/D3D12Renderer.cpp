@@ -342,6 +342,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 				return fail();
 			}
 			ThemeManager::Initialize();
+			static_cast<void>(ThemeManager::QueueUIScale(FontManager::GetActiveUIScale()));
+			ThemeManager::ApplyPending();
 
 			// Keep a CPU-only source descriptor for safe copies into frame heaps.
 			if (!CreateDescriptorHeap(a_device, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
@@ -550,6 +552,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			return;
 		}
 		ImGui_ImplDX12_NewFrame();
+		FontManager::UpdateResolutionScale(io);
 		FontUploadContext fontUpload{
 			.Device = rendererState.Device.Get(),
 			.CommandList = a_commandList

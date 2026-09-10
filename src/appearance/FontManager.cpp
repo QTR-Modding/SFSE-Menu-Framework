@@ -2,11 +2,14 @@
 
 #include "appearance/fonts/ConsumerFontScope.h"
 #include "appearance/fonts/FontAtlasBuilder.h"
+#include "config/FrameworkSettingsInternal.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
 
 #include <cstddef>
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -30,12 +33,44 @@ namespace SFSEMenuFramework::FontManager
 			std::optional<FrameworkSettings::FontSettings> PendingSettings;
 			std::optional<Fonts::AtlasGeneration> ActiveGeneration;
 			std::string LastApplyError;
+			float ResolutionScale{ 1.0F };
+			float ObservedResolutionScale{ 1.0F };
+			float StableResolutionSeconds{};
+			float ActiveResolutionScale{ 1.0F };
+			float ActiveUIScale{ 1.0F };
 		};
 
 		[[nodiscard]] State& GetState()
 		{
 			static auto* state = new State();
 			return *state;
+		}
+
+		float ResolutionScale(const ImGuiIO& a_io) noexcept
+		{
+			return std::isfinite(a_io.DisplaySize.y) && a_io.DisplaySize.y > 0.0F ?
+				std::clamp(a_io.DisplaySize.y / 2160.0F, 0.25F, 2.0F) : 1.0F;
+		}
+
+		FrameworkSettings::FontSettings ScaledSettings(
+			const FrameworkSettings::FontSettings& a_settings) noexcept
+		{
+			auto scaled = a_settings;
+			scaled.UIScale = (std::min)(a_settings.UIScale * GetState().ResolutionScale,
+				FrameworkSettings::Detail::maximumRasterSize / a_settings.FontSizeMedium);
+			return scaled;
+		}
+
+		bool BuildScaledAtlas(ImFontAtlas& a_atlas,
+			const FrameworkSettings::FontSettings& a_settings, Fonts::AtlasGeneration& a_generation)
+		{
+			if (!Fonts::BuildAtlas(a_atlas, GetState().Fonts, ScaledSettings(a_settings), a_generation)) {
+				return false;
+			}
+			// Only rasterization uses the effective scale. Keep the user's saved
+			// percentage and live settings comparisons independent of resolution.
+			a_generation.Settings.UIScale = a_settings.UIScale;
+			return true;
 		}
 
 		void RefreshFonts()
@@ -98,6 +133,8 @@ namespace SFSEMenuFramework::FontManager
 			auto& state = GetState();
 			state.ActiveGeneration = std::move(a_generation);
 			const auto& active = *state.ActiveGeneration;
+			state.ActiveResolutionScale = state.ResolutionScale;
+			state.ActiveUIScale = ScaledSettings(active.Settings).UIScale;
 			if (active.WeightAxis) {
 				logger::info(
 					"Loaded ImGui font generation '{}' at weight {:.0f}, {:.1f} "
@@ -155,9 +192,10 @@ namespace SFSEMenuFramework::FontManager
 			return false;
 		}
 		RefreshFonts();
+		GetState().ResolutionScale = ResolutionScale(a_io);
+		GetState().ObservedResolutionScale = GetState().ResolutionScale;
 		Fonts::AtlasGeneration generation;
-		if (!Fonts::BuildAtlas(*a_io.Fonts, GetState().Fonts,
-				FrameworkSettings::GetFontSettings(), generation)) {
+		if (!BuildScaledAtlas(*a_io.Fonts, FrameworkSettings::GetFontSettings(), generation)) {
 			a_io.Fonts->Clear();
 			return false;
 		}
@@ -176,7 +214,7 @@ namespace SFSEMenuFramework::FontManager
 		}
 		auto& state = GetState();
 		state.LastApplyError.clear();
-		if (state.ActiveGeneration && FrameworkSettings::FontSettingsEqual(
+		if (state.ActiveGeneration && state.ActiveResolutionScale == state.ResolutionScale && FrameworkSettings::FontSettingsEqual(
 				a_settings, state.ActiveGeneration->Settings)) {
 			state.PendingSettings.reset();
 			return true;
@@ -188,6 +226,27 @@ namespace SFSEMenuFramework::FontManager
 	bool HasPendingAtlasRebuild() noexcept
 	{
 		return GetState().PendingSettings.has_value();
+	}
+
+	void UpdateResolutionScale(const ImGuiIO& a_io) noexcept
+	{
+		if (!std::isfinite(a_io.DisplaySize.y) || a_io.DisplaySize.y <= 0.0F) return;
+		auto& state = GetState();
+		const float scale = ResolutionScale(a_io);
+		if (scale != state.ObservedResolutionScale) {
+			state.ObservedResolutionScale = scale;
+			state.StableResolutionSeconds = 0.0F;
+			return;
+		}
+		if (scale == state.ResolutionScale) return;
+		state.StableResolutionSeconds += std::clamp(a_io.DeltaTime, 0.0F, 0.1F);
+		// Rebuild once a resize settles, not for every pixel during a window drag.
+		if (state.StableResolutionSeconds < 0.2F) return;
+		state.ResolutionScale = scale;
+		if (!state.PendingSettings) {
+			state.PendingSettings = state.ActiveGeneration ?
+				state.ActiveGeneration->Settings : FrameworkSettings::GetFontSettings();
+		}
 	}
 
 	LiveApplyResult ApplyPendingAtlas(
@@ -212,8 +271,7 @@ namespace SFSEMenuFramework::FontManager
 		CopyAtlasConfiguration(*a_io.Fonts, candidateAtlas);
 		RefreshFonts();
 		Fonts::AtlasGeneration candidateGeneration;
-		if (!Fonts::BuildAtlas(candidateAtlas, state.Fonts, requested,
-				candidateGeneration)) {
+		if (!BuildScaledAtlas(candidateAtlas, requested, candidateGeneration)) {
 			candidateAtlas.Clear();
 			return ApplyFailed("Could not build the requested font generation; "
 				"the previous generation remains active.");
@@ -271,14 +329,16 @@ namespace SFSEMenuFramework::FontManager
 	{
 		const auto& active = GetState().ActiveGeneration;
 		if (!active) {
-			return { .Settings = FrameworkSettings::GetFontSettings() };
+			const auto settings = FrameworkSettings::GetFontSettings();
+			return { .Settings = settings, .EffectiveUIScale = ScaledSettings(settings).UIScale };
 		}
 		return {
 			.Settings = active->Settings,
 			.Name = active->ActiveName,
 			.WeightAxis = active->WeightAxis,
 			.FallbackReason = active->FallbackReason,
-			.RasterSize = active->RasterSize()
+			.RasterSize = active->RasterSize(),
+			.EffectiveUIScale = GetState().ActiveUIScale
 		};
 	}
 

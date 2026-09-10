@@ -40,6 +40,8 @@ namespace
         std::uint64_t Generation = 100;
         alignas(RE::ButtonEvent) std::byte EventStorage[sizeof(RE::ButtonEvent)]{};
         RE::ButtonEvent* Event = new (EventStorage) RE::ButtonEvent{};
+        alignas(RE::ThumbstickEvent) std::byte StickStorage[sizeof(RE::ThumbstickEvent)]{};
+        RE::ThumbstickEvent* StickEvent = new (StickStorage) RE::ThumbstickEvent{};
 
         Fixture()
         {
@@ -54,6 +56,8 @@ namespace
             io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
             Event->deviceType = RE::InputEvent::DeviceType::kGamepad;
             Event->eventType = RE::InputEvent::EventType::kButton;
+            StickEvent->deviceType = RE::InputEvent::DeviceType::kGamepad;
+            StickEvent->eventType = RE::InputEvent::EventType::kThumbstick;
             Reset();
         }
 
@@ -84,6 +88,15 @@ namespace
 
         void Back(float value, float held = 0.0F) { Capture(8192, value, held); }
 
+        void Stick(bool left, float x, float y, bool allowed = true)
+        {
+            StickEvent->idCode = left ? 0x0B : 0x0C;
+            StickEvent->xValue = x;
+            StickEvent->yValue = y;
+            Pad::CaptureNativeEvent(*StickEvent, Generation, allowed);
+            Frame(false, false);
+        }
+
         void Frame(bool expectedDown, bool expectedPress)
         {
             Pad::ApplyPending(Generation);
@@ -102,6 +115,59 @@ namespace
             ImGui::EndFrame();
         }
     };
+
+    void TestStickDeadzone(Fixture& ui)
+    {
+        for (const bool left : {true, false}) {
+            ui.Reset();
+            const auto right = left ? ImGuiKey_GamepadLStickRight : ImGuiKey_GamepadRStickRight;
+            const auto up = left ? ImGuiKey_GamepadLStickUp : ImGuiKey_GamepadRStickUp;
+            const auto leftKey = left ? ImGuiKey_GamepadLStickLeft : ImGuiKey_GamepadRStickLeft;
+            const auto down = left ? ImGuiKey_GamepadLStickDown : ImGuiKey_GamepadRStickDown;
+            const auto neutral = [&] {
+                for (const auto key : {right, up, leftKey, down}) {
+                    Check(!ImGui::IsKeyDown(key), "neutral stick must release every direction");
+                    Check(ImGui::GetKeyData(key)->AnalogValue == 0, "neutral analog strength must be zero");
+                }
+            };
+            Pad::ObserveMouseActivity(ui.Generation);
+            for (const float drift : {0.0F, 0.1F, 0.2F, 0.3F, -0.3F}) {
+                ui.Stick(left, drift, -drift);
+                neutral();
+                Check(Pad::ShouldDrawMouseCursor(ui.Generation), "drift must not switch input device");
+            }
+            ui.Stick(left, 0.6F, 0.2F);
+            Check(ImGui::IsKeyDown(right) && !ImGui::IsKeyDown(up), "intentional horizontal movement ignores minor vertical offset");
+            Check(!Pad::ShouldDrawMouseCursor(ui.Generation), "intentional stick movement switches input device");
+            Pad::ObserveMouseActivity(ui.Generation);
+            ui.Stick(left, 0.2F, -0.15F, false);
+            neutral();
+            Check(Pad::ShouldDrawMouseCursor(ui.Generation), "return to off-centre rest must not steal mouse focus");
+            for (int frame = 0; frame < 90; ++frame) ui.Frame(false, false);
+            neutral();
+            ui.Stick(left, -0.6F, -0.7F);
+            Check(ImGui::IsKeyDown(leftKey) && ImGui::IsKeyDown(down), "negative deliberate axes remain available");
+            ui.Stick(left, 0, 0);
+            neutral();
+            ui.Stick(left, 0, 0.31F);
+            Check(ImGui::IsKeyDown(up), "movement just outside neutral zone activates");
+            ui.Stick(left, 0, 0.3F);
+            neutral();
+            ui.Stick(left, 0.8F, 0, false);
+            ui.Stick(left, 0.7F, 0);
+            neutral();
+            ui.Stick(left, 0.1F, 0);
+            ui.Stick(left, 0.8F, 0);
+            Check(ImGui::IsKeyDown(right), "neutral ends a consumed stick sequence");
+            ui.Stick(left, 0, 0);
+        }
+        ui.Reset();
+        ui.Capture(9, 0.2F);
+        ui.Capture(1, 1);
+        ui.Frame(false, false);
+        Check(ImGui::IsKeyDown(ImGuiKey_GamepadL2), "trigger threshold must stay unchanged");
+        Check(ImGui::IsKeyDown(ImGuiKey_GamepadDpadUp), "D-pad must stay unchanged");
+    }
 
     void TestConsumedSequence(Fixture& ui)
     {
@@ -186,5 +252,6 @@ int main()
     TestConsumedSequence(ui);
     TestGenerationReset(ui);
     TestOverflowRecovery(ui);
-    std::cout << "Native gamepad B sequence tests passed\n";
+    TestStickDeadzone(ui);
+    std::cout << "Native gamepad input tests passed\n";
 }

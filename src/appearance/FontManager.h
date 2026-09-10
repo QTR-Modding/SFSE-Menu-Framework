@@ -22,6 +22,7 @@ namespace SFSEMenuFramework::FontManager
 		std::optional<FontWeightAxis>    WeightAxis;
 		std::string_view FallbackReason;
 		float RasterSize{};
+		float EffectiveUIScale{ 1.0F };
 	};
 
 	struct TextureBuildResult final
@@ -43,6 +44,7 @@ namespace SFSEMenuFramework::FontManager
 	[[nodiscard]] bool RequestAtlasRebuild(
 		const FrameworkSettings::FontSettings&) noexcept;
 	[[nodiscard]] bool HasPendingAtlasRebuild() noexcept;
+	void UpdateResolutionScale(const ImGuiIO&) noexcept;
 	[[nodiscard]] LiveApplyResult ApplyPendingAtlas(
 		ImGuiIO&, TextureBuilder, void*);
 
@@ -50,7 +52,7 @@ namespace SFSEMenuFramework::FontManager
 	[[nodiscard]] std::optional<FontWeightAxis> GetWeightAxis(std::size_t);
 	[[nodiscard]] ActiveFontInfo GetActiveInfo() noexcept;
 	[[nodiscard]] inline float GetActiveUIScale() noexcept {
-		return GetActiveInfo().Settings.UIScale; }
+		return GetActiveInfo().EffectiveUIScale; }
 	[[nodiscard]] std::string_view GetLastApplyError() noexcept;
 	[[nodiscard]] bool PushDefaultFont() noexcept;
 	[[nodiscard]] bool PushFont(std::string_view) noexcept;

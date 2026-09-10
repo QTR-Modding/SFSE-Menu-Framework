@@ -268,9 +268,13 @@ namespace
         ui.ExpectFocus(ui.Content, ui.ContentItems[1], "Down skips the same-row button");
         ui.Tap(ImGuiKey_GamepadDpadUp);
         ui.ExpectFocus(ui.Content, ui.ContentItems[0], "Up returns to the control above");
+        const float beforeStickSelection = ui.Content->Scroll.y;
         ui.Tap(ImGuiKey_GamepadLStickDown);
         ui.ExpectFocus(ui.Content, ui.ContentItems[1], "stick Down is spatial too");
-        for (std::size_t i = 2; i < ui.ContentItems.size(); ++i) ui.Tap(ImGuiKey_GamepadDpadDown);
+        ui.Frame();
+        Check(ui.Content->Scroll.y == beforeStickSelection,
+            "left-stick selection of an already visible item must not manually scroll");
+        for (std::size_t i = 2; i < ui.ContentItems.size(); ++i) ui.Tap(ImGuiKey_GamepadLStickDown);
         ui.ExpectFocus(ui.Content, ui.ContentItems.back(), "spatial navigation reaches offscreen controls");
         Check(ui.Content->Scroll.y > 0, "offscreen focus scrolls into view");
         for (std::size_t i = 1; i < ui.ContentItems.size(); ++i) ui.Tap(ImGuiKey_GamepadDpadUp);

@@ -534,7 +534,7 @@ namespace
 			-(footerHeight + ImGui::GetStyle().ItemSpacing.y) : -FLT_MIN;
 		const auto available = ImGui::GetContentRegionAvail();
 		const float navigationWidth = available.x * 0.3F;
-		const float uiScale = SFSEMenuFramework::FontManager::GetActiveInfo().Settings.UIScale;
+		const float uiScale = SFSEMenuFramework::FontManager::GetActiveUIScale();
 		const float headerHeight = ImCeil((std::max)(50.0F * uiScale, ImGui::GetFrameHeight()));
 
 		if (ImGui::BeginChild(

@@ -585,7 +585,7 @@ namespace SFSEMenuFramework::SettingsWindow
 
 			ImGui::TextUnformatted("UI scale");
 			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Scales text, ImGui controls, and framework layout.");
+				ImGui::SetTooltip("Scales text, controls and layout relative to the game window. 100%% preserves the 4K baseline.");
 			}
 			int uiScalePercent = static_cast<int>(std::lround(pending.UIScale * 100.0F));
 			const bool uiScaleEdited = ImGui::SliderInt(
@@ -594,6 +594,7 @@ namespace SFSEMenuFramework::SettingsWindow
 				pending.UIScale = static_cast<float>(uiScalePercent) / 100.0F;
 			}
 			FinishFontEdit(pending, uiScaleEdited);
+			ImGui::TextDisabled("Resolution-adjusted scale: %.0f%%", active.EffectiveUIScale * 100.0F);
 
 			RenderGlyphCoverage(pending);
 
