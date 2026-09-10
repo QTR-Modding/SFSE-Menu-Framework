@@ -48,6 +48,7 @@ namespace
         bool CloseOptions{};
         bool OptionsRequested{};
         bool ShowNestedChild{};
+        bool ReplaceNestedChild{};
 
         Fixture()
         {
@@ -176,6 +177,9 @@ namespace
                 ImGui::Button("Nested control");
                 ContentItems.push_back(ImGui::GetItemID());
                 ImGui::EndChild();
+            } else if (ReplaceNestedChild) {
+                ImGui::Button("Nested");
+                ContentItems.push_back(ImGui::GetItemID());
             }
             if (OpenPopup) {
                 ImGui::OpenPopup("Blocking popup");
@@ -307,6 +311,16 @@ namespace
         ui.ExpectFocus(ui.Tree, ui.TreeItems[0], "Back restores the tree from a nested child");
         ui.Tap(ImGuiKey_GamepadR1);
         ui.ShowNestedChild = false;
+        ui.ReplaceNestedChild = true;
+        ui.Frame(); ui.Frame();
+        ImGui::SetScrollY(ui.Content, ui.Content->ScrollMax.y);
+        ui.Frame(); ui.Frame();
+        ImGui::FocusWindow(ui.Content);
+        ImGui::SetFocusID(ui.ContentItems[ui.ContentItems.size() - 2], ui.Content);
+        ui.Frame();
+        ui.Tap(ImGuiKey_GamepadDpadDown);
+        ui.ExpectFocus(ui.Content, ui.ContentItems.back(), "replacement of an inactive child remains navigable");
+        ui.ReplaceNestedChild = false;
         Pad::NotifyPageClosed();
         ui.Frame();
         ui.Tap(ImGuiKey_GamepadR1);

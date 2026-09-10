@@ -83,7 +83,8 @@ namespace SFSEMenuFramework::McpGamepad {
 
         bool IsChildContainer(const ImGuiContext* context, const ImGuiWindow* parent, ImGuiID id) {
             for (ImGuiWindow* candidate : context->Windows) {
-                if (candidate->ParentWindow == parent && candidate->ChildId == id) {
+                if (candidate->LastFrameActive == context->FrameCount &&
+                    candidate->ParentWindow == parent && candidate->ChildId == id) {
                     return true;
                 }
             }

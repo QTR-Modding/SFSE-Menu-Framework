@@ -298,8 +298,8 @@ namespace
 			ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
 		const bool itemFocused = ImGui::IsItemFocused();
 
-		if ((itemClicked || (gamePadButtonPressed && itemFocused)) &&
-			!itemToggledOpen &&
+		if (((itemClicked && !itemToggledOpen) ||
+			 (gamePadButtonPressed && itemFocused)) &&
 			IsPanelEnabled(panel)) {
 			selectedNode = a_node;
 			if (gamePadButtonPressed && itemFocused) {
