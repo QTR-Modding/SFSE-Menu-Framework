@@ -29,7 +29,7 @@ into Starfield's `Data` folder. Launch through SFSE, then press **F1**.
 
 Gamepad input hides the cursor; using the mouse brings it back.
 Choose Xbox or PlayStation prompts in **Settings > Controls > Controller icons**.
-The small favorite/archive buttons are mouse-only, matching SKSE-MF.
+Use Up/Down to select the favorite/archive buttons and A to activate them.
 The menu can open before game data finishes loading.
 
 ## Settings

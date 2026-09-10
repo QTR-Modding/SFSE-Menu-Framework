@@ -7,6 +7,7 @@
 #include <array>
 #include <algorithm>
 #include <cstdlib>
+#include <cmath>
 #include <iostream>
 #include <vector>
 
@@ -519,6 +520,124 @@ namespace
     }
 }
 
+namespace
+{
+    void TestRootActionsAndStickAdjustment()
+    {
+        ImGuiWindow* tree{};
+        ImGuiWindow* sliders{};
+        std::array<ImGuiID, 3> actions{};
+        ImGuiID sliderId{}, dragId{};
+        bool favorite{}, archiveRequested{};
+        int archived{};
+        float value = 50.0f, dragValue = 50.0f;
+        auto frame = [&] {
+            ImGui::NewFrame();
+            Pad::BeginWindows(true);
+            ImGui::SetNextWindowSize({500, 350});
+            ImGui::Begin("Root action coverage");
+            Pad::BeginFrame(false, false);
+            ImGui::BeginChild("Mod list", {0, 220});
+            tree = ImGui::GetCurrentWindow();
+            Pad::BeginArea(Pad::Area::PageTree);
+            if (ImGui::BeginTable("Root row", 3)) {
+                const float size = ImGui::GetFrameHeight();
+                ImGui::TableSetupColumn("Header", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Favorite", ImGuiTableColumnFlags_WidthFixed, size);
+                ImGui::TableSetupColumn("Archive", ImGuiTableColumnFlags_WidthFixed, size);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::CollapsingHeader("Example mod"); actions[0] = ImGui::GetItemID();
+                ImGui::TableSetColumnIndex(1);
+                if (ImGui::Button("##Favorite", {size, size})) favorite = !favorite;
+                actions[1] = ImGui::GetItemID();
+                ImGui::TableSetColumnIndex(2);
+                if (ImGui::Button("-", {size, size})) archiveRequested = true;
+                actions[2] = ImGui::GetItemID();
+                ImGui::EndTable();
+            }
+            Pad::EndArea();
+            ImGui::EndChild();
+            if (archiveRequested) { ImGui::OpenPopup("Archive confirmation"); archiveRequested = false; }
+            if (ImGui::BeginPopupModal("Archive confirmation", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+                ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                if (ImGui::Button("Confirm")) { ++archived; ImGui::CloseCurrentPopup(); }
+                ImGui::EndPopup();
+            }
+            Pad::EndFrame();
+            ImGui::End();
+            ImGui::SetNextWindowSize({400, 200});
+            ImGui::Begin("Client sliders");
+            sliders = ImGui::GetCurrentWindow();
+            ImGui::SliderFloat("Value", &value, 0.0f, 100.0f); sliderId = ImGui::GetItemID();
+            ImGui::DragFloat("Drag", &dragValue, 1.0f, 0.0f, 100.0f); dragId = ImGui::GetItemID();
+            ImGui::End();
+            Pad::EndWindows();
+            ImGui::Render();
+        };
+        auto focus = [&](ImGuiWindow* window, ImGuiID id) {
+            ImGui::FocusWindow(window); ImGui::SetFocusID(id, window); frame();
+        };
+        auto tap = [&](ImGuiKey key) {
+            ImGui::GetIO().AddKeyEvent(key, true); frame();
+            ImGui::GetIO().AddKeyEvent(key, false); frame();
+        };
+        auto tilt = [&](float x, float y) {
+            auto& io = ImGui::GetIO();
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, x < -0.1f, std::max(0.0f, -x));
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, x > 0.1f, std::max(0.0f, x));
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, y > 0.1f, std::max(0.0f, y));
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, y < -0.1f, std::max(0.0f, -y));
+            frame();
+        };
+        Pad::NotifyInputDevice(false);
+        frame(); frame();
+        focus(tree, actions[0]);
+        tap(ImGuiKey_GamepadDpadDown);
+        Check(GImGui->NavId == actions[1], "favorite button is selectable");
+        tap(ImGuiKey_GamepadFaceDown);
+        Check(favorite, "A favorites the selected mod");
+        tap(ImGuiKey_GamepadFaceDown);
+        Check(!favorite, "A removes the favorite");
+        tap(ImGuiKey_GamepadDpadDown);
+        Check(GImGui->NavId == actions[2], "archive button is selectable");
+        tap(ImGuiKey_GamepadFaceDown);
+        Check(archived == 0 && !GImGui->OpenPopupStack.empty(), "archive requires confirmation");
+        tap(ImGuiKey_GamepadFaceDown);
+        Check(archived == 0 && GImGui->OpenPopupStack.empty(), "Cancel leaves the mod unarchived");
+        focus(tree, actions[2]);
+        tap(ImGuiKey_GamepadFaceDown);
+        tap(ImGuiKey_GamepadDpadRight);
+        tap(ImGuiKey_GamepadFaceDown);
+        Check(archived == 1, "A confirms archive exactly once");
+
+        focus(sliders, sliderId);
+        tap(ImGuiKey_GamepadFaceDown);
+        Check(GImGui->ActiveId == sliderId, "A activates the client slider without main-panel focus theft");
+        const float before = value;
+        tilt(0.8f, 0.15f); tilt(0, 0);
+        const float stickStep = value - before;
+        Check(stickStep > 0.0f, "right thumbstick tilt increases an active slider");
+        const float beforeDpad = value;
+        tap(ImGuiKey_GamepadDpadRight);
+        Check(std::abs((value - beforeDpad) - stickStep) < 0.001f, "stick and D-pad use the same adjustment step");
+        tilt(-0.8f, -0.15f); tilt(0, 0);
+        Check(std::abs(value - beforeDpad) < 0.001f, "left thumbstick tilt decreases the active slider");
+        tap(ImGuiKey_GamepadFaceRight);
+        const float stopped = value;
+        frame(); frame();
+        Check(value == stopped, "releasing the stick and leaving the slider stops adjustment");
+        focus(sliders, dragId);
+        tap(ImGuiKey_GamepadFaceDown);
+        const float dragBefore = dragValue;
+        tilt(0.8f, 0.15f); tilt(0, 0);
+        Check(dragValue > dragBefore, "thumbstick also adjusts active drag controls");
+        tap(ImGuiKey_GamepadFaceRight);
+    }
+}
+
 int main()
 {
     Fixture ui;
@@ -529,5 +648,6 @@ int main()
     TestDeviceAndBack(ui);
     TestIconsAndWindowing(ui);
     TestWindowCoverage();
+    TestRootActionsAndStickAdjustment();
     std::cout << "MCP gamepad navigation tests passed\n";
 }

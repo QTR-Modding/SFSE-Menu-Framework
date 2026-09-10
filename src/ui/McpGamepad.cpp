@@ -130,14 +130,14 @@ namespace SFSEMenuFramework::McpGamepad {
             }
         }
 
-        ImGuiDir ReadDirection() {
-            constexpr std::array dpad{ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight,
-                ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadDpadDown};
-            constexpr std::array stick{ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight,
-                ImGuiKey_GamepadLStickUp, ImGuiKey_GamepadLStickDown};
+        constexpr std::array dpad{ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight,
+            ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadDpadDown};
+        constexpr std::array stick{ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight,
+            ImGuiKey_GamepadLStickUp, ImGuiKey_GamepadLStickDown};
+
+        ImGuiDir StickDirection() {
             std::array<float, 4> strength{};
             for (std::size_t i = 0; i < stick.size(); ++i) {
-                if (ImGui::IsKeyPressed(dpad[i], true)) return static_cast<ImGuiDir>(i);
                 const auto* key = ImGui::GetKeyData(stick[i]);
                 strength[i] = key->Down ? key->AnalogValue : 0.0f;
             }
@@ -154,8 +154,30 @@ namespace SFSEMenuFramework::McpGamepad {
             else if (stickAxis == 1 && horizontal > vertical * 1.25f) stickAxis = 0;
             const int direction = stickAxis == 0 ?
                 (strength[0] > strength[1] ? 0 : 1) : (strength[2] > strength[3] ? 2 : 3);
-            return ImGui::IsKeyPressed(stick[direction], true) ?
-                static_cast<ImGuiDir>(direction) : ImGuiDir_None;
+            return static_cast<ImGuiDir>(direction);
+        }
+
+        ImGuiDir ReadDirection() {
+            for (std::size_t i = 0; i < dpad.size(); ++i)
+                if (ImGui::IsKeyPressed(dpad[i], true)) return static_cast<ImGuiDir>(i);
+            const ImGuiDir direction = StickDirection();
+            return direction != ImGuiDir_None && ImGui::IsKeyPressed(stick[direction], true) ?
+                direction : ImGuiDir_None;
+        }
+
+        float StickTweak(ImGuiAxis axis) {
+            if (!gamepadActive || GImGui->NavInputSource != ImGuiInputSource_Gamepad) return 0.0f;
+            // A physical D-pad press takes precedence; never double the adjustment.
+            for (const auto key : dpad)
+                if (ImGui::IsKeyDown(key)) return 0.0f;
+            const ImGuiDir direction = StickDirection();
+            if (direction == ImGuiDir_None ||
+                (axis == ImGuiAxis_X) != (direction == ImGuiDir_Left || direction == ImGuiDir_Right))
+                return 0.0f;
+            float delay{}, rate{};
+            ImGui::GetTypematicRepeatRate(ImGuiInputFlags_RepeatRateNavTweak, &delay, &rate);
+            const float amount = static_cast<float>(ImGui::GetKeyPressedAmount(stick[direction], delay, rate));
+            return direction == ImGuiDir_Left || direction == ImGuiDir_Up ? -amount : amount;
         }
 
         bool IsPopupBlockingAreaNavigation() {
@@ -411,11 +433,13 @@ namespace SFSEMenuFramework::McpGamepad {
         windowItems.clear();
         collectingWindows = true;
         ImGui::SetItemAddObserver(ObserveItem);
+        ImGui::SetNavTweakProvider(StickTweak);
     }
 
     void EndWindows() {
         collectingWindows = false;
         ImGui::SetItemAddObserver(nullptr);
+        ImGui::SetNavTweakProvider(nullptr);
         auto& context = *GImGui;
         if (!gamepadActive || !context.NavWindow || context.NavWindowingTarget) return;
         // Child panels share their owning window; a popup remains its own scope.
@@ -566,7 +590,8 @@ namespace SFSEMenuFramework::McpGamepad {
                 FocusItem(items[focusedIndices[areaIndex]]);
             }
             requestedFocus.reset();
-        } else if (activeArea == recordingArea && !IsPopupBlockingAreaNavigation(recordingArea)) {
+        } else if (activeArea == recordingArea && IsWindowInside(GImGui->NavWindow, panelWindow) &&
+                   !IsPopupBlockingAreaNavigation(recordingArea)) {
             const auto focusedItem = FindFocusedItem(items);
             if (focusedItem) {
                 focusedIndices[areaIndex] = *focusedItem;

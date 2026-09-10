@@ -6,4 +6,7 @@ namespace ImGui
 {
     using ImGuiItemAddObserver = void (*)(ImGuiContext*, ImGuiWindow*, const ImGuiLastItemData*);
     IMGUI_API void SetItemAddObserver(ImGuiItemAddObserver observer);
+
+    using ImGuiNavTweakProvider = float (*)(ImGuiAxis);
+    IMGUI_API void SetNavTweakProvider(ImGuiNavTweakProvider provider);
 }

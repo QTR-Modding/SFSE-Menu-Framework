@@ -217,7 +217,6 @@ namespace
 		float                  a_buttonSize)
 	{
 		PushNodeID(a_menu->Identity);
-		ImGui::PushItemFlag(ImGuiItemFlags_NoNav, SFSEMenuFramework::McpGamepad::IsActive());
 		ImGui::PushStyleColor(
 			ImGuiCol_Button,
 			ImVec4{ 0.0F, 0.0F, 0.0F, 0.0F });
@@ -243,7 +242,6 @@ namespace
 		RenderTooltip("Archive menu");
 
 		ImGui::PopStyleColor();
-		ImGui::PopItemFlag();
 		PopNodeID();
 	}
 

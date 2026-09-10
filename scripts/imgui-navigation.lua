@@ -8,8 +8,18 @@ function main(target)
     source = source:sub(1, last) ..
         "\n    if (id != 0 && GItemAddObserver != nullptr)\n        GItemAddObserver(&g, window, &g.LastItemData);" ..
         source:sub(last + 1)
+    -- Extend Dear ImGui 6d948ab (MIT) at its shared slider/drag adjustment path.
+    local tweak = "    return amount;\n}\n\nstatic void ImGui::NavUpdate()"
+    local tweak_first, tweak_last = source:find(tweak, 1, true)
+    assert(tweak_first and not source:find(tweak, tweak_last + 1, true),
+        "ImGui navigation tweak provider needs review: source changed")
+    source = source:sub(1, tweak_first - 1) ..
+        "    if (GNavTweakProvider != nullptr)\n        amount += GNavTweakProvider(axis);\n" ..
+        source:sub(tweak_first)
     source = '#define IMGUI_DEFINE_MATH_OPERATORS\n#include "ItemObserver.h"\n' ..
         'static ImGui::ImGuiItemAddObserver GItemAddObserver = nullptr;\n' ..
+        'static ImGui::ImGuiNavTweakProvider GNavTweakProvider = nullptr;\n' ..
+        'void ImGui::SetNavTweakProvider(ImGuiNavTweakProvider provider) { GNavTweakProvider = provider; }\n' ..
         'void ImGui::SetItemAddObserver(ImGuiItemAddObserver observer) { GItemAddObserver = observer; }\n' .. source
     local generated = path.join(target:autogendir(), "imgui_navigation.cpp")
     if not os.isfile(generated) or io.readfile(generated) ~= source then
