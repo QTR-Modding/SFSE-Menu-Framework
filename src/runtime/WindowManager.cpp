@@ -1,4 +1,5 @@
 #include "runtime/WindowManager.h"
+#include "ui/McpGamepad.h"
 
 #include "appearance/fonts/ConsumerFontScope.h"
 #include "config/FrameworkSettings.h"
@@ -229,6 +230,8 @@ namespace SFSEMenuFramework
 		if (!before.RenderEnabled) {
 			return 0;
 		}
+		const auto repeatTiming = GamepadNavigation::ApplyRepeatTiming();
+		McpGamepad::BeginWindows(!GamepadNavigation::ShouldDrawMouseCursor(before.BlockingGeneration));
 		bool renderedBlockingWindow{};
 		if (const auto windows = registry->Published.load(std::memory_order_acquire)) {
 			for (auto* window : *windows) {
@@ -256,6 +259,8 @@ namespace SFSEMenuFramework
 				renderedBlockingWindow |= blocking;
 			}
 		}
+		McpGamepad::EndWindows();
+		GamepadNavigation::RestoreRepeatTiming(repeatTiming);
 		const auto after = ReadState(*registry);
 		return renderedBlockingWindow && before.BlockingGeneration &&
 			after.BlockingGeneration == before.BlockingGeneration ?

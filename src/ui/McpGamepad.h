@@ -6,6 +6,9 @@ struct ImGuiWindow;
 namespace SFSEMenuFramework::McpGamepad {
     enum class Area { PageTree, PageContent, OptionsMenu, Popup, Count };
 
+    void BeginWindows(bool useGamepad);
+    void EndWindows();
+
     void BeginFrame(bool hasPage, bool suspended);
     void EndFrame();
 

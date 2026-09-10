@@ -5,6 +5,7 @@
 #include <imgui_internal.h>
 
 #include <array>
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <vector>
@@ -408,6 +409,116 @@ namespace
     }
 }
 
+namespace
+{
+    void TestWindowCoverage()
+    {
+        ImGuiWindow* settings{};
+        ImGuiWindow* client{};
+        ImGuiWindow* popup{};
+        std::array<ImGuiID, 3> settingsIds{}, clientIds{}, popupIds{};
+        bool checked{}, openPopup{};
+        auto controls = [&](std::array<ImGuiID, 3>& ids) {
+            ImGui::Button("Save settings"); ids[0] = ImGui::GetItemID();
+            ImGui::SameLine();
+            ImGui::Button("Load settings"); ids[1] = ImGui::GetItemID();
+            ImGui::Checkbox("Player inventory", &checked); ids[2] = ImGui::GetItemID();
+        };
+        auto frame = [&] {
+            ImGui::NewFrame();
+            Pad::BeginWindows(true);
+            ImGui::Begin("Suspended main panel");
+            Pad::BeginFrame(true, true);
+            ImGui::Button("Background control");
+            Pad::EndFrame();
+            ImGui::End();
+            ImGui::SetNextWindowPos({20, 20});
+            ImGui::SetNextWindowSize({500, 400});
+            ImGui::Begin("Settings coverage");
+            if (ImGui::BeginTabBar("Settings tabs")) {
+                if (ImGui::BeginTabItem("Appearance")) {
+                    ImGui::BeginChild("Settings body", {0, 200});
+                    settings = ImGui::GetCurrentWindow();
+                    controls(settingsIds);
+                    ImGui::EndChild();
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Input")) ImGui::EndTabItem();
+                ImGui::EndTabBar();
+            }
+            ImGui::End();
+            ImGui::SetNextWindowPos({600, 20});
+            ImGui::SetNextWindowSize({450, 400});
+            ImGui::Begin("Client window coverage");
+            client = ImGui::GetCurrentWindow();
+            controls(clientIds);
+            if (openPopup) { ImGui::OpenPopup("Client popup"); openPopup = false; }
+            if (ImGui::BeginPopup("Client popup")) {
+                ImGui::BeginChild("Popup child", {350, 150});
+                popup = ImGui::GetCurrentWindow();
+                controls(popupIds);
+                ImGui::EndChild();
+                ImGui::EndPopup();
+            }
+            ImGui::End();
+            Pad::EndWindows();
+            ImGui::Render();
+        };
+        auto focus = [&](ImGuiWindow* window, ImGuiID id) {
+            ImGui::FocusWindow(window);
+            ImGui::SetFocusID(id, window);
+            frame();
+        };
+        auto expect = [&](ImGuiWindow* window, ImGuiID id, const char* message) {
+            Check(GImGui->NavWindow == window && GImGui->NavId == id, message);
+        };
+        auto tap = [&](ImGuiKey key) {
+            ImGui::GetIO().AddKeyEvent(key, true); frame();
+            ImGui::GetIO().AddKeyEvent(key, false); frame();
+        };
+        auto stick = [&](float x, float y) {
+            auto& io = ImGui::GetIO();
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, x < -0.1f, std::max(0.0f, -x));
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, x > 0.1f, std::max(0.0f, x));
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, y > 0.1f, std::max(0.0f, y));
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, y < -0.1f, std::max(0.0f, -y));
+            frame();
+        };
+        frame(); frame();
+        focus(settings, settingsIds[0]);
+        stick(0.8f, 0.15f);
+        expect(settings, settingsIds[1], "slightly upward right stick tilt stays horizontal");
+        stick(0.8f, -0.15f);
+        expect(settings, settingsIds[1], "minor-axis transition cannot steal a held horizontal direction");
+        stick(0, 0);
+        stick(-0.8f, -0.15f);
+        expect(settings, settingsIds[0], "slightly downward left stick tilt stays horizontal");
+        stick(0, 0);
+        stick(0.15f, -0.8f);
+        expect(settings, settingsIds[2], "dominant downward tilt selects the next row");
+        stick(0, 0);
+        tap(ImGuiKey_GamepadDpadUp);
+        expect(settings, settingsIds[0], "Settings uses spatial D-pad navigation");
+        focus(client, clientIds[0]);
+        tap(ImGuiKey_GamepadDpadRight);
+        expect(client, clientIds[1], "client windows use spatial horizontal navigation");
+        tap(ImGuiKey_GamepadDpadDown);
+        expect(client, clientIds[2], "client navigation stays in its own window");
+        openPopup = true;
+        frame(); frame();
+        focus(popup, popupIds[0]);
+        tap(ImGuiKey_GamepadDpadRight);
+        expect(popup, popupIds[1], "popup children receive spatial navigation");
+        tap(ImGuiKey_GamepadDpadDown);
+        expect(popup, popupIds[2], "popup navigation does not escape into its parent");
+        tap(ImGuiKey_GamepadDpadDown);
+        expect(popup, popupIds[2], "popup edge stops rather than moving into another window");
+        tap(ImGuiKey_GamepadFaceRight);
+        tap(ImGuiKey_GamepadFaceRight);
+        Check(GImGui->OpenPopupStack.empty(), "Back can still unwind and close client popups");
+    }
+}
+
 int main()
 {
     Fixture ui;
@@ -417,5 +528,6 @@ int main()
     TestOptionsAndPopups(ui);
     TestDeviceAndBack(ui);
     TestIconsAndWindowing(ui);
+    TestWindowCoverage();
     std::cout << "MCP gamepad navigation tests passed\n";
 }

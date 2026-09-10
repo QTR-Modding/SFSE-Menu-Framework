@@ -53,6 +53,9 @@ namespace SFSEMenuFramework::McpGamepad {
         bool suspended = false;
         bool wasSuspended = false;
         bool recordingItems = false;
+        bool collectingWindows = false;
+        int stickAxis = -1;
+        std::vector<NavigableItem> windowItems;
         bool optionsVisible = false;
         bool optionsNeedFocus = false;
         bool optionsToggleRequested = false;
@@ -72,6 +75,12 @@ namespace SFSEMenuFramework::McpGamepad {
             return false;
         }
 
+        ImGuiWindow* NavigationScope(ImGuiWindow* window) {
+            while ((window->Flags & ImGuiWindowFlags_ChildWindow) && window->ParentWindow)
+                window = window->ParentWindow;
+            return window;
+        }
+
         bool IsChildContainer(const ImGuiContext* context, const ImGuiWindow* parent, ImGuiID id) {
             for (ImGuiWindow* candidate : context->Windows) {
                 if (candidate->ParentWindow == parent && candidate->ChildId == id) {
@@ -82,18 +91,14 @@ namespace SFSEMenuFramework::McpGamepad {
         }
 
         void ObserveItem(ImGuiContext* context, ImGuiWindow* window, const ImGuiLastItemData* itemData) {
-            if (!IsPanelNavigationActive() || !recordingItems || !context || !window || !itemData ||
-                itemData->ID == 0) {
+            if (!gamepadActive || (!recordingItems && !collectingWindows) ||
+                !context || !window || !itemData || itemData->ID == 0) {
                 return;
             }
             if (itemData->InFlags & (ImGuiItemFlags_NoNav | ImGuiItemFlags_Disabled)) {
                 return;
             }
             if (window->Flags & ImGuiWindowFlags_Tooltip) {
-                return;
-            }
-            if ((window->Flags & ImGuiWindowFlags_Popup) &&
-                (recordingArea != Area::OptionsMenu || window != areaWindows[AreaIndex(Area::OptionsMenu)])) {
                 return;
             }
             if (itemData->NavRect.GetWidth() <= 0.0f || itemData->NavRect.GetHeight() <= 0.0f) {
@@ -103,7 +108,10 @@ namespace SFSEMenuFramework::McpGamepad {
                 return;
             }
 
-            auto& items = currentItems[AreaIndex(recordingArea)];
+            const bool areaItem = recordingItems && (!(NavigationScope(window)->Flags & ImGuiWindowFlags_Popup) ||
+                (recordingArea == Area::OptionsMenu && window == areaWindows[AreaIndex(Area::OptionsMenu)]));
+            if (!areaItem && !collectingWindows) return;
+            auto& items = areaItem ? currentItems[AreaIndex(recordingArea)] : windowItems;
             const auto duplicate = std::find_if(items.begin(), items.end(), [&](const NavigableItem& item) {
                 return item.Id == itemData->ID && item.Window == window;
             });
@@ -122,8 +130,32 @@ namespace SFSEMenuFramework::McpGamepad {
             }
         }
 
-        bool IsPressed(ImGuiKey dpadKey, ImGuiKey stickKey) {
-            return ImGui::IsKeyPressed(dpadKey, true) || ImGui::IsKeyPressed(stickKey, true);
+        ImGuiDir ReadDirection() {
+            constexpr std::array dpad{ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight,
+                ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadDpadDown};
+            constexpr std::array stick{ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight,
+                ImGuiKey_GamepadLStickUp, ImGuiKey_GamepadLStickDown};
+            std::array<float, 4> strength{};
+            for (std::size_t i = 0; i < stick.size(); ++i) {
+                if (ImGui::IsKeyPressed(dpad[i], true)) return static_cast<ImGuiDir>(i);
+                const auto* key = ImGui::GetKeyData(stick[i]);
+                strength[i] = key->Down ? key->AnalogValue : 0.0f;
+            }
+            const float horizontal = std::max(strength[0], strength[1]);
+            const float vertical = std::max(strength[2], strength[3]);
+            if (horizontal == 0.0f && vertical == 0.0f) {
+                stickAxis = -1;
+                return ImGuiDir_None;
+            }
+            // Keep the stronger axis; a small wobble near a diagonal must not
+            // switch it. The existing activation threshold and repeat rate stay intact.
+            if (stickAxis < 0) stickAxis = vertical > horizontal ? 1 : 0;
+            else if (stickAxis == 0 && vertical > horizontal * 1.25f) stickAxis = 1;
+            else if (stickAxis == 1 && horizontal > vertical * 1.25f) stickAxis = 0;
+            const int direction = stickAxis == 0 ?
+                (strength[0] > strength[1] ? 0 : 1) : (strength[2] > strength[3] ? 2 : 3);
+            return ImGui::IsKeyPressed(stick[direction], true) ?
+                static_cast<ImGuiDir>(direction) : ImGuiDir_None;
         }
 
         bool IsPopupBlockingAreaNavigation() {
@@ -140,7 +172,8 @@ namespace SFSEMenuFramework::McpGamepad {
 
             ImGuiWindow* navWindow = GImGui->NavWindow;
             ImGuiWindow* optionsWindow = areaWindows[AreaIndex(Area::OptionsMenu)];
-            return navWindow && (navWindow->Flags & ImGuiWindowFlags_Popup) && navWindow != optionsWindow;
+            return navWindow && (NavigationScope(navWindow)->Flags & ImGuiWindowFlags_Popup) &&
+                   NavigationScope(navWindow) != optionsWindow;
         }
 
         void FocusWindowWithoutItem(ImGuiWindow* window) {
@@ -199,8 +232,7 @@ namespace SFSEMenuFramework::McpGamepad {
             FocusItem(items[index]);
         }
 
-        void MoveSpatially(Area area, ImGuiDir direction) {
-            const auto& items = previousItems[AreaIndex(area)];
+        void MoveSpatially(const std::vector<NavigableItem>& items, ImGuiDir direction) {
             const auto focused = FindFocusedItem(items);
             if (!focused) return;
             const ImRect& origin = items[*focused].Rect;
@@ -213,7 +245,7 @@ namespace SFSEMenuFramework::McpGamepad {
             std::optional<std::size_t> best;
             float bestScore = FLT_MAX;
             for (std::size_t index = 0; index < items.size(); ++index) {
-                if (index == *focused) continue;
+                if (index == *focused || items[index].Layer != items[*focused].Layer) continue;
                 const ImRect& candidate = items[index].Rect;
                 const float gap = forward ? low(candidate) - high(origin) : low(origin) - high(candidate);
                 if (gap < -0.5f) continue;
@@ -226,7 +258,6 @@ namespace SFSEMenuFramework::McpGamepad {
                 }
             }
             if (best) {
-                focusedIndices[AreaIndex(area)] = *best;
                 FocusItem(items[*best]);
             }
         }
@@ -237,25 +268,14 @@ namespace SFSEMenuFramework::McpGamepad {
                 return;
             }
 
+            const ImGuiDir direction = ReadDirection();
             if (area == Area::PageContent) {
                 CancelDefaultMoveRequest();
-                const bool left = IsPressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft);
-                const bool right = IsPressed(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight);
-                const bool up = IsPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp);
-                const bool down = IsPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown);
-                if (up != down) MoveSpatially(area, up ? ImGuiDir_Up : ImGuiDir_Down);
-                else if (left != right) MoveSpatially(area, left ? ImGuiDir_Left : ImGuiDir_Right);
-                return;
+                if (direction != ImGuiDir_None) MoveSpatially(previousItems[AreaIndex(area)], direction);
+            } else if (direction == ImGuiDir_Up || direction == ImGuiDir_Down) {
+                CancelDefaultMoveRequest();
+                MoveSequentially(area, direction == ImGuiDir_Up ? -1 : 1);
             }
-
-            const bool previous = IsPressed(ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp);
-            const bool next = IsPressed(ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown);
-            if (previous == next) {
-                return;
-            }
-
-            CancelDefaultMoveRequest();
-            MoveSequentially(area, previous ? -1 : 1);
         }
 
         void ScrollArea(Area area) {
@@ -340,6 +360,83 @@ namespace SFSEMenuFramework::McpGamepad {
             ImGui::TextUnformatted(hint.Text);
             ImGui::EndGroup();
         }
+        void RenderHighlight(ImGuiWindow* boundary, ImVec4 accent) {
+            if (!gamepadActive || !boundary) {
+                return;
+            }
+
+            ImGuiContext& context = *GImGui;
+            ImGuiWindow* window = context.NavWindow;
+            if (!window || context.NavId == 0 || !IsWindowInside(window, boundary)) {
+                return;
+            }
+
+            ImRect rect = ImGui::WindowRectRelToAbs(window, window->NavRectRel[context.NavLayer]);
+            rect.Expand(2.0f);
+            rect.ClipWith(window->ClipRect);
+            if (rect.IsInverted() || rect.GetWidth() <= 0.0f || rect.GetHeight() <= 0.0f) {
+                return;
+            }
+
+            const bool active = context.ActiveId == context.NavId;
+            ImVec4 fillColor = accent;
+            ImVec4 glowColor = accent;
+            ImVec4 outlineColor = accent;
+            fillColor.w *= active ? 0.30f : 0.16f;
+            glowColor.w *= active ? 0.55f : 0.32f;
+            outlineColor.w = std::max(outlineColor.w, active ? 0.95f : 0.78f);
+
+            const float rounding = std::max(ImGui::GetStyle().FrameRounding, 3.0f);
+            ImDrawList* drawList = ImGui::GetForegroundDrawList(window);
+            drawList->PushClipRect(window->ClipRect.Min, window->ClipRect.Max, true);
+            drawList->AddRectFilled(rect.Min, rect.Max, ImGui::ColorConvertFloat4ToU32(fillColor), rounding);
+
+            ImRect glowRect = rect;
+            glowRect.Expand(2.0f);
+            drawList->AddRect(glowRect.Min, glowRect.Max, ImGui::ColorConvertFloat4ToU32(glowColor), rounding + 2.0f,
+                              ImDrawFlags_RoundCornersAll, active ? 4.0f : 3.0f);
+            drawList->AddRect(rect.Min, rect.Max, ImGui::ColorConvertFloat4ToU32(outlineColor), rounding,
+                              ImDrawFlags_RoundCornersAll, active ? 3.0f : 2.0f);
+
+            const float markerWidth = active ? 5.0f : 3.0f;
+            drawList->AddRectFilled(rect.Min, ImVec2(rect.Min.x + markerWidth, rect.Max.y),
+                                    ImGui::ColorConvertFloat4ToU32(outlineColor), rounding, ImDrawFlags_RoundCornersLeft);
+            drawList->PopClipRect();
+        }
+
+    }
+
+    void BeginWindows(bool useGamepad) {
+        NotifyInputDevice(useGamepad);
+        windowItems.clear();
+        collectingWindows = true;
+        ImGui::SetItemAddObserver(ObserveItem);
+    }
+
+    void EndWindows() {
+        collectingWindows = false;
+        ImGui::SetItemAddObserver(nullptr);
+        auto& context = *GImGui;
+        if (!gamepadActive || !context.NavWindow || context.NavWindowingTarget) return;
+        // Child panels share their owning window; a popup remains its own scope.
+        ImGuiWindow* scope = NavigationScope(context.NavWindow);
+        std::vector<NavigableItem> eligible;
+        for (const auto& item : windowItems) {
+            ImGuiWindow* owner = NavigationScope(item.Window);
+            if (owner == scope) eligible.push_back(item);
+        }
+        if (!FindFocusedItem(eligible)) return;
+        if (!ImGui::IsAnyItemActive()) {
+            CancelDefaultMoveRequest();
+            const ImGuiDir direction = ReadDirection();
+            if (direction != ImGuiDir_None) MoveSpatially(eligible, direction);
+            const float scroll = (ImGui::IsKeyDown(ImGuiKey_GamepadRStickDown) ? 1.0f : 0.0f) -
+                                 (ImGui::IsKeyDown(ImGuiKey_GamepadRStickUp) ? 1.0f : 0.0f);
+            if (scroll != 0.0f)
+                ImGui::SetScrollY(context.NavWindow, context.NavWindow->Scroll.y +
+                    scroll * kScrollSpeed * ImGui::GetIO().DeltaTime);
+        }
+        RenderHighlight(scope, ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight));
     }
 
     void BeginFrame(bool hasPage, bool shouldSuspend) {
@@ -397,7 +494,7 @@ namespace SFSEMenuFramework::McpGamepad {
             requestedFocus = activeArea;
         }
 
-        ImGui::SetItemAddObserver(nullptr);
+        if (!collectingWindows) ImGui::SetItemAddObserver(nullptr);
     }
 
     void NotifyInputDevice(bool gamepad) {
@@ -557,47 +654,7 @@ namespace SFSEMenuFramework::McpGamepad {
     }
 
     void RenderFocusedItemHighlight() {
-        if (!IsPanelNavigationActive() || !panelWindow) {
-            return;
-        }
-
-        ImGuiContext& context = *GImGui;
-        ImGuiWindow* window = context.NavWindow;
-        if (!window || context.NavId == 0 || !IsWindowInside(window, panelWindow)) {
-            return;
-        }
-
-        ImRect rect = ImGui::WindowRectRelToAbs(window, window->NavRectRel[context.NavLayer]);
-        rect.Expand(2.0f);
-        rect.ClipWith(window->ClipRect);
-        if (rect.IsInverted() || rect.GetWidth() <= 0.0f || rect.GetHeight() <= 0.0f) {
-            return;
-        }
-
-        const bool active = context.ActiveId == context.NavId;
-        ImVec4 fillColor = focusAccent;
-        ImVec4 glowColor = focusAccent;
-        ImVec4 outlineColor = focusAccent;
-        fillColor.w *= active ? 0.30f : 0.16f;
-        glowColor.w *= active ? 0.55f : 0.32f;
-        outlineColor.w = std::max(outlineColor.w, active ? 0.95f : 0.78f);
-
-        const float rounding = std::max(ImGui::GetStyle().FrameRounding, 3.0f);
-        ImDrawList* drawList = ImGui::GetForegroundDrawList(window);
-        drawList->PushClipRect(window->ClipRect.Min, window->ClipRect.Max, true);
-        drawList->AddRectFilled(rect.Min, rect.Max, ImGui::ColorConvertFloat4ToU32(fillColor), rounding);
-
-        ImRect glowRect = rect;
-        glowRect.Expand(2.0f);
-        drawList->AddRect(glowRect.Min, glowRect.Max, ImGui::ColorConvertFloat4ToU32(glowColor), rounding + 2.0f,
-                          ImDrawFlags_RoundCornersAll, active ? 4.0f : 3.0f);
-        drawList->AddRect(rect.Min, rect.Max, ImGui::ColorConvertFloat4ToU32(outlineColor), rounding,
-                          ImDrawFlags_RoundCornersAll, active ? 3.0f : 2.0f);
-
-        const float markerWidth = active ? 5.0f : 3.0f;
-        drawList->AddRectFilled(rect.Min, ImVec2(rect.Min.x + markerWidth, rect.Max.y),
-                                ImGui::ColorConvertFloat4ToU32(outlineColor), rounding, ImDrawFlags_RoundCornersLeft);
-        drawList->PopClipRect();
+        if (IsPanelNavigationActive()) RenderHighlight(panelWindow, focusAccent);
     }
 
     float GetHintBarHeight() {
