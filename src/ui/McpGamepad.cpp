@@ -311,6 +311,20 @@ namespace SFSEMenuFramework::McpGamepad {
             }
         }
 
+        void ScrollFocusedWindow(ImGuiWindow* boundary, float direction) {
+            if (!boundary || direction == 0.0f) return;
+            ImGuiWindow* window = GImGui->NavWindow;
+            if (!window || !IsWindowInside(window, boundary)) window = boundary;
+            while (window->ScrollMax.y <= 0.0f && window != boundary) {
+                ImGuiWindow* parent = window->ParentWindow;
+                if (!parent || !IsWindowInside(parent, boundary)) return;
+                window = parent;
+            }
+            if (window->ScrollMax.y <= 0.0f) return;
+            const float deltaTime = ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f;
+            ImGui::SetScrollY(window, window->Scroll.y + direction * kScrollSpeed * deltaTime);
+        }
+
         void ScrollArea(Area area) {
             if (activeArea != area || IsPopupBlockingAreaNavigation(area)) {
                 return;
@@ -322,22 +336,12 @@ namespace SFSEMenuFramework::McpGamepad {
                 return;
             }
 
-            ImGuiWindow* window = GImGui->NavWindow;
-            const std::size_t areaIndex = AreaIndex(area);
-            if (!window || !IsWindowInside(window, areaWindows[areaIndex])) {
-                window = areaWindows[areaIndex];
-            }
-            if (!window) {
-                return;
-            }
-
-            const float deltaTime = ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f;
-            ImGui::SetScrollY(window, window->Scroll.y + direction * kScrollSpeed * deltaTime);
+            ScrollFocusedWindow(areaWindows[AreaIndex(area)], direction);
         }
 
         std::vector<Hint> GetHints(bool hasPage) {
             constexpr IconSlot noSecondaryIcon = IconSlot::Count;
-            switch (activeArea) {
+            switch (IsPopupBlockingAreaNavigation() ? Area::Popup : activeArea) {
                 case Area::OptionsMenu:
                 case Area::Popup:
                     return {
@@ -467,9 +471,7 @@ namespace SFSEMenuFramework::McpGamepad {
             if (direction != ImGuiDir_None) MoveSpatially(eligible, direction);
             const float scroll = (ImGui::IsKeyDown(ImGuiKey_GamepadRStickDown) ? 1.0f : 0.0f) -
                                  (ImGui::IsKeyDown(ImGuiKey_GamepadRStickUp) ? 1.0f : 0.0f);
-            if (scroll != 0.0f)
-                ImGui::SetScrollY(context.NavWindow, context.NavWindow->Scroll.y +
-                    scroll * kScrollSpeed * ImGui::GetIO().DeltaTime);
+            ScrollFocusedWindow(scope, scroll);
         }
         RenderHighlight(scope, ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight));
     }
@@ -479,7 +481,9 @@ namespace SFSEMenuFramework::McpGamepad {
 
         panelWindow = ImGui::GetCurrentWindow();
         focusAccent = ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight);
-        suspended = shouldSuspend;
+        suspended = shouldSuspend && !IsWindowInside(GImGui->NavWindow, panelWindow);
+        const bool optionsBlocked = IsPopupBlockingAreaNavigation() &&
+            (activeArea != Area::OptionsMenu || IsPopupBlockingAreaNavigation(Area::OptionsMenu));
         optionsVisible = false;
         optionsToggleRequested = false;
         recordingItems = false;
@@ -506,13 +510,19 @@ namespace SFSEMenuFramework::McpGamepad {
         }
 
         if (firstFrameAfterOpen || gamepadBecameActive || (wasSuspended && !suspended)) {
-            activeArea = Area::PageTree;
-            requestedFocus = Area::PageTree;
+            const auto* focusedWindow = GImGui->NavWindow;
+            const bool outsideFocus = focusedWindow && (focusedWindow->Active || focusedWindow->WasActive) &&
+                (!IsWindowInside(focusedWindow, panelWindow) || IsPopupBlockingAreaNavigation());
+            if (!outsideFocus) {
+                activeArea = Area::PageTree;
+                requestedFocus = Area::PageTree;
+            }
             gamepadBecameActive = false;
         }
         wasSuspended = suspended;
 
-        optionsToggleRequested = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) && !ImGui::IsAnyItemActive();
+        optionsToggleRequested = !optionsBlocked &&
+            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) && !ImGui::IsAnyItemActive();
 
         if (!IsPopupBlockingAreaNavigation() && !ImGui::IsAnyItemActive()) {
             if (hasPage && ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {

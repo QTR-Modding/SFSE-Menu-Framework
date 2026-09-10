@@ -296,6 +296,11 @@ namespace
         ImGui::SetFocusID(ui.ContentItems.back(), ui.Nested);
         ui.Frame();
         ui.ExpectFocus(ui.Nested, ui.ContentItems.back(), "nested child focus is preserved");
+        Check(ui.Nested->ScrollMax.y == 0.0f, "nested fixture itself cannot scroll");
+        const float outerBefore = ui.Content->Scroll.y;
+        ui.Key(ImGuiKey_GamepadRStickUp, true); ui.Frame();
+        ui.Key(ImGuiKey_GamepadRStickUp, false);
+        Check(ui.Content->Scroll.y < outerBefore, "right stick scrolls the overflowing ancestor");
         Check(Pad::CanHandleBack(ui.Content->RootWindow), "Back recognizes nested page children");
         Check(Pad::ResolveBack(true) == Pad::BackAction::PoppedPage, "Back leaves nested page content");
         ui.Frame();
@@ -329,6 +334,9 @@ namespace
         ui.Frame();
         Check(Pad::ResolveBack(true) == Pad::BackAction::PassToImGui, "Back defers to a client popup");
         const auto popupId = ui.Context->NavId;
+        ui.Tap(ImGuiKey_GamepadFaceLeft);
+        Check(!ui.OptionsOpen && !ui.Context->OpenPopupStack.empty(), "X preserves the client popup");
+        ui.ExpectFocus(ui.Popup, popupId, "X does not steal popup focus");
         ui.Tap(ImGuiKey_GamepadR1);
         ui.ExpectFocus(ui.Popup, popupId, "RB does not steal popup focus");
         ui.Tap(ImGuiKey_GamepadDpadDown);
@@ -351,9 +359,7 @@ namespace
 
         ui.Suspended = true;
         ui.Frame();
-        Check(!Pad::IsActive() && ui.Footer == 0, "settings suspension leaves custom navigation inactive");
-        ui.Tap(ImGuiKey_GamepadFaceLeft);
-        Check(!ui.OptionsOpen, "X does not open Options while suspended");
+        Check(Pad::IsActive() && ui.Footer > 0, "open Settings does not suspend the focused main panel");
         ui.Suspended = false;
         ui.Frame();
         ui.ExpectFocus(ui.Tree, ui.TreeItems[0], "resuming restores tree focus");
@@ -534,9 +540,10 @@ namespace
         bool favorite{}, archiveRequested{};
         int archived{};
         float value = 50.0f, dragValue = 50.0f;
+        bool useGamepad = true;
         auto frame = [&] {
             ImGui::NewFrame();
-            Pad::BeginWindows(true);
+            Pad::BeginWindows(useGamepad);
             ImGui::SetNextWindowSize({500, 350});
             ImGui::Begin("Root action coverage");
             Pad::BeginFrame(false, false);
@@ -639,6 +646,11 @@ namespace
         Check(archived == 1, "A confirms archive exactly once");
 
         focus(sliders, sliderId);
+        useGamepad = false; frame();
+        useGamepad = true; frame();
+        Check(GImGui->NavWindow == sliders && GImGui->NavId == sliderId,
+            "switching from mouse to gamepad preserves client focus");
+        Check(!Pad::CanHandleBack(tree->RootWindow), "main Back does not intercept an external window");
         tap(ImGuiKey_GamepadFaceDown);
         Check(GImGui->ActiveId == sliderId, "A activates the client slider without main-panel focus theft");
         const float before = value;

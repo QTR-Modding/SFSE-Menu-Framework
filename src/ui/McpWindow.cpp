@@ -755,7 +755,7 @@ bool SFSEMenuFramework::McpWindow::ConsumeGamepadBack()
 	const auto* main = WindowManager::GetMainWindow();
 	const auto* context = ImGui::GetCurrentContext();
 	if (!main || !main->IsOpen.load(std::memory_order_acquire) ||
-		!context || !context->NavWindow || SettingsWindow::IsOpen()) {
+		!context || !context->NavWindow) {
 		return false;
 	}
 	const auto* window = ImGui::FindWindowByName(
