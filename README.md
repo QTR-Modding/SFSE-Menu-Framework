@@ -183,7 +183,7 @@ xmake
 xmake package
 ```
 
-The archive is `build/packages/SFSEMenuFramework-0.15.0.zip`.
+The archive is written to `build/packages/`.
 To generate a Visual Studio solution, run `xmake project -k vsxmake`.
 
 For a fork, `scripts/signing/Initialize-Signing.ps1` creates a non-exportable
