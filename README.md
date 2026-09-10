@@ -175,7 +175,7 @@ framework, not to use the SDK in a client mod.
 
 ```powershell
 git clone --recurse-submodules https://github.com/QTR-Modding/SFSE-MCP.git
-git -C SFSE-MCP checkout 6c109f6366bcaa97850a9f37260ebde32e92f397
+git -C SFSE-MCP checkout abeee13a366d2a288cb682037c6ec5d577bba810
 git -C SFSE-MCP submodule update --init --recursive
 git clone --recurse-submodules https://github.com/QTR-Modding/SFSE-Menu-Framework.git
 cd SFSE-Menu-Framework
