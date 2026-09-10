@@ -1,4 +1,5 @@
 #include "input/GamepadNavigation.h"
+#include "ui/McpWindow.h"
 
 #include <RE/B/BSInputEventUser.h>
 
@@ -101,6 +102,8 @@ namespace SFSEMenuFramework::GamepadNavigation
 		std::atomic<std::uint64_t> nativeGamepadGeneration{};
 		std::atomic_flag           overflowLogged{};
 		CloseRequest               pendingCloseRequest;
+		std::uint64_t              backSequenceGeneration{};
+		bool                       suppressBackSequence{};
 
 		class QueueLock final
 		{
@@ -371,6 +374,10 @@ namespace SFSEMenuFramework::GamepadNavigation
 	{
 		auto& io = ImGui::GetIO();
 		pendingCloseRequest = {};
+		if (backSequenceGeneration != a_generation) {
+			backSequenceGeneration = a_generation;
+			suppressBackSequence = false;
+		}
 		io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
 		if (nativeGamepadGeneration.load(std::memory_order_acquire) == a_generation) {
 			io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
@@ -401,7 +408,19 @@ namespace SFSEMenuFramework::GamepadNavigation
 			return;
 		}
 		for (std::size_t index = 0; index < count; ++index) {
-			RequestCloseIfCancelHasNoTarget(events[index], a_generation);
+			const auto& event = events[index];
+			if (event.Kind == EventKind::Button && event.ID == 8192) {
+				if (event.InitialPress) {
+					suppressBackSequence = McpWindow::ConsumeGamepadBack();
+				}
+				// Native input includes held samples: keep a handled B out of
+				// ImGui until release, not just on its initial press.
+				if (suppressBackSequence) {
+					if (event.X == 0.0F) suppressBackSequence = false;
+					continue;
+				}
+			}
+			RequestCloseIfCancelHasNoTarget(event, a_generation);
 			ApplyEvent(io, events[index]);
 		}
 	}

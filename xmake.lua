@@ -58,13 +58,13 @@ add_rules("plugin.vsxmake.autoupdate")
 target("imgui", function()
     on_load(function(target)
         import("scripts.imgui-audio", { rootdir = project_root })(target)
+        import("scripts.imgui-navigation", { rootdir = project_root })(target)
     end)
     set_kind("static")
     set_default(false)
     set_license("MIT")
 
     add_files(
-        "extern/imgui/imgui.cpp",
         "extern/imgui/imgui_demo.cpp",
         "extern/imgui/imgui_tables.cpp",
         "extern/imgui/backends/imgui_impl_win32.cpp",
@@ -223,6 +223,25 @@ target("sound-interaction-tests", function()
     add_deps("imgui")
     add_files("tests/SoundInteractionTests.cpp", "src/audio/InteractionSounds.cpp",
         "src/config/FrameworkSettings.cpp", "src/config/FrameworkSettingsIO.cpp")
+    add_includedirs("src")
+    add_tests("default")
+end)
+
+target("mcp-gamepad-tests", function()
+    set_kind("binary")
+    set_default(false)
+    add_deps("imgui")
+    add_files("tests/McpGamepadTests.cpp", "src/ui/McpGamepad.cpp", "src/appearance/GamepadIcons.cpp")
+    add_includedirs("src")
+    add_tests("default")
+end)
+
+target("gamepad-input-tests", function()
+    set_kind("binary")
+    set_default(false)
+    set_pcxxheader("src/PCH.h")
+    add_deps("commonlibsf", "imgui")
+    add_files("tests/GamepadInputTests.cpp", "src/input/GamepadNavigation.cpp")
     add_includedirs("src")
     add_tests("default")
 end)

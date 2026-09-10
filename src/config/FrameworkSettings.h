@@ -70,6 +70,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 		ToggleMode    Mode{};
 		std::uint32_t ToggleKeyGamePad{};
 		ToggleMode    ModeGamePad{};
+		bool          PlayStationIcons{};
 		bool          FreezeTimeOnMenu{};
 		bool          BlurBackgroundOnMenu{};
 		float         BackgroundOpacity{};
@@ -108,6 +109,7 @@ namespace SFSEMenuFramework::FrameworkSettings
 	[[nodiscard]] ToggleMode    GetToggleMode() noexcept;
 	[[nodiscard]] std::uint32_t GetToggleKeyGamePad() noexcept;
 	[[nodiscard]] ToggleMode    GetToggleModeGamePad() noexcept;
+	[[nodiscard]] bool          GetPlayStationIcons() noexcept;
 	[[nodiscard]] bool          GetFreezeTimeOnMenu() noexcept;
 	[[nodiscard]] bool          GetBlurBackgroundOnMenu() noexcept;
 	[[nodiscard]] float         GetBackgroundOpacity() noexcept;

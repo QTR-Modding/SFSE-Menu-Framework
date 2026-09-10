@@ -1,4 +1,5 @@
 #include "ui/McpWindow.h"
+#include "ui/McpGamepad.h"
 
 #include "appearance/FontManager.h"
 #include "appearance/ThemeManager.h"
@@ -171,6 +172,7 @@ namespace
 		}
 		if (a_archived && ContainsNode(a_menu, selectedNode)) {
 			selectedNode.reset();
+			SFSEMenuFramework::McpGamepad::NotifyPageClosed();
 		}
 	}
 
@@ -293,13 +295,17 @@ namespace
 		const bool itemClicked = ImGui::IsItemClicked();
 		const bool itemToggledOpen = ImGui::IsItemToggledOpen();
 		const bool gamePadButtonPressed =
-			ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown);
+			ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
 		const bool itemFocused = ImGui::IsItemFocused();
 
-		if ((itemClicked || (gamePadButtonPressed && itemFocused)) &&
-			!itemToggledOpen &&
+		if (((itemClicked && !itemToggledOpen) ||
+			 (gamePadButtonPressed && itemFocused)) &&
 			IsPanelEnabled(panel)) {
 			selectedNode = a_node;
+			if (gamePadButtonPressed && itemFocused) {
+				SFSEMenuFramework::McpGamepad::RequestFocus(
+					SFSEMenuFramework::McpGamepad::Area::PageContent);
+			}
 		}
 
 		if (nodeOpen && hasEnabledChild) {
@@ -444,18 +450,30 @@ namespace
 			return;
 		}
 
+		const bool optionsWasOpen = ImGui::IsPopupOpen("Options");
+		const bool toggleOptions = SFSEMenuFramework::McpGamepad::IsOptionsToggleRequested();
+		if (toggleOptions && !optionsWasOpen) {
+			ImGui::OpenPopup("Options");
+		}
 		if (ImGui::BeginMenu("Options")) {
-			if (ImGui::MenuItem("Reset Windows")) {
-				SFSEMenuFramework::WindowPlacement::Reset();
+			SFSEMenuFramework::McpGamepad::BeginOptionsMenu();
+			if (toggleOptions && optionsWasOpen) {
+				ImGui::CloseCurrentPopup();
+				SFSEMenuFramework::McpGamepad::NotifyOptionsMenuClosed();
+			} else {
+				if (ImGui::MenuItem("Reset Windows")) {
+					SFSEMenuFramework::WindowPlacement::Reset();
+				}
+				if (ImGui::MenuItem("Resume Game")) {
+					ResumeGame();
+				}
+				if (ImGui::MenuItem("Open Settings")) {
+					SFSEMenuFramework::SettingsWindow::Open();
+				}
+				ImGui::Separator();
+				RenderArchivedMenuRecovery();
 			}
-			if (ImGui::MenuItem("Resume Game")) {
-				ResumeGame();
-			}
-			if (ImGui::MenuItem("Open Settings")) {
-				SFSEMenuFramework::SettingsWindow::Open();
-			}
-			ImGui::Separator();
-			RenderArchivedMenuRecovery();
+			SFSEMenuFramework::McpGamepad::EndArea();
 			ImGui::EndMenu();
 		}
 
@@ -500,13 +518,20 @@ namespace
 		const auto roots = SFSEMenuFramework::PanelRegistry::GetMenuTree();
 		if (selectedNode) {
 			selectedNode = FindNodeByIdentity(roots, selectedNode->Identity);
+			if (!selectedNode) {
+				SFSEMenuFramework::McpGamepad::NotifyPageClosed();
+			}
 		}
 		auto selectedPanel = selectedNode ? GetPanel(*selectedNode) : nullptr;
 		if (!IsPanelEnabled(selectedPanel)) {
+			if (selectedNode) SFSEMenuFramework::McpGamepad::NotifyPageClosed();
 			selectedPanel.reset();
 			selectedNode.reset();
 		}
 
+		const float footerHeight = SFSEMenuFramework::McpGamepad::GetHintBarHeight();
+		const float contentHeight = footerHeight > 0.0F ?
+			-(footerHeight + ImGui::GetStyle().ItemSpacing.y) : -FLT_MIN;
 		const auto available = ImGui::GetContentRegionAvail();
 		const float navigationWidth = available.x * 0.3F;
 		const float uiScale = SFSEMenuFramework::FontManager::GetActiveInfo().Settings.UIScale;
@@ -539,8 +564,9 @@ namespace
 		ImGui::EndChild();
 
 		if (ImGui::BeginChild(
-				"SFSEModControlPanelTreeView", ImVec2{ navigationWidth, -FLT_MIN },
+				"SFSEModControlPanelTreeView", ImVec2{ navigationWidth, contentHeight },
 				ImGuiChildFlags_Border)) {
+			SFSEMenuFramework::McpGamepad::BeginArea(SFSEMenuFramework::McpGamepad::Area::PageTree);
 			SFSEMenuFramework::ThemeManager::RenderCurrentWindowBackdrop();
 			ImGui::PushStyleVar(
 				ImGuiStyleVar_FramePadding,
@@ -633,19 +659,25 @@ namespace
 					ImVec4{ 1.0F, 0.35F, 0.35F, 1.0F }, "Could not save %s", menuConfigPath);
 			}
 			ImGui::PopStyleVar();
+			SFSEMenuFramework::McpGamepad::EndArea();
 		}
 		ImGui::EndChild();
 
 		ImGui::SameLine();
+		// The tree can select a different page during this frame.
+		selectedPanel = selectedNode ? GetPanel(*selectedNode) : nullptr;
 		if (ImGui::BeginChild(
-				"SFSEModControlPanelMenuNode", ImVec2{ 0.0F, -FLT_MIN },
+				"SFSEModControlPanelMenuNode", ImVec2{ 0.0F, contentHeight },
 				ImGuiChildFlags_Border)) {
+			SFSEMenuFramework::McpGamepad::BeginArea(SFSEMenuFramework::McpGamepad::Area::PageContent);
 			SFSEMenuFramework::ThemeManager::RenderCurrentWindowBackdrop();
 			if (selectedPanel) {
 				SFSEMenuFramework::PanelRegistry::Render(selectedPanel);
 			}
+			SFSEMenuFramework::McpGamepad::EndArea();
 		}
 		ImGui::EndChild();
+		SFSEMenuFramework::McpGamepad::RenderHintBar(selectedPanel != nullptr, SFSEMenuFramework::FrameworkSettings::GetPlayStationIcons());
 	}
 
 }
@@ -698,11 +730,48 @@ void __stdcall SFSEMenuFramework::McpWindow::Render()
 	if (closeRequested) {
 		CloseMainWindow();
 	} else if (drawContents) {
+		McpGamepad::NotifyInputDevice(!GamepadNavigation::ShouldDrawMouseCursor(
+			WindowManager::GetBlockingWindowOpenGeneration()));
+		const auto repeatTiming = GamepadNavigation::ApplyRepeatTiming();
+		McpGamepad::BeginFrame(selectedNode != nullptr, SettingsWindow::IsOpen());
+		McpGamepad::PushFocusStyle();
 		RenderMainMenuBar();
 		RenderNavigation();
 		RenderArchiveConfirmation();
+		McpGamepad::RenderFocusedItemHighlight();
+		McpGamepad::PopFocusStyle();
+		McpGamepad::EndFrame();
+		GamepadNavigation::RestoreRepeatTiming(repeatTiming);
 	}
 	ImGui::End();
 
 	SettingsWindow::Render();
+}
+
+bool SFSEMenuFramework::McpWindow::ConsumeGamepadBack()
+{
+	// Resolve the source's edit -> popup -> page -> window order on the
+	// render thread, before NewFrame lets ImGui process the same B press.
+	const auto* main = WindowManager::GetMainWindow();
+	const auto* context = ImGui::GetCurrentContext();
+	if (!main || !main->IsOpen.load(std::memory_order_acquire) ||
+		!context || !context->NavWindow) {
+		return false;
+	}
+	const auto* window = ImGui::FindWindowByName(
+		WindowPlacement::GetName(WindowPlacement::BuiltInWindow::Main));
+	if (!McpGamepad::CanHandleBack(window)) {
+		return false;
+	}
+	switch (McpGamepad::ResolveBack(selectedNode != nullptr)) {
+	case McpGamepad::BackAction::PassToImGui:
+		return false;
+	case McpGamepad::BackAction::PoppedPage:
+		selectedNode.reset();
+		return true;
+	case McpGamepad::BackAction::CloseMenu:
+		CloseMainWindow();
+		return true;
+	}
+	return false;
 }

@@ -17,13 +17,20 @@ into Starfield's `Data` folder. Launch through SFSE, then press **F1**.
 
 - **F1:** open or close the panel.
 - **Gamepad Start:** double-press to open; press once to close.
-- **D-pad / left stick:** navigate. **A:** select. **B:** cancel the current
-  selection or interaction, then close the focused built-in window.
-- **Hold X:** move a window with the left stick or resize it with the D-pad.
+- **D-pad / left stick:** navigate by direction within pages; Up/Down cycles the mod list.
+  Select a slider before using Left/Right to adjust it.
+- **A:** select a page or control. **B:** cancel an edit or popup, return from the
+  page to the mod list, then close the panel.
+- **Right stick:** scroll the current panel.
+- **X:** toggle Options. **RB:** focus the selected page's controls.
+- **Hold X:** ImGui's window move/resize controls.
 - **Escape:** close the main panel.
 - **Options > Resume Game:** return control to the game while leaving the panel visible.
 
 Gamepad input hides the cursor; using the mouse brings it back.
+Choose Xbox or PlayStation prompts in **Settings > Controls > Controller icons**.
+Use Left/Right to select the favorite/archive buttons and A to activate them.
+Up/Down moves to the next or previous row.
 The menu can open before game data finishes loading.
 
 ## Settings
