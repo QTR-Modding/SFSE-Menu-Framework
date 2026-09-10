@@ -227,10 +227,12 @@ namespace
     {
         ui.ExpectFocus(ui.Tree, ui.TreeItems[0], "initial focus enters the page tree");
         Check(ui.Footer > 0, "controller hints reserve space");
+        ui.Tap(ImGuiKey_GamepadDpadRight);
+        ui.ExpectFocus(ui.Tree, ui.TreeItems[1], "Right visits a same-line item");
+        ui.Tap(ImGuiKey_GamepadDpadLeft);
+        ui.ExpectFocus(ui.Tree, ui.TreeItems[0], "Left returns to the row label");
         ui.Tap(ImGuiKey_GamepadDpadDown);
-        ui.ExpectFocus(ui.Tree, ui.TreeItems[1], "Down visits a same-line item before the next row");
-        ui.Tap(ImGuiKey_GamepadDpadDown);
-        ui.ExpectFocus(ui.Tree, ui.TreeItems[2], "disabled and NoNav items are excluded");
+        ui.ExpectFocus(ui.Tree, ui.TreeItems[2], "Down skips same-row, disabled and NoNav items");
         ui.Tap(ImGuiKey_GamepadDpadDown);
         ui.ExpectFocus(ui.Tree, ui.TreeItems[0], "Down wraps to the first item");
         ui.Tap(ImGuiKey_GamepadDpadUp);
@@ -527,6 +529,7 @@ namespace
         ImGuiWindow* tree{};
         ImGuiWindow* sliders{};
         std::array<ImGuiID, 3> actions{};
+        ImGuiID childId{}, nextRowId{};
         ImGuiID sliderId{}, dragId{};
         bool favorite{}, archiveRequested{};
         int archived{};
@@ -556,6 +559,10 @@ namespace
                 actions[2] = ImGui::GetItemID();
                 ImGui::EndTable();
             }
+            ImGui::Indent();
+            ImGui::Selectable("Settings"); childId = ImGui::GetItemID();
+            ImGui::Unindent();
+            ImGui::CollapsingHeader("Next mod"); nextRowId = ImGui::GetItemID();
             Pad::EndArea();
             ImGui::EndChild();
             if (archiveRequested) { ImGui::OpenPopup("Archive confirmation"); archiveRequested = false; }
@@ -596,13 +603,31 @@ namespace
         frame(); frame();
         focus(tree, actions[0]);
         tap(ImGuiKey_GamepadDpadDown);
+        Check(GImGui->NavId == childId, "Down skips both actions and reaches the child row");
+        tap(ImGuiKey_GamepadDpadDown);
+        Check(GImGui->NavId == nextRowId, "Down reaches the next mod row");
+        tap(ImGuiKey_GamepadDpadUp);
+        Check(GImGui->NavId == childId, "Up returns to the child row");
+        tap(ImGuiKey_GamepadDpadUp);
+        Check(GImGui->NavId == actions[0], "Up lands on the mod label, not Archive");
+        tilt(0.8f, 0.15f); tilt(0, 0);
+        Check(GImGui->NavId == actions[1], "stick Right reaches Favorite");
+        tilt(0.15f, -0.8f); tilt(0, 0);
+        Check(GImGui->NavId == childId, "stick Down leaves actions for the next row label");
+        tap(ImGuiKey_GamepadDpadUp);
+        tap(ImGuiKey_GamepadDpadRight);
         Check(GImGui->NavId == actions[1], "favorite button is selectable");
         tap(ImGuiKey_GamepadFaceDown);
         Check(favorite, "A favorites the selected mod");
         tap(ImGuiKey_GamepadFaceDown);
         Check(!favorite, "A removes the favorite");
-        tap(ImGuiKey_GamepadDpadDown);
+        tap(ImGuiKey_GamepadDpadRight);
         Check(GImGui->NavId == actions[2], "archive button is selectable");
+        tap(ImGuiKey_GamepadDpadRight);
+        Check(GImGui->NavId == actions[2], "Right at Archive stays on the same row");
+        tap(ImGuiKey_GamepadDpadLeft);
+        Check(GImGui->NavId == actions[1], "Left from Archive reaches Favorite");
+        tap(ImGuiKey_GamepadDpadRight);
         tap(ImGuiKey_GamepadFaceDown);
         Check(archived == 0 && !GImGui->OpenPopupStack.empty(), "archive requires confirmation");
         tap(ImGuiKey_GamepadFaceDown);

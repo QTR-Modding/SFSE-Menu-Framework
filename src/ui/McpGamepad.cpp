@@ -244,17 +244,24 @@ namespace SFSEMenuFramework::McpGamepad {
 
             const auto focusedItem = FindFocusedItem(items);
             std::size_t index = focusedItem.value_or(std::min(focusedIndices[areaIndex], items.size() - 1));
-            if (direction < 0) {
-                index = index == 0 ? items.size() - 1 : index - 1;
-            } else {
-                index = (index + 1) % items.size();
-            }
+            const auto sameRow = [&](std::size_t a, std::size_t b) {
+                return items[a].Rect.Min.y < items[b].Rect.Max.y &&
+                       items[b].Rect.Min.y < items[a].Rect.Max.y;
+            };
+            const std::size_t origin = index;
+            do {
+                index = direction < 0 ? (index == 0 ? items.size() - 1 : index - 1) :
+                    (index + 1) % items.size();
+            } while (area == Area::PageTree && index != origin && sameRow(origin, index));
+            // Vertical tree movement lands on the row label, not its actions.
+            if (area == Area::PageTree)
+                while (index > 0 && sameRow(index - 1, index)) --index;
 
             focusedIndices[areaIndex] = index;
             FocusItem(items[index]);
         }
 
-        void MoveSpatially(const std::vector<NavigableItem>& items, ImGuiDir direction) {
+        void MoveSpatially(const std::vector<NavigableItem>& items, ImGuiDir direction, bool sameRowOnly = false) {
             const auto focused = FindFocusedItem(items);
             if (!focused) return;
             const ImRect& origin = items[*focused].Rect;
@@ -269,6 +276,7 @@ namespace SFSEMenuFramework::McpGamepad {
             for (std::size_t index = 0; index < items.size(); ++index) {
                 if (index == *focused || items[index].Layer != items[*focused].Layer) continue;
                 const ImRect& candidate = items[index].Rect;
+                if (sameRowOnly && (candidate.Min.y >= origin.Max.y || candidate.Max.y <= origin.Min.y)) continue;
                 const float gap = forward ? low(candidate) - high(origin) : low(origin) - high(candidate);
                 if (gap < -0.5f) continue;
                 const float crossGap = std::max({0.0f,
@@ -297,6 +305,9 @@ namespace SFSEMenuFramework::McpGamepad {
             } else if (direction == ImGuiDir_Up || direction == ImGuiDir_Down) {
                 CancelDefaultMoveRequest();
                 MoveSequentially(area, direction == ImGuiDir_Up ? -1 : 1);
+            } else if (area == Area::PageTree && direction != ImGuiDir_None) {
+                CancelDefaultMoveRequest();
+                MoveSpatially(previousItems[AreaIndex(area)], direction, true);
             }
         }
 
