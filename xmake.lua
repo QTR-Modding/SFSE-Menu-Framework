@@ -259,3 +259,17 @@ target("gamepad-input-tests", function()
     add_includedirs("src")
     add_tests("default")
 end)
+
+target("font-resolution-tests", function()
+    set_kind("binary")
+    set_default(false)
+    set_targetdir(path.join(project_root, "build", "font-tests"))
+    set_pcxxheader("src/PCH.h")
+    add_deps("commonlibsf", "imgui")
+    add_packages("nlohmann_json")
+    add_files("tests/FontResolutionTests.cpp", "src/appearance/FontManager.cpp",
+        "src/appearance/fonts/*.cpp", "src/config/FrameworkSettings.cpp",
+        "src/config/FrameworkSettingsIO.cpp")
+    add_includedirs("src")
+    add_tests("default")
+end)

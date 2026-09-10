@@ -594,7 +594,7 @@ namespace SFSEMenuFramework::ThemeManager
 
 	bool QueueUIScale(float a_scale) noexcept
 	{
-		if (!std::isfinite(a_scale) || a_scale < 0.75F || a_scale > 2.0F) {
+		if (!std::isfinite(a_scale) || a_scale <= 0.0F || a_scale > 4.0F) {
 			return false;
 		}
 
