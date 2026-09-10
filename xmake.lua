@@ -104,6 +104,7 @@ target("verify-framework-signature", function()
     set_default(false)
     add_files(path.join(sdk_root, "tools", "verify_signature.cpp"))
     add_includedirs(path.join(sdk_root, "include"))
+    add_includedirs(path.join(sdk_root, "lib", "clib-utils-qtr", "include"))
 end)
 
 target(dll_name, function()

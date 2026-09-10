@@ -174,8 +174,9 @@ A missing or mismatched key stops the build. This is only needed to build the
 framework, not to use the SDK in a client mod.
 
 ```powershell
-git clone https://github.com/QTR-Modding/SFSE-MCP.git
-git -C SFSE-MCP checkout 7a18b515ccdd325f3dd32564ffd892c2599f485d
+git clone --recurse-submodules https://github.com/QTR-Modding/SFSE-MCP.git
+git -C SFSE-MCP checkout 6c109f6366bcaa97850a9f37260ebde32e92f397
+git -C SFSE-MCP submodule update --init --recursive
 git clone --recurse-submodules https://github.com/QTR-Modding/SFSE-Menu-Framework.git
 cd SFSE-Menu-Framework
 xmake f -m releasedbg
@@ -185,6 +186,8 @@ xmake
 Release and releasedbg builds automatically prepare `build/staging/` and a ZIP
 in `build/packages/`, excluding debug symbols and personal settings.
 To generate a Visual Studio solution, run `xmake project -k vsxmake`.
+
+Signing uses the SDK's pinned QTR Utils signing module. Other QTR modules are not required.
 
 For a fork, `scripts/signing/Initialize-Signing.ps1` creates a non-exportable
 key; pair it with your SDK's public-key setting. Do not replace an existing
