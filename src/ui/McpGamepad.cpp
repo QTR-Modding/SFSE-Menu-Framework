@@ -301,7 +301,8 @@ namespace SFSEMenuFramework::McpGamepad {
 
             const ImGuiDir direction = ReadDirection();
             if (area == Area::PageContent) {
-                CancelDefaultMoveRequest();
+                if (direction != ImGuiDir_None || GImGui->NavInputSource == ImGuiInputSource_Gamepad)
+                    CancelDefaultMoveRequest();
                 if (direction != ImGuiDir_None) MoveSpatially(previousItems[AreaIndex(area)], direction);
             } else if (direction == ImGuiDir_Up || direction == ImGuiDir_Down) {
                 CancelDefaultMoveRequest();
@@ -460,16 +461,20 @@ namespace SFSEMenuFramework::McpGamepad {
         if (!gamepadActive || !context.NavWindow || context.NavWindowingTarget) return;
         // Child panels share their owning window; a popup remains its own scope.
         ImGuiWindow* scope = NavigationScope(context.NavWindow);
+        // Main-panel areas already process their own movement and scrolling.
+        if (scope == panelWindow && lastRenderedFrame == context.FrameCount && !suspended) return;
         std::vector<NavigableItem> eligible;
         for (const auto& item : windowItems) {
             ImGuiWindow* owner = NavigationScope(item.Window);
             if (owner == scope) eligible.push_back(item);
         }
-        if (!FindFocusedItem(eligible)) return;
         if (!ImGui::IsAnyItemActive()) {
-            CancelDefaultMoveRequest();
             const ImGuiDir direction = ReadDirection();
-            if (direction != ImGuiDir_None) MoveSpatially(eligible, direction);
+            if (FindFocusedItem(eligible)) {
+                if (direction != ImGuiDir_None || context.NavInputSource == ImGuiInputSource_Gamepad)
+                    CancelDefaultMoveRequest();
+                if (direction != ImGuiDir_None) MoveSpatially(eligible, direction);
+            }
             const float scroll = (ImGui::IsKeyDown(ImGuiKey_GamepadRStickDown) ? 1.0f : 0.0f) -
                                  (ImGui::IsKeyDown(ImGuiKey_GamepadRStickUp) ? 1.0f : 0.0f);
             ScrollFocusedWindow(scope, scroll);
@@ -482,7 +487,9 @@ namespace SFSEMenuFramework::McpGamepad {
 
         panelWindow = ImGui::GetCurrentWindow();
         focusAccent = ImGui::GetStyleColorVec4(ImGuiCol_NavHighlight);
-        suspended = shouldSuspend && !IsWindowInside(GImGui->NavWindow, panelWindow);
+        const auto* focusedWindow = GImGui->NavWindow;
+        const bool validFocus = focusedWindow && focusedWindow->LastFrameActive >= ImGui::GetFrameCount() - 1;
+        suspended = shouldSuspend && validFocus && !IsWindowInside(focusedWindow, panelWindow);
         const bool optionsBlocked = IsPopupBlockingAreaNavigation() &&
             (activeArea != Area::OptionsMenu || IsPopupBlockingAreaNavigation(Area::OptionsMenu));
         optionsVisible = false;
@@ -510,9 +517,8 @@ namespace SFSEMenuFramework::McpGamepad {
             return;
         }
 
-        if (firstFrameAfterOpen || gamepadBecameActive || (wasSuspended && !suspended)) {
-            const auto* focusedWindow = GImGui->NavWindow;
-            const bool outsideFocus = focusedWindow && (focusedWindow->Active || focusedWindow->WasActive) &&
+        if (!validFocus || firstFrameAfterOpen || gamepadBecameActive || (wasSuspended && !suspended)) {
+            const bool outsideFocus = validFocus &&
                 (!IsWindowInside(focusedWindow, panelWindow) || IsPopupBlockingAreaNavigation());
             if (!outsideFocus) {
                 activeArea = Area::PageTree;

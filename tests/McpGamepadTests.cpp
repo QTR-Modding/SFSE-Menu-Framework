@@ -56,7 +56,7 @@ namespace
             io.IniFilename = nullptr;
             io.DisplaySize = {1100, 800};
             io.DeltaTime = 1.0F / 60.0F;
-            io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+            io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard;
             io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
             io.Fonts->AddFontDefault();
             unsigned char* pixels{};
@@ -255,6 +255,10 @@ namespace
         Check(ui.Activations == 0, "the opening A press does not also activate a page control");
         ui.Tap(ImGuiKey_GamepadFaceDown);
         Check(ui.Activations == 1, "a separate A press activates the focused control once");
+        ui.Tap(ImGuiKey_DownArrow);
+        ui.ExpectFocus(ui.Content, ui.ContentItems[1], "keyboard Down works after controller use in a page");
+        ui.Tap(ImGuiKey_UpArrow);
+        ui.ExpectFocus(ui.Content, ui.ContentItems[0], "keyboard Up remains native");
 
         ui.Tap(ImGuiKey_GamepadDpadRight);
         ui.ExpectFocus(ui.Content, ui.SameRowButton, "Right selects the same-row button");
@@ -555,6 +559,7 @@ namespace
         int archived{};
         float value = 50.0f, dragValue = 50.0f;
         bool useGamepad = true;
+        bool showClient = true, scrollOnly = false;
         auto frame = [&] {
             ImGui::NewFrame();
             Pad::BeginWindows(useGamepad);
@@ -596,12 +601,18 @@ namespace
             }
             Pad::EndFrame();
             ImGui::End();
+            if (showClient) {
             ImGui::SetNextWindowSize({400, 200});
             ImGui::Begin("Client sliders");
             sliders = ImGui::GetCurrentWindow();
+            if (scrollOnly) {
+                for (int i = 0; i < 50; ++i) ImGui::Text("Scroll-only line %d", i);
+            } else {
             ImGui::SliderFloat("Value", &value, 0.0f, 100.0f); sliderId = ImGui::GetItemID();
             ImGui::DragFloat("Drag", &dragValue, 1.0f, 0.0f, 100.0f); dragId = ImGui::GetItemID();
+            }
             ImGui::End();
+            }
             Pad::EndWindows();
             ImGui::Render();
         };
@@ -686,6 +697,29 @@ namespace
         tilt(0.8f, 0.15f); tilt(0, 0);
         Check(dragValue > dragBefore, "thumbstick also adjusts active drag controls");
         tap(ImGuiKey_GamepadFaceRight);
+        focus(sliders, sliderId);
+        tap(ImGuiKey_DownArrow);
+        Check(GImGui->NavWindow == sliders && GImGui->NavId == dragId,
+            "keyboard arrows work in client windows after controller use");
+        focus(sliders, sliderId);
+        tap(ImGuiKey_Tab);
+        Check(GImGui->NavWindow == sliders && GImGui->NavId == dragId,
+            "keyboard Tab works without a mouse-device transition");
+        scrollOnly = true;
+        frame(); frame();
+        ImGui::FocusWindow(sliders);
+        ImGui::SetFocusID(0, sliders);
+        frame();
+        const float scrollBefore = sliders->Scroll.y;
+        ImGui::GetIO().AddKeyAnalogEvent(ImGuiKey_GamepadRStickDown, true, 1.0f);
+        frame(); frame();
+        ImGui::GetIO().AddKeyAnalogEvent(ImGuiKey_GamepadRStickDown, false, 0.0f);
+        frame();
+        Check(sliders->Scroll.y > scrollBefore, "right stick scrolls a window with no navigable items");
+        showClient = false;
+        frame(); frame(); frame(); frame();
+        Check(Pad::CanHandleBack(tree->RootWindow) && GImGui->NavId != 0,
+            "closing the focused client restores main-panel focus without changing input device");
     }
 }
 
