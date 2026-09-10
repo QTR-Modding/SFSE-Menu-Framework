@@ -107,6 +107,13 @@ target("verify-framework-signature", function()
 end)
 
 target(dll_name, function()
+    on_package(function(target)
+        os.vrunv("powershell", {
+            "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned", "-File",
+            path.join(project_root, "scripts", "Prepare-Release.ps1"),
+            "-BuiltDll", target:targetfile(), "-Version", target:version()
+        })
+    end)
 	add_rules("commonlibsf.plugin", {
 		author = plugin_author,
 		name = plugin_name,
@@ -172,6 +179,13 @@ target(dll_name, function()
             "-DllPath", target:targetfile(),
             "-VerifyTool", target:dep("verify-framework-signature"):targetfile()
         })
+        if is_mode("release", "releasedbg") then
+            os.vrunv("powershell", {
+                "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned", "-File",
+                path.join(project_root, "scripts", "Prepare-Release.ps1"),
+                "-BuiltDll", target:targetfile(), "-Version", target:version()
+            })
+        end
     end)
 end)
 
