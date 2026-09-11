@@ -1,11 +1,43 @@
 #include "lifecycle/MenuLifecycle.h"
 #include "rendering/RenderHooks.h"
 
+#include <RE/C/CreationRenderer.h>
+
+#include <Windows.h>
+
 #include <atomic>
 
 namespace
 {
 	std::atomic<bool> earlyLifecycleReady{ false };
+
+	void LogRenderPassDiagnostics()
+	{
+		using namespace RE::CreationRendererPrivate;
+		constexpr auto slot = kExecuteRenderPassVTableIndex;
+		const auto imageBase = reinterpret_cast<std::uintptr_t>(::GetModuleHandleW(nullptr));
+
+		const auto logPass = [imageBase](const char* a_name, auto a_vtableId, auto a_executeId) {
+			REL::Relocation<std::uintptr_t> vtable{ a_vtableId };
+			REL::Relocation<ExecuteRenderPass_t> target{ a_executeId };
+			const auto address = target.address();
+			const auto current = *reinterpret_cast<const std::uintptr_t*>(
+				vtable.address() + sizeof(std::uintptr_t) * kExecuteRenderPassVTableIndex);
+			logger::info(
+				"Scaleform {}: target=0x{:X}, RVA=0x{:X}, slot=0x{:X}",
+				a_name,
+				address,
+				address - imageBase,
+				current);
+		};
+
+		logPass("Begin", ScaleformRenderPass::Begin::VTABLE[0], ScaleformRenderPass::Begin::Execute);
+		logPass("End", ScaleformRenderPass::End::VTABLE[0], ScaleformRenderPass::End::Execute);
+		logPass(
+			"Composite",
+			ScaleformRenderPass::Composite::VTABLE[0],
+			ScaleformRenderPass::Composite::Execute);
+	}
 
 	void OnSFSEMessage(SFSE::MessagingInterface::Message* a_message)
 	{
@@ -43,6 +75,8 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		logger::critical("Unsupported Starfield runtime {}", runtime);
 		return false;
 	}
+
+	LogRenderPassDiagnostics();
 
 	const auto* taskInterface = SFSE::GetTaskInterface();
 	if (!taskInterface) {
