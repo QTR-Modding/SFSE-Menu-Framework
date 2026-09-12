@@ -24,7 +24,7 @@ includes(path.join(os.projectdir(), "lib", "commonlibsf"))
 -- CommonLib plugin behavior, but replace its implicit post-build install hook.
 rule("commonlib.plugin", function()
     after_build(function() end)
-end
+end)
 
 add_requires("nlohmann_json 3.11.3")
 add_requires("freetype 2.14.1", {
