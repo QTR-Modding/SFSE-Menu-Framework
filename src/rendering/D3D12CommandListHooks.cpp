@@ -322,7 +322,7 @@ namespace SFSEMenuFramework::RenderHooks
 
 			const auto description = a_resource->GetDesc();
 			return description.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
-			       description.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS &&
+			       D3D12Renderer::IsRenderTargetFormat(description.Format) &&
 			       description.DepthOrArraySize == 1 && description.MipLevels == 1 &&
 			       description.SampleDesc.Count == 1 && description.SampleDesc.Quality == 0 &&
 			       description.Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN && description.Width >= 256 &&
@@ -626,7 +626,9 @@ namespace SFSEMenuFramework::RenderHooks
 		const bool nativeTargets = std::ranges::all_of(targets, IsNativeD3D12Target);
 		const bool reShadeProxy =
 			!nativeTargets && IsVerifiedReShadeProxy(vtable, targets);
-		bool targetsValid = nativeTargets || reShadeProxy;
+		bool targetsValid = std::ranges::all_of(
+			targets,
+			[](const auto target) { return HasMemoryAccess(target, true); });
 		for (std::size_t index = 0; index < targets.size(); ++index) {
 			targetsValid = targetsValid && targets[index] != replacements[index];
 		}
@@ -637,6 +639,8 @@ namespace SFSEMenuFramework::RenderHooks
 		if (reShadeProxy) {
 			logger::info(
 				"Verified game-adjacent ReShade D3D12 command-list proxy; chaining its vtable");
+		} else if (!nativeTargets) {
+			logger::info("Existing D3D12 command-list hooks detected; chaining");
 		}
 
 		resetOriginal.store(reinterpret_cast<ResetFunction>(targets[0]), std::memory_order_release);

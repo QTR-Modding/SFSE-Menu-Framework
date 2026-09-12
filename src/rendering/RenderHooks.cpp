@@ -1,5 +1,8 @@
 #include "rendering/RenderHooks.h"
 #include "rendering/RenderHooksInternal.h"
+#include "rendering/StreamlineDiagnostic.h"
+
+#include "rendering/D3D12Renderer.h"
 
 #include <RE/C/CreationRenderer.h>
 
@@ -13,8 +16,7 @@ namespace SFSEMenuFramework::RenderHooks
 {
 	namespace
 	{
-		using RenderPassFunction =
-			RE::CreationRendererPrivate::ExecuteRenderPass_t*;
+		using RenderPassFunction = void* (*)(void*, void*, void*, void*);
 
 		enum class HookState : std::uint8_t
 		{
@@ -28,19 +30,11 @@ namespace SFSEMenuFramework::RenderHooks
 		std::atomic<RenderPassFunction> beginOriginal{ nullptr };
 		std::atomic<RenderPassFunction> endOriginal{ nullptr };
 		std::atomic<RenderPassFunction> compositeOriginal{ nullptr };
+		std::atomic<bool> postCompositeHandoff{ false };
 
-		void BeginThunk(
-			RE::CreationRendererPrivate::RenderPass*              a_pass,
-			RE::CreationRendererPrivate::RenderPassContext*       a_context,
-			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept;
-		void EndThunk(
-			RE::CreationRendererPrivate::RenderPass*              a_pass,
-			RE::CreationRendererPrivate::RenderPassContext*       a_context,
-			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept;
-		void CompositeThunk(
-			RE::CreationRendererPrivate::RenderPass*              a_pass,
-			RE::CreationRendererPrivate::RenderPassContext*       a_context,
-			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept;
+		void* BeginThunk(void*, void*, void*, void*) noexcept;
+		void* EndThunk(void*, void*, void*, void*) noexcept;
+		void* CompositeThunk(void*, void*, void*, void*) noexcept;
 	}
 
 	bool Detail::HasMemoryAccess(
@@ -136,36 +130,50 @@ namespace SFSEMenuFramework::RenderHooks
 	{
 		using namespace Detail;
 
-		void BeginThunk(
-			RE::CreationRendererPrivate::RenderPass*              a_pass,
-			RE::CreationRendererPrivate::RenderPassContext*       a_context,
-			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept
+		void* BeginThunk(void* a_pass, void* a_context, void* a_executionData, void* a_r9) noexcept
 		{
-			Detail::ResetRegion();
+			if (postCompositeHandoff.load(std::memory_order_acquire)) {
+				Detail::FinalizeRegionBeforeComposite();
+			} else {
+				Detail::ResetRegion();
+			}
+			StreamlineDiagnostic::ResetRegion();
 			if (scaleformState.load(std::memory_order_acquire) == HookState::Ready) {
-				static_cast<void>(Detail::EnsureCommandListHooks());
+				if (!StreamlineDiagnostic::EnsureInstalled()) {
+					static_cast<void>(Detail::EnsureCommandListHooks());
+				}
 			}
 
-			beginOriginal.load(std::memory_order_acquire)(a_pass, a_context, a_executionData);
+			return beginOriginal.load(std::memory_order_acquire)(
+				a_pass, a_context, a_executionData, a_r9);
 		}
 
-		void EndThunk(
-			RE::CreationRendererPrivate::RenderPass*              a_pass,
-			RE::CreationRendererPrivate::RenderPassContext*       a_context,
-			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept
+		void* EndThunk(void* a_pass, void* a_context, void* a_executionData, void* a_r9) noexcept
 		{
-			endOriginal.load(std::memory_order_acquire)(a_pass, a_context, a_executionData);
-			Detail::ActivateRegionAfterScaleformEnd();
+			const auto result = endOriginal.load(std::memory_order_acquire)(
+				a_pass, a_context, a_executionData, a_r9);
+			if (!postCompositeHandoff.load(std::memory_order_acquire)) {
+				Detail::ActivateRegionAfterScaleformEnd();
+				StreamlineDiagnostic::ActivateRegion();
+			}
+			return result;
 		}
 
-		void CompositeThunk(
-			RE::CreationRendererPrivate::RenderPass*              a_pass,
-			RE::CreationRendererPrivate::RenderPassContext*       a_context,
-			RE::CreationRendererPrivate::RenderPassExecutionData* a_executionData) noexcept
+		void* CompositeThunk(void* a_pass, void* a_context, void* a_executionData, void* a_r9) noexcept
 		{
-			Detail::FinalizeRegionBeforeComposite();
+			const bool postComposite = postCompositeHandoff.load(std::memory_order_acquire);
+			if (!postComposite) {
+				Detail::FinalizeRegionBeforeComposite();
+				StreamlineDiagnostic::ResetRegion();
+			}
 
-			compositeOriginal.load(std::memory_order_acquire)(a_pass, a_context, a_executionData);
+			const auto result = compositeOriginal.load(std::memory_order_acquire)(
+				a_pass, a_context, a_executionData, a_r9);
+			if (postComposite) {
+				Detail::ActivateRegionAfterScaleformEnd();
+				StreamlineDiagnostic::ActivateRegion();
+			}
+			return result;
 		}
 
 		[[nodiscard]] bool InstallScaleformHooks()
@@ -183,25 +191,43 @@ namespace SFSEMenuFramework::RenderHooks
 			const auto beginTarget = expectedBegin.address();
 			const auto endTarget = expectedEnd.address();
 			const auto compositeTarget = expectedComposite.address();
+			const auto beginCurrent = ReadVtableSlot(beginVtable, slot);
+			const auto endCurrent = ReadVtableSlot(endVtable, slot);
+			const auto compositeCurrent = ReadVtableSlot(compositeVtable, slot);
+			const auto beginReplacement = FunctionAddress(&BeginThunk);
+			const auto endReplacement = FunctionAddress(&EndThunk);
+			const auto compositeReplacement = FunctionAddress(&CompositeThunk);
 			if (!HasMemoryAccess(beginTarget, true) || !HasMemoryAccess(endTarget, true) ||
-				!HasMemoryAccess(compositeTarget, true) ||
-				ReadVtableSlot(beginVtable, slot) != beginTarget ||
-				ReadVtableSlot(endVtable, slot) != endTarget ||
-				ReadVtableSlot(compositeVtable, slot) != compositeTarget) {
-				logger::critical("The Scaleform render-pass seam does not match Starfield 1.16.244");
+				!HasMemoryAccess(compositeTarget, true) || !HasMemoryAccess(beginCurrent, true) ||
+				!HasMemoryAccess(endCurrent, true) || !HasMemoryAccess(compositeCurrent, true) ||
+				beginCurrent == beginReplacement || endCurrent == endReplacement ||
+				compositeCurrent == compositeReplacement) {
+				logger::critical("The Scaleform render-pass hooks are unavailable");
 				return false;
 			}
+			if (beginCurrent != beginTarget || endCurrent != endTarget ||
+				compositeCurrent != compositeTarget) {
+				logger::info("Existing Scaleform render-pass hooks detected; chaining");
+			}
 
-			beginOriginal.store(reinterpret_cast<RenderPassFunction>(beginTarget), std::memory_order_release);
-			endOriginal.store(reinterpret_cast<RenderPassFunction>(endTarget), std::memory_order_release);
+			const bool usePostComposite = ::GetModuleHandleW(L"Luma.dll") != nullptr;
+			postCompositeHandoff.store(usePostComposite, std::memory_order_release);
+			D3D12Renderer::ConfigureRenderTargetFormat(
+				usePostComposite ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM);
+			if (usePostComposite) {
+				logger::info("Luma detected; using the RGBA16F post-composite handoff");
+			}
+
+			beginOriginal.store(reinterpret_cast<RenderPassFunction>(beginCurrent), std::memory_order_release);
+			endOriginal.store(reinterpret_cast<RenderPassFunction>(endCurrent), std::memory_order_release);
 			compositeOriginal.store(
-				reinterpret_cast<RenderPassFunction>(compositeTarget),
+				reinterpret_cast<RenderPassFunction>(compositeCurrent),
 				std::memory_order_release);
 
 			std::array<VtableHook, 3> hooks{
-				VtableHook{ &beginVtable, slot, beginTarget, FunctionAddress(&BeginThunk) },
-				VtableHook{ &endVtable, slot, endTarget, FunctionAddress(&EndThunk) },
-				VtableHook{ &compositeVtable, slot, compositeTarget, FunctionAddress(&CompositeThunk) }
+				VtableHook{ &beginVtable, slot, beginCurrent, beginReplacement },
+				VtableHook{ &endVtable, slot, endCurrent, endReplacement },
+				VtableHook{ &compositeVtable, slot, compositeCurrent, compositeReplacement }
 			};
 			if (!CommitHooks(hooks)) {
 				const bool restored = RollBackHooks(hooks);

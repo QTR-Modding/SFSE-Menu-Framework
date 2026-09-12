@@ -60,7 +60,22 @@ namespace SFSEMenuFramework::D3D12Renderer
 		std::atomic<std::uint64_t> renderedBlockingWindowGeneration{ 0 };
 		std::atomic<std::uint64_t> lastBlockingWindowRenderTick{ 0 };
 		std::atomic<bool>          rendererReady{ false };
+		std::atomic<DXGI_FORMAT>   renderTargetFormat{ DXGI_FORMAT_R8G8B8A8_UNORM };
 		thread_local bool          renderInProgress{};
+
+		[[nodiscard]] DXGI_FORMAT ResolveRenderTargetFormat(DXGI_FORMAT a_format) noexcept
+		{
+			switch (a_format) {
+			case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+			case DXGI_FORMAT_R8G8B8A8_UNORM:
+				return DXGI_FORMAT_R8G8B8A8_UNORM;
+			case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+			case DXGI_FORMAT_R16G16B16A16_FLOAT:
+				return DXGI_FORMAT_R16G16B16A16_FLOAT;
+			default:
+				return DXGI_FORMAT_UNKNOWN;
+			}
+		}
 
 		struct RenderScope final
 		{
@@ -356,7 +371,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			if (!ImGui_ImplDX12_Init(
 					a_device,
 					static_cast<int>(frameResourceCount),
-					DXGI_FORMAT_R8G8B8A8_UNORM,
+					renderTargetFormat.load(std::memory_order_acquire),
 					a_state.ShaderHeap.Get(),
 					shaderCpuHandle,
 					shaderGpuHandle)) {
@@ -453,6 +468,20 @@ namespace SFSEMenuFramework::D3D12Renderer
 		}
 	}
 
+	void ConfigureRenderTargetFormat(DXGI_FORMAT a_format) noexcept
+	{
+		if (a_format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+			a_format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+			renderTargetFormat.store(a_format, std::memory_order_release);
+		}
+	}
+
+	bool IsRenderTargetFormat(DXGI_FORMAT a_format) noexcept
+	{
+		return ResolveRenderTargetFormat(a_format) ==
+		       renderTargetFormat.load(std::memory_order_acquire);
+	}
+
 	bool Initialize(ID3D12Device* a_device)
 	{
 		if (!a_device) {
@@ -534,7 +563,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 		const auto description = a_renderTarget->GetDesc();
 		if (description.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
-			description.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS ||
+			!IsRenderTargetFormat(description.Format) ||
 			description.SampleDesc.Count != 1 || description.Width < 256 ||
 			description.Height < 256) {
 			return;
@@ -610,7 +639,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		io.MouseDrawCursor = drawMouseCursor;
 
 		D3D12_RENDER_TARGET_VIEW_DESC renderTargetView{};
-		renderTargetView.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		renderTargetView.Format = renderTargetFormat.load(std::memory_order_acquire);
 		renderTargetView.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 		renderTargetView.Texture2D.MipSlice = 0;
 		renderTargetView.Texture2D.PlaneSlice = 0;

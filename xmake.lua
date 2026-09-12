@@ -24,7 +24,7 @@ includes(path.join(os.projectdir(), "lib", "commonlibsf"))
 -- CommonLib plugin behavior, but replace its implicit post-build install hook.
 rule("commonlib.plugin", function()
     after_build(function() end)
-end)
+end
 
 add_requires("nlohmann_json 3.11.3")
 add_requires("freetype 2.14.1", {
@@ -135,7 +135,7 @@ target(dll_name, function()
     add_deps("verify-framework-signature", { inherit = false })
 	add_packages("nlohmann_json")
     add_defines("_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING")
-    add_syslinks("comctl32", "windowscodecs", "ole32", "xaudio2")
+    add_syslinks("d3d12", "d3dcompiler", "comctl32", "windowscodecs", "ole32", "xaudio2")
     -- Generated from Dear ImGui 1.90.8-docking by cimgui and copied from the
     -- pinned SKSE Menu Framework reference. Compile it directly into the DLL
     -- so every CIMGUI_API entry remains present in the export table.
