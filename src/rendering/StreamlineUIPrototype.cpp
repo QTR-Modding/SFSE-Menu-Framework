@@ -87,6 +87,12 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 			0x4C6A5AAD, 0xB445, 0x496C,
 			{ 0x87, 0xFF, 0x1A, 0xF3, 0x84, 0x5B, 0xE6, 0x53 }
 		};
+		constexpr GUID streamlineNativeInterface{
+			0xADEC44E2,
+			0x61F0,
+			0x45C3,
+			{ 0xAD, 0x9F, 0x1B, 0x37, 0x37, 0x92, 0x84, 0xFF }
+		};
 
 		struct TargetSlot final
 		{
@@ -104,6 +110,8 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 		std::atomic<SetTagFn> originalSetTag{};
 		std::atomic_flag installed{};
 		std::atomic_flag markerLogged{};
+		std::atomic_flag nativeListLogged{};
+		std::atomic_flag rejectionLogged{};
 
 		[[nodiscard]] State& GetState()
 		{
@@ -115,6 +123,13 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 		{
 			static auto* mutex = new std::mutex();
 			return *mutex;
+		}
+
+		void LogRejection(const char* a_reason) noexcept
+		{
+			if (!rejectionLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::warn("Streamline UI overlay prototype rejected: {}", a_reason);
+			}
 		}
 
 		[[nodiscard]] bool SameType(const StructType& a_left, const StructType& a_right) noexcept
@@ -132,6 +147,31 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 			return SUCCEEDED(a_left->QueryInterface(IID_PPV_ARGS(left.GetAddressOf()))) &&
 			       SUCCEEDED(a_right->QueryInterface(IID_PPV_ARGS(right.GetAddressOf()))) &&
 			       left.Get() == right.Get();
+		}
+
+		[[nodiscard]] bool GetStreamlineNativeCommandList(
+			ID3D12GraphicsCommandList* a_commandList,
+			ComPtr<ID3D12GraphicsCommandList>& a_native) noexcept
+		{
+			a_native.Reset();
+			if (!a_commandList) {
+				return false;
+			}
+
+			ID3D12GraphicsCommandList* native{};
+			if (FAILED(a_commandList->QueryInterface(
+					streamlineNativeInterface,
+					reinterpret_cast<void**>(&native))) ||
+				!native) {
+				return false;
+			}
+
+			a_native.Attach(native);
+			if (native == a_commandList) {
+				a_native.Reset();
+				return false;
+			}
+			return true;
 		}
 
 		[[nodiscard]] bool GetRtvHandle(
@@ -185,14 +225,22 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 
 		void DrawMarker(const ResourceTag& a_tag, void* a_commandBuffer) noexcept
 		{
-			if (!a_tag.ResourceData || !a_tag.ResourceData->Native || !a_commandBuffer ||
-				a_tag.ResourceData->State == UINT_MAX) {
+			if (!a_tag.ResourceData || !a_tag.ResourceData->Native) {
+				return;
+			}
+			if (!a_commandBuffer) {
+				LogRejection("UI tag has no command buffer");
+				return;
+			}
+			if (a_tag.ResourceData->State == UINT_MAX) {
+				LogRejection("UI resource state is unknown");
 				return;
 			}
 
 			ComPtr<ID3D12Resource> target;
 			if (FAILED(reinterpret_cast<IUnknown*>(a_tag.ResourceData->Native)->QueryInterface(
-					IID_PPV_ARGS(target.GetAddressOf())))) {
+					IID_PPV_ARGS(target.GetAddressOf()))) || !target) {
+				LogRejection("UI native resource is not ID3D12Resource");
 				return;
 			}
 			const auto desc = target->GetDesc();
@@ -200,26 +248,42 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 				desc.Format != DXGI_FORMAT_R16G16B16A16_TYPELESS ||
 				desc.SampleDesc.Count != 1 ||
 				(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) == 0) {
+				LogRejection("UI texture description is unsupported");
 				return;
 			}
 
 			ComPtr<ID3D12GraphicsCommandList> commandList;
 			if (FAILED(reinterpret_cast<IUnknown*>(a_commandBuffer)->QueryInterface(
 					IID_PPV_ARGS(commandList.GetAddressOf()))) ||
-				commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) {
+				!commandList || commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) {
+				LogRejection("command buffer is not a direct D3D12 command list");
 				return;
+			}
+
+			ComPtr<ID3D12GraphicsCommandList> nativeCommandList;
+			if (GetStreamlineNativeCommandList(commandList.Get(), nativeCommandList)) {
+				commandList = nativeCommandList;
+				if (!nativeListLogged.test_and_set(std::memory_order_relaxed)) {
+					logger::info("Streamline UI overlay prototype using native command list");
+				}
 			}
 
 			ComPtr<ID3D12Device> targetDevice;
 			ComPtr<ID3D12Device> listDevice;
 			if (FAILED(target->GetDevice(IID_PPV_ARGS(targetDevice.GetAddressOf()))) ||
 				FAILED(commandList->GetDevice(IID_PPV_ARGS(listDevice.GetAddressOf()))) ||
-				!SameIdentity(targetDevice.Get(), listDevice.Get())) {
+				!targetDevice || !listDevice) {
+				LogRejection("could not resolve D3D12 devices");
+				return;
+			}
+			if (!SameIdentity(targetDevice.Get(), listDevice.Get())) {
+				LogRejection("command list and UI resource device identity differ");
 				return;
 			}
 
 			D3D12_CPU_DESCRIPTOR_HANDLE rtv{};
 			if (!GetRtvHandle(targetDevice.Get(), target.Get(), rtv)) {
+				LogRejection("could not allocate UI render-target view");
 				return;
 			}
 
