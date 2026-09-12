@@ -116,6 +116,7 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 			DXGI_FORMAT PipelineFormat{ DXGI_FORMAT_UNKNOWN };
 			bool Initialized{};
 			bool HasOverlayContent{};
+			std::uint64_t OverlayGeneration{};
 			bool Failed{};
 		};
 
@@ -125,9 +126,6 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 		std::atomic_flag heapWaitLogged{};
 		std::atomic_flag routeLogged{};
 		FrameRouteHistory frameRoutes;
-
-		thread_local ID3D12GraphicsCommandList* lastRenderedCommandList{};
-		thread_local std::uint64_t lastRenderedEpoch{};
 
 		[[nodiscard]] State& GetState()
 		{
@@ -206,6 +204,7 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 			a_state.Width = a_width;
 			a_state.Height = a_height;
 			a_state.HasOverlayContent = false;
+			a_state.OverlayGeneration = 0;
 			return true;
 		}
 
@@ -329,7 +328,8 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 				return false;
 			}
 			const auto epoch = savedState.Epoch;
-			if (lastRenderedCommandList == proxyList.Get() && lastRenderedEpoch == epoch) {
+			if (const auto generation = CommandListState::FindOverlay(nativeList.Get(), epoch, target.Get())) {
+				D3D12Renderer::NotifyOverlayComposited(*generation);
 				return true;
 			}
 
@@ -362,7 +362,7 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 				D3D12_RESOURCE_STATE_RENDER_TARGET);
 			const bool recorded = D3D12Renderer::Render(
-				nativeList.Get(), state.Overlay.Get());
+				nativeList.Get(), state.Overlay.Get(), state.OverlayGeneration);
 			Transition(
 				nativeList.Get(), state.Overlay.Get(),
 				D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -386,8 +386,8 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 			Transition(
 				nativeList.Get(), target.Get(),
 				D3D12_RESOURCE_STATE_RENDER_TARGET, originalState);
-			lastRenderedCommandList = proxyList.Get();
-			lastRenderedEpoch = epoch;
+			CommandListState::RecordOverlay(nativeList.Get(), epoch, target.Get(), state.OverlayGeneration);
+			D3D12Renderer::NotifyOverlayComposited(state.OverlayGeneration);
 			if (!routeLogged.test_and_set(std::memory_order_relaxed)) {
 				logger::info("Streamline UI overlay rendering SFSE-MF into UIColorAndAlpha with state restoration");
 			}

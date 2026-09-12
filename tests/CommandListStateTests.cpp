@@ -1,9 +1,12 @@
 #include "rendering/CommandListState.h"
 #include <d3dcompiler.h>
 #include <dxgi1_4.h>
+#include <algorithm>
+#include <barrier>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 namespace
@@ -47,6 +50,128 @@ namespace
 		ComPtr<ID3D12PipelineState> pipeline;
 		Hr(device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pipeline)));
 		return pipeline;
+	}
+
+	void TestConcurrentRecordings(ID3D12Device* device, const Snapshot& seed)
+	{
+		constexpr std::size_t workerCount = 8;
+		constexpr std::size_t rounds = 32;
+		std::array<std::uint64_t, workerCount * rounds * 2> epochs{};
+		std::barrier ready{ static_cast<std::ptrdiff_t>(workerCount) };
+		std::array<std::jthread, workerCount> workers;
+		for (std::size_t worker = 0; worker < workerCount; ++worker) {
+			workers[worker] = std::jthread([&, worker] {
+				ComPtr<ID3D12CommandAllocator> allocator;
+				Hr(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
+				ComPtr<ID3D12GraphicsCommandList> list;
+				Hr(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+					allocator.Get(), nullptr, IID_PPV_ARGS(&list)));
+				Hr(list->Close());
+				Snapshot captured;
+				for (std::size_t round = 0; round < rounds; ++round) {
+					ready.arrive_and_wait();
+					Hr(allocator->Reset());
+					Hr(list->Reset(allocator.Get(), seed.Pipeline.Get()));
+					list->SetComputeRootSignature(seed.ComputeRoot.Get());
+					seed.Restore(list.Get());
+					const UINT marker = static_cast<UINT>((worker + 1) * 1000 + round);
+					list->SetGraphicsRoot32BitConstant(0, marker, 3);
+					Check(Capture(list.Get(), captured) && captured.Graphics[0].Constants[3] == marker,
+						"concurrent command lists keep their own root arguments");
+					const auto index = (worker * rounds + round) * 2;
+					epochs[index] = captured.Epoch;
+					{
+						InjectionScope injection;
+						list->SetGraphicsRoot32BitConstant(0, marker + 1, 3);
+						Check(Capture(list.Get(), captured) && captured.Graphics[0].Constants[3] == marker,
+							"concurrent injection scopes do not contaminate tracked state");
+					}
+					list->ClearState(seed.Pipeline.Get());
+					Check(!Capture(list.Get(), captured), "concurrent ClearState invalidates bindings");
+					list->SetComputeRootSignature(seed.ComputeRoot.Get());
+					seed.Restore(list.Get());
+					Check(Capture(list.Get(), captured) && captured.Epoch > epochs[index],
+						"concurrent ClearState starts a fresh recording");
+					epochs[index + 1] = captured.Epoch;
+					Hr(list->Close());
+					Check(!Capture(list.Get(), captured), "concurrent Close retires the recording");
+				}
+			});
+		}
+		for (auto& worker : workers) { worker.join(); }
+		std::sort(epochs.begin(), epochs.end());
+		Check(epochs.front() != 0 && std::adjacent_find(epochs.begin(), epochs.end()) == epochs.end(),
+			"recording IDs remain globally unique across threads");
+	}
+
+	void TestOverlayRecordings(ID3D12Device* device, const Snapshot& seed)
+	{
+		std::array<ComPtr<ID3D12CommandAllocator>, 2> allocators;
+		std::array<ComPtr<ID3D12GraphicsCommandList>, 2> lists;
+		std::array<std::uint64_t, 2> epochs{};
+		std::array<ComPtr<ID3D12Resource>, 2> targets;
+		D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_DEFAULT };
+		D3D12_RESOURCE_DESC texture{};
+		texture.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		texture.Width = texture.Height = 4;
+		texture.DepthOrArraySize = texture.MipLevels = 1;
+		texture.SampleDesc.Count = 1;
+		texture.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		for (std::size_t i = 0; i < lists.size(); ++i) {
+			Hr(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &texture,
+				D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&targets[i])));
+			Hr(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocators[i])));
+			Hr(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+				allocators[i].Get(), nullptr, IID_PPV_ARGS(&lists[i])));
+			Hr(lists[i]->Close());
+			Hr(lists[i]->Reset(allocators[i].Get(), seed.Pipeline.Get()));
+			lists[i]->SetComputeRootSignature(seed.ComputeRoot.Get());
+			seed.Restore(lists[i].Get());
+			Snapshot captured;
+			Check(Capture(lists[i].Get(), captured), "capture overlay recording");
+			epochs[i] = captured.Epoch;
+		}
+		auto* first = lists[0].Get();
+		auto* second = lists[1].Get();
+		auto* a = targets[0].Get();
+		auto* b = targets[1].Get();
+		RecordOverlay(first, epochs[0], a, 0);
+		RecordOverlay(second, epochs[1], a, 7);
+		RecordOverlay(first, epochs[0], b, 11);
+		Check(FindOverlay(first, epochs[0], a) == 0 && FindOverlay(first, epochs[0], b) == 11,
+			"A/B/A target tags retain both entries, including generation zero");
+		Check(FindOverlay(second, epochs[1], a) == 7,
+			"interleaved command lists retain independent overlay generations");
+		std::jthread handoff([&] {
+			Check(FindOverlay(first, epochs[0], a) == 0, "overlay history survives recording thread handoff");
+			RecordOverlay(first, epochs[0], b, 12);
+		});
+		handoff.join();
+		Check(FindOverlay(first, epochs[0], b) == 12, "another thread can update the same recording");
+		RecordOverlay(first, epochs[1], a, 99);
+		Check(!FindOverlay(first, epochs[1], a) && FindOverlay(first, epochs[0], a) == 0,
+			"wrong-epoch overlay access cannot change a live recording");
+		first->ClearState(seed.Pipeline.Get());
+		Check(!FindOverlay(first, epochs[0], a), "ClearState retires overlay history");
+		first->SetComputeRootSignature(seed.ComputeRoot.Get());
+		seed.Restore(first);
+		Snapshot captured;
+		Check(Capture(first, captured), "capture new ClearState epoch");
+		RecordOverlay(first, epochs[0], a, 99);
+		Check(!FindOverlay(first, captured.Epoch, a), "stale writes cannot seed the next recording");
+		RecordOverlay(first, captured.Epoch, a, 13);
+		Hr(first->Close());
+		RecordOverlay(first, captured.Epoch, a, 99);
+		Check(!FindOverlay(first, captured.Epoch, a), "Close rejects overlay reads and writes");
+		Hr(first->Reset(allocators[0].Get(), seed.Pipeline.Get()));
+		first->SetComputeRootSignature(seed.ComputeRoot.Get());
+		seed.Restore(first);
+		Check(Capture(first, captured) && !FindOverlay(first, captured.Epoch, a),
+			"Reset begins without overlays from an earlier recording");
+		Hr(first->Close());
+		Check(FindOverlay(second, epochs[1], a) == 7, "closing another list preserves this recording");
+		Hr(second->Close());
+		Check(!FindOverlay(second, epochs[1], a), "final Close retires the remaining overlay history");
 	}
 }
 
@@ -165,6 +290,8 @@ int main()
 		Hr(next->Close());
 		Check(!Capture(next, after), "reused recording is retired");
 	}
+	TestConcurrentRecordings(device.Get(), before);
+	TestOverlayRecordings(device.Get(), before);
 	TestTargetDescriptors(device.Get(), root.Get(), heap.Get());
-	std::puts("PASS: WARP state replay, injection isolation, reset guards, 256 recordings and Close/Reset lifetimes");
+	std::puts("PASS: WARP state replay, injection isolation, reset guards, 256 recordings and concurrent lifetimes");
 }

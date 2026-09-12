@@ -13,7 +13,10 @@ namespace SFSEMenuFramework::D3D12Renderer
 		bool a_enabled,
 		std::uint64_t a_earlyRawMouseGeneration = 0);
 	[[nodiscard]] bool HasRecentBlockingWindowFrame(std::uint64_t a_generation) noexcept;
+	void NotifyOverlayComposited(std::uint64_t a_generation) noexcept;
 
-	// Draw into our overlay; the caller owns command-list state restoration.
-	bool Render(ID3D12GraphicsCommandList* a_commandList, ID3D12Resource* a_renderTarget);
+	// A skipped draw leaves the cached generation unchanged. Zero means HUD-only.
+	// The caller owns command-list state restoration and reports compositing separately.
+	bool Render(ID3D12GraphicsCommandList* a_commandList, ID3D12Resource* a_renderTarget,
+		std::uint64_t& a_generation);
 }

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mutex>
 #include <memory>
+#include <optional>
 #include <wrl/client.h>
 
 namespace SFSEMenuFramework::CommandListState
@@ -62,6 +63,11 @@ namespace SFSEMenuFramework::CommandListState
 	[[nodiscard]] bool Install(ID3D12GraphicsCommandList* a_list);
 	[[nodiscard]] bool Capture(ID3D12GraphicsCommandList* a_list, Snapshot& a_snapshot,
 		const char** a_reason = nullptr);
+	// Remember every composited target until this command-list recording ends.
+	[[nodiscard]] std::optional<std::uint64_t> FindOverlay(ID3D12GraphicsCommandList* a_list,
+		std::uint64_t a_epoch, ID3D12Resource* a_target);
+	void RecordOverlay(ID3D12GraphicsCommandList* a_list, std::uint64_t a_epoch,
+		ID3D12Resource* a_target, std::uint64_t a_generation);
 	std::mutex& RoutingMutex();
 
 	class InjectionScope

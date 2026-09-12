@@ -62,6 +62,7 @@ namespace SFSEMenuFramework::PresentOverlay
 
 			ComPtr<ID3D12Resource> Overlay;
 			bool OverlayInitialized{};
+			std::uint64_t OverlayGeneration{};
 			std::uint64_t Width{};
 			std::uint32_t Height{};
 			ComPtr<ID3D12PipelineState> Pipeline;
@@ -182,6 +183,7 @@ namespace SFSEMenuFramework::PresentOverlay
 			}
 			a_state.Overlay.Reset();
 			a_state.OverlayInitialized = false;
+			a_state.OverlayGeneration = 0;
 
 			if (!OverlayCompositor::CreateTexture(a_state.Device.Get(), a_width, a_height,
 				a_state.SrvHeap.Get(), a_state.Overlay)) {
@@ -315,8 +317,9 @@ namespace SFSEMenuFramework::PresentOverlay
 			Transition(state.List.Get(), state.Overlay.Get(),
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
+			auto generation = state.OverlayGeneration;
 			const bool recorded = D3D12Renderer::Render(
-				state.List.Get(), state.Overlay.Get());
+				state.List.Get(), state.Overlay.Get(), generation);
 
 			Transition(state.List.Get(), state.Overlay.Get(),
 				D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -341,6 +344,7 @@ namespace SFSEMenuFramework::PresentOverlay
 			ID3D12CommandList* lists[]{ state.List.Get() };
 			state.Queue->ExecuteCommandLists(1, lists);
 			state.OverlayInitialized = state.OverlayInitialized || recorded;
+			state.OverlayGeneration = generation;
 			const auto fenceValue = state.NextFence++;
 			if (FAILED(state.Queue->Signal(state.Fence.Get(), fenceValue))) {
 				state.SubmissionFailed = true;
@@ -348,6 +352,9 @@ namespace SFSEMenuFramework::PresentOverlay
 				return;
 			}
 			frame.FenceValue = fenceValue;
+			if (state.OverlayInitialized) {
+				D3D12Renderer::NotifyOverlayComposited(state.OverlayGeneration);
+			}
 		}
 
 		HRESULT STDMETHODCALLTYPE PresentFrame(

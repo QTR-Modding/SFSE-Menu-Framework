@@ -1,6 +1,7 @@
 #include "rendering/D3D12Renderer.h"
 #include "audio/MenuSounds.h"
 #include "rendering/D3D12Texture.h"
+#include "rendering/BlockingWindowVisibility.h"
 
 #include "appearance/FontManager.h"
 #include "appearance/CursorManager.h"
@@ -53,12 +54,10 @@ namespace SFSEMenuFramework::D3D12Renderer
 		using D3D12Textures::HeapProperties;
 		constexpr std::size_t frameResourceCount = 4;
 		constexpr std::size_t imageCount = 2;  // Wallpaper and cursor; font is descriptor 0.
-		constexpr std::uint64_t maximumBlockingWindowFrameAgeMilliseconds = 250;
 		constexpr char imguiIniFilename[] =
 			"Data/SFSE/Plugins/SFSEMenuFramework.imgui.ini";
 
-		std::atomic<std::uint64_t> renderedBlockingWindowGeneration{ 0 };
-		std::atomic<std::uint64_t> lastBlockingWindowRenderTick{ 0 };
+		BlockingWindowVisibility blockingVisibility;
 		std::atomic<bool>          rendererReady{ false };
 		thread_local bool          renderInProgress{};
 
@@ -489,17 +488,19 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 	bool HasRecentBlockingWindowFrame(std::uint64_t a_generation) noexcept
 	{
-		if (a_generation == 0 ||
-			renderedBlockingWindowGeneration.load(std::memory_order_acquire) != a_generation) {
-			return false;
-		}
-
-		const auto lastTick = lastBlockingWindowRenderTick.load(std::memory_order_acquire);
-		return lastTick != 0 &&
-		       (::GetTickCount64() - lastTick) <= maximumBlockingWindowFrameAgeMilliseconds;
+		return blockingVisibility.IsRecent(a_generation, ::GetTickCount64());
 	}
 
-	bool Render(ID3D12GraphicsCommandList* a_commandList, ID3D12Resource* a_renderTarget)
+	void NotifyOverlayComposited(std::uint64_t a_generation) noexcept
+	{
+		if (blockingVisibility.Refresh(a_generation,
+			WindowManager::IsBlockingWindowOpenGeneration(a_generation), ::GetTickCount64())) {
+			static_cast<void>(Win32Platform::PostHostWindowCallback());
+		}
+	}
+
+	bool Render(ID3D12GraphicsCommandList* a_commandList, ID3D12Resource* a_renderTarget,
+		std::uint64_t& a_generation)
 	{
 		if (!a_commandList || !a_renderTarget ||
 			a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) {
@@ -635,13 +636,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		}
 		MarkFrameSlot(rendererState, commandList2.Get(), frameSlot);
 
-		if (recorded && renderedGeneration != 0) {
-			renderedBlockingWindowGeneration.store(
-				renderedGeneration,
-				std::memory_order_release);
-			lastBlockingWindowRenderTick.store(::GetTickCount64(), std::memory_order_release);
-			static_cast<void>(Win32Platform::PostHostWindowCallback());
-		}
+		if (recorded) { a_generation = renderedGeneration; }
 
 		EventManager::Dispatch(
 			Model::EventType::kAfterRender,

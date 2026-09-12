@@ -1,5 +1,6 @@
 #include "rendering/FrameRouteHistory.h"
 #include "rendering/FramePresentBridge.h"
+#include "rendering/BlockingWindowVisibility.h"
 
 #include <Windows.h>
 #include <cstdio>
@@ -87,5 +88,22 @@ int main()
 	Check(wrap.HasUI(0));
 	Check(!wrap.HasUI(1));
 	CheckBridge();
+	SFSEMenuFramework::BlockingWindowVisibility visibility;
+	Check(!visibility.IsRecent(1, 100));
+	Check(visibility.Refresh(1, true, 100));
+	Check(visibility.IsRecent(1, 350));
+	Check(!visibility.IsRecent(1, 351));
+	// Cached composites keep the same generation interactive well past 250 ms.
+	for (std::uint64_t time = 200; time < 2000; time += 100) {
+		Check(visibility.Refresh(1, true, time));
+		Check(visibility.IsRecent(1, time + 100));
+	}
+	Check(!visibility.IsRecent(2, 2000)); // An old image cannot activate a reopened menu.
+	Check(!visibility.Refresh(1, false, 2000));
+	Check(!visibility.Refresh(0, true, 2000)); // HUD-only content never takes input.
+	Check(visibility.Refresh(2, true, 2000));
+	Check(!visibility.Refresh(1, false, 2100));
+	Check(visibility.IsRecent(2, 2200));
+	Check(!visibility.IsRecent(2, 2251)); // No compositing still expires the lease.
 	std::puts("Frame routing and native bridge tests passed");
 }

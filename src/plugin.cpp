@@ -45,12 +45,6 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
-	// Patch executable code during plugin load, before rendering starts.
-	if (!SFSEMenuFramework::PresentOverlay::EnsureInstalled()) {
-		return false;
-	}
-	static_cast<void>(SFSEMenuFramework::StreamlineUIPrototype::Install());
-
 	const auto* taskInterface = SFSE::GetTaskInterface();
 	if (!taskInterface) {
 		logger::critical("The SFSE task interface is unavailable");
@@ -67,6 +61,14 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		logger::critical("Failed to register the SFSE post-data-load listener");
 		return false;
 	}
+
+	// SFSE now owns our callback, so later failures must leave the DLL loaded.
+	// Install rendering hooks here, before rendering starts.
+	if (!SFSEMenuFramework::PresentOverlay::EnsureInstalled()) {
+		logger::critical("Failed to install frame presentation; the plugin will remain loaded but inactive");
+		return true;
+	}
+	static_cast<void>(SFSEMenuFramework::StreamlineUIPrototype::Install());
 
 	if (!SFSEMenuFramework::MenuLifecycle::InstallEarly(*taskInterface)) {
 		logger::critical(

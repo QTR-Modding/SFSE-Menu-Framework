@@ -14,13 +14,35 @@ namespace SFSEMenuFramework::CommandListState
 	{
 		using List = ID3D12GraphicsCommandList;
 		using namespace VtableHooks;
-		struct Registry
+		struct Recording
+		{
+			struct Overlay
+			{
+				Microsoft::WRL::ComPtr<ID3D12Resource> Target;
+				std::uint64_t Generation;
+			};
+			Snapshot State;
+			std::vector<Overlay> Overlays;
+		};
+		struct Shard
 		{
 			std::mutex Mutex;
-			std::unordered_map<List*, Snapshot> Lists;
+			std::unordered_map<List*, Recording> Lists;
+		};
+		struct Registry
+		{
+			std::array<Shard, 64> Shards;
+			std::mutex InstallMutex;
 			void** Vtable{};
-			bool Installed{};
-			std::uint64_t NextEpoch{};
+			std::atomic<bool> Installed{};
+			std::atomic<std::uint64_t> NextEpoch{};
+
+			Shard& For(List* list)
+			{
+				// Mix address bits so aligned command lists do not all use one lock.
+				const auto address = reinterpret_cast<std::uintptr_t>(list);
+				return Shards[((address >> 4) ^ (address >> 10)) % Shards.size()];
+			}
 		};
 
 		Registry& States()
@@ -177,9 +199,11 @@ namespace SFSEMenuFramework::CommandListState
 				auto observe = [&] {
 					if (injecting) { return; }
 					auto& registry = States();
-					std::scoped_lock lock{ registry.Mutex };
-					const auto found = registry.Lists.find(list);
-					if (found != registry.Lists.end()) { Observe(found->second, args...); }
+					if (!registry.Installed.load(std::memory_order_acquire)) { return; }
+					auto& shard = registry.For(list);
+					std::scoped_lock lock{ shard.Mutex };
+					const auto found = shard.Lists.find(list);
+					if (found != shard.Lists.end()) { Observe(found->second.State, args...); }
 				};
 				if constexpr (Slot == 46) { observe(); }
 				Original.load(std::memory_order_acquire)(list, args...);
@@ -203,11 +227,15 @@ namespace SFSEMenuFramework::CommandListState
 		{
 			if (injecting) { return; }
 			auto& registry = States();
-			std::scoped_lock lock{ registry.Mutex };
-			auto& state = registry.Lists[list];
-			state = {};
+			// Never accept a recording begun while only some hooks were installed.
+			if (!registry.Installed.load(std::memory_order_acquire)) { return; }
+			auto& shard = registry.For(list);
+			std::scoped_lock lock{ shard.Mutex };
+			auto& recording = shard.Lists[list];
+			recording = {};
+			auto& state = recording.State;
 			// Unique across Close/Reset and pointer reuse, including cleared recordings.
-			state.Epoch = ++registry.NextEpoch;
+			state.Epoch = registry.NextEpoch.fetch_add(1, std::memory_order_relaxed) + 1;
 			state.Complete = true;
 			state.Pipeline = pipeline;
 			if (FAILED(list->GetDevice(IID_PPV_ARGS(&state.Device)))) {
@@ -219,10 +247,10 @@ namespace SFSEMenuFramework::CommandListState
 		{
 			const auto result = originalClose.load(std::memory_order_acquire)(list);
 			if (!injecting) {
-				auto& registry = States();
-				std::scoped_lock lock{ registry.Mutex };
+				auto& shard = States().For(list);
+				std::scoped_lock lock{ shard.Mutex };
 				// State is only needed while recording. A failed Close is not safe to inject into either.
-				registry.Lists.erase(list);
+				shard.Lists.erase(list);
 			}
 			return result;
 		}
@@ -289,9 +317,11 @@ namespace SFSEMenuFramework::CommandListState
 	{
 		if (!list) { return false; }
 		auto& registry = States();
-		std::scoped_lock lock{ registry.Mutex };
+		std::scoped_lock lock{ registry.InstallMutex };
 		auto** vtable = *reinterpret_cast<void***>(list);
-		if (registry.Vtable) { return registry.Installed && registry.Vtable == vtable; }
+		if (registry.Vtable) {
+			return registry.Installed.load(std::memory_order_acquire) && registry.Vtable == vtable;
+		}
 		registry.Vtable = vtable;
 		REL::Relocation<std::uintptr_t> table{ reinterpret_cast<std::uintptr_t>(vtable) };
 		const auto close = ReadVtableSlot(table, 9);
@@ -327,26 +357,28 @@ namespace SFSEMenuFramework::CommandListState
 		for (const auto& hook : hooks) {
 			if (!HasMemoryAccess(hook.Expected, true)) { return false; }
 		}
-		registry.Installed = CommitHooks(hooks);
-		if (!registry.Installed) {
+		const bool installed = CommitHooks(hooks);
+		if (!installed) {
 			const bool restored = RollBackHooks(hooks);
 			logger::error("Command-list state hook installation failed; rollback {}", restored);
 		}
-		return registry.Installed;
+		registry.Installed.store(installed, std::memory_order_release);
+		return installed;
 	}
 
 	bool Capture(List* list, Snapshot& snapshot, const char** reason)
 	{
 		auto& registry = States();
-		std::scoped_lock lock{ registry.Mutex };
-		const auto found = registry.Lists.find(list);
-		if (!registry.Installed || found == registry.Lists.end()) {
+		auto& shard = registry.For(list);
+		std::scoped_lock lock{ shard.Mutex };
+		const auto found = shard.Lists.find(list);
+		if (!registry.Installed.load(std::memory_order_acquire) || found == shard.Lists.end()) {
 			if (reason) {
 				*reason = "no active tracked recording";
 			}
 			return false;
 		}
-		const auto& state = found->second;
+		const auto& state = found->second.State;
 		if (!state.Ready()) {
 			if (reason) {
 				*reason = !state.Complete ? state.InvalidReason :
@@ -357,6 +389,33 @@ namespace SFSEMenuFramework::CommandListState
 		}
 		snapshot = state;
 		return true;
+	}
+
+	std::optional<std::uint64_t> FindOverlay(List* list, std::uint64_t epoch, ID3D12Resource* target)
+	{
+		if (!target) { return std::nullopt; }
+		auto& shard = States().For(list);
+		std::scoped_lock lock{ shard.Mutex };
+		const auto found = shard.Lists.find(list);
+		if (found == shard.Lists.end() || found->second.State.Epoch != epoch) { return std::nullopt; }
+		for (const auto& overlay : found->second.Overlays) {
+			if (overlay.Target.Get() == target) { return overlay.Generation; }
+		}
+		return std::nullopt;
+	}
+
+	void RecordOverlay(List* list, std::uint64_t epoch, ID3D12Resource* target, std::uint64_t generation)
+	{
+		if (!target) { return; }
+		auto& shard = States().For(list);
+		std::scoped_lock lock{ shard.Mutex };
+		const auto found = shard.Lists.find(list);
+		if (found == shard.Lists.end() || found->second.State.Epoch != epoch) { return; }
+		auto& overlays = found->second.Overlays;
+		for (auto& overlay : overlays) {
+			if (overlay.Target.Get() == target) { overlay.Generation = generation; return; }
+		}
+		overlays.push_back({ Microsoft::WRL::ComPtr<ID3D12Resource>(target), generation });
 	}
 
 	InjectionScope::InjectionScope() : previous(injecting) { injecting = true; }
