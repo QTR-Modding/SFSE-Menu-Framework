@@ -4,6 +4,9 @@
 #include "rendering/CommandListState.h"
 #include "rendering/OverlayTrace.h"
 #include "rendering/GpuResourceRetirement.h"
+#include "rendering/FrameRouteHistory.h"
+
+#include <RE/C/CreationRenderer.h>
 
 #include <Windows.h>
 #include <d3d12.h>
@@ -92,7 +95,6 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 
 		constexpr std::uint32_t uiColorAndAlpha = 23;
 		constexpr std::size_t descriptorCount = 64;
-		constexpr std::uint64_t uiRouteFreshMilliseconds = 250;
 		constexpr StructType resourceTagType{
 			0x4C6A5AAD, 0xB445, 0x496C,
 			{ 0x87, 0xFF, 0x1A, 0xF3, 0x84, 0x5B, 0xE6, 0x53 }
@@ -147,8 +149,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 		std::atomic_flag heapWaitLogged{};
 		std::atomic_flag rendererLogged{};
 		std::atomic_flag routeLogged{};
-		std::atomic<bool> uiPathActive{ false };
-		std::atomic<std::uint64_t> lastUiRenderTick{};
+		FrameRouteHistory frameRoutes;
 
 		thread_local ID3D12GraphicsCommandList* lastRenderedCommandList{};
 		thread_local std::uint64_t lastRenderedEpoch{};
@@ -691,10 +692,6 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 
 			lastRenderedCommandList = proxyList.Get();
 			lastRenderedEpoch = epoch;
-			lastUiRenderTick.store(::GetTickCount64(), std::memory_order_release);
-			if (!uiPathActive.exchange(true, std::memory_order_acq_rel)) {
-				OverlayTrace::Record(OverlayTrace::RouteOn);
-			}
 			if (!routeLogged.test_and_set(std::memory_order_relaxed)) {
 				logger::info("Streamline UI overlay rendering SFSE-MF into UIColorAndAlpha with state restoration");
 			}
@@ -715,20 +712,18 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 						continue;
 					}
 
+					const auto frame = RE::CreationRendererPrivate::Renderer::GetRenderFrameIndex();
+					bool rendered = false;
 					if (!tag.ResourceData || !tag.ResourceData->Native) {
 						OverlayTrace::Record(OverlayTrace::NullTag);
-						if (uiPathActive.exchange(false, std::memory_order_acq_rel)) {
-							OverlayTrace::Record(OverlayTrace::RouteOff);
-						}
 					} else {
 						OverlayTrace::Record(OverlayTrace::Tag);
-						if (!RenderFramework(tag, a_commandBuffer)) {
+						rendered = RenderFramework(tag, a_commandBuffer);
+						if (!rendered) {
 							OverlayTrace::Record(OverlayTrace::Rejected);
-							if (uiPathActive.exchange(false, std::memory_order_acq_rel)) {
-								OverlayTrace::Record(OverlayTrace::RouteOff);
-							}
 						}
 					}
+					frameRoutes.Record(frame, rendered);
 					break;
 				}
 			}
@@ -810,17 +805,8 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 		return true;
 	}
 
-	bool HasRecentUIRender() noexcept
+	bool HasUIRenderForFrame(std::uint32_t a_frame) noexcept
 	{
-		if (!uiPathActive.load(std::memory_order_acquire)) {
-			return false;
-		}
-		const auto last = lastUiRenderTick.load(std::memory_order_acquire);
-		if (!last || ::GetTickCount64() - last > uiRouteFreshMilliseconds) {
-			OverlayTrace::Record(OverlayTrace::Timeout);
-			uiPathActive.store(false, std::memory_order_release);
-			return false;
-		}
-		return true;
+		return frameRoutes.HasUI(a_frame);
 	}
 }

@@ -5,6 +5,7 @@
 #include "rendering/StreamlineUIPrototype.h"
 #include "rendering/CommandListState.h"
 #include "rendering/OverlayTrace.h"
+#include "rendering/FramePresentBridge.h"
 
 #include <RE/C/CreationRenderer.h>
 
@@ -27,15 +28,9 @@ namespace SFSEMenuFramework::PresentOverlay
 	namespace
 	{
 		using Microsoft::WRL::ComPtr;
-		using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
-		using Present1Fn = HRESULT(STDMETHODCALLTYPE*)(
-			IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*);
-		using CreateFactoryFn = HRESULT(WINAPI*)(UINT, REFIID, void**);
 		using SerializeRootFn = HRESULT(WINAPI*)(
 			const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**, ID3DBlob**);
 
-		constexpr std::size_t presentSlot = 8;
-		constexpr std::size_t present1Slot = 22;
 		constexpr GUID streamlineNative{
 			0xADEC44E2, 0x61F0, 0x45C3,
 			{ 0xAD, 0x9F, 0x1B, 0x37, 0x37, 0x92, 0x84, 0xFF }
@@ -95,12 +90,9 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 		};
 
 		std::atomic<HookState> hookState{ HookState::Uninitialized };
-		std::atomic<PresentFn> originalPresent{};
-		std::atomic<Present1Fn> originalPresent1{};
 		std::atomic_flag deviceChangeLogged{};
 		std::atomic_flag queueChangeLogged{};
 		std::atomic_flag signalFailureLogged{};
-		thread_local std::uint32_t presentDepth{};
 
 		[[nodiscard]] State& GetState()
 		{
@@ -457,9 +449,6 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 		void Draw(IDXGISwapChain* a_swapChain) noexcept
 		{
 			std::scoped_lock routingLock{ CommandListState::RoutingMutex() };
-			if (StreamlineUIPrototype::HasRecentUIRender()) {
-				return;
-			}
 
 			std::scoped_lock lock{ GetMutex() };
 			CommandListState::InjectionScope injection;
@@ -588,118 +577,65 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			OverlayTrace::Report();
 		}
 
-		HRESULT STDMETHODCALLTYPE PresentThunk(IDXGISwapChain* a_swapChain, UINT a_sync, UINT a_flags) noexcept
+		HRESULT STDMETHODCALLTYPE PresentFrame(
+			IDXGISwapChain* a_swapChain, UINT a_sync, UINT a_flags, std::uint32_t a_frame) noexcept
 		{
-			const auto original = originalPresent.load(std::memory_order_acquire);
-			if (!original) {
-				return E_FAIL;
+			// This call belongs to the game's request, not a generated native frame.
+			// Keep the original swapchain/proxy chain intact.
+			if (!(a_flags & DXGI_PRESENT_TEST)) {
+				const bool hasUI = StreamlineUIPrototype::HasUIRenderForFrame(a_frame);
+				OverlayTrace::Record(hasUI ? OverlayTrace::FrameUI : OverlayTrace::FrameFallback);
+				if (!hasUI) { Draw(a_swapChain); }
+				OverlayTrace::Report();
 			}
-			if (presentDepth++ == 0) {
-				Draw(a_swapChain);
-			}
-			const auto result = original(a_swapChain, a_sync, a_flags);
-			--presentDepth;
-			return result;
-		}
-
-		HRESULT STDMETHODCALLTYPE Present1Thunk(
-			IDXGISwapChain1* a_swapChain,
-			UINT a_sync,
-			UINT a_flags,
-			const DXGI_PRESENT_PARAMETERS* a_parameters) noexcept
-		{
-			const auto original = originalPresent1.load(std::memory_order_acquire);
-			if (!original) {
-				return E_FAIL;
-			}
-			if (presentDepth++ == 0) {
-				Draw(a_swapChain);
-			}
-			const auto result = original(a_swapChain, a_sync, a_flags, a_parameters);
-			--presentDepth;
-			return result;
-		}
-
-		[[nodiscard]] bool WriteSlot(void** a_vtable, std::size_t a_slot, void* a_value)
-		{
-			DWORD oldProtect{};
-			if (!::VirtualProtect(&a_vtable[a_slot], sizeof(void*), PAGE_READWRITE, &oldProtect)) {
-				return false;
-			}
-			a_vtable[a_slot] = a_value;
-			DWORD ignored{};
-			static_cast<void>(::VirtualProtect(
-				&a_vtable[a_slot], sizeof(void*), oldProtect, &ignored));
-			return a_vtable[a_slot] == a_value;
+			return a_swapChain->Present(a_sync, a_flags);
 		}
 
 		[[nodiscard]] bool Install()
 		{
-			auto* renderer = RE::CreationRendererPrivate::Renderer::GetSingleton();
-			ComPtr<ID3D12CommandQueue> queue;
-			if (!renderer || !renderer->GetGraphicsQueue() ||
-				!GetNative(
-					reinterpret_cast<ID3D12CommandQueue*>(renderer->GetGraphicsQueue()), queue)) {
+			const auto execute = RE::CreationRendererPrivate::PresentRequest::Execute.address();
+			const auto site = execute + 0x100;
+			constexpr std::uint8_t prologue[]{ 0x41, 0x57, 0x48, 0x83, 0xEC, 0x40 };
+			constexpr std::uint8_t requestRegister[]{ 0x4C, 0x8B, 0xF9 }; // mov r15,rcx
+			constexpr std::uint8_t arguments[]{ 0x48, 0x8B, 0x4F, 0x40, 0x44, 0x8B, 0x47, 0x54, 0x8B, 0x57, 0x50 };
+			constexpr std::uint8_t original[]{ 0x48, 0x8B, 0x01, 0xFF, 0x50, 0x40 }; // mov rax,[rcx]; call [rax+40h]
+			const auto text = REX::FModule::GetExecutingModule().GetSection(".text");
+			const auto begin = reinterpret_cast<std::uintptr_t>(text.GetPointer<std::byte>());
+			if (execute < begin || text.GetSize() < 0x106 || execute - begin > text.GetSize() - 0x106 ||
+				std::memcmp(reinterpret_cast<void*>(execute), prologue, sizeof(prologue)) != 0 ||
+				std::memcmp(reinterpret_cast<void*>(execute + 0x0D), requestRegister, sizeof(requestRegister)) != 0 ||
+				std::memcmp(reinterpret_cast<void*>(site - sizeof(arguments)), arguments, sizeof(arguments)) != 0 ||
+				std::memcmp(reinterpret_cast<void*>(site), original, sizeof(original)) != 0) {
+				logger::critical("Game-frame Present hook signature mismatch; no code changed");
 				return false;
 			}
 
-			const auto dxgi = ::LoadLibraryExW(L"dxgi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-			const auto createFactory = dxgi ?
-				reinterpret_cast<CreateFactoryFn>(::GetProcAddress(dxgi, "CreateDXGIFactory2")) :
-				nullptr;
-			if (!createFactory) {
+			static auto* trampoline = new REL::Trampoline("SFSE-MF frame presentation");
+			trampoline->create(64, reinterpret_cast<void*>(site));
+			auto* bridge = trampoline->allocate<FramePresentBridge>(reinterpret_cast<std::uintptr_t>(&PresentFrame));
+			const auto destination = reinterpret_cast<std::uintptr_t>(bridge);
+			const auto relay = trampoline->allocate_branch6(destination);
+			const auto displacement = static_cast<std::int64_t>(relay) - static_cast<std::int64_t>(site + 6);
+			if (displacement < INT32_MIN || displacement > INT32_MAX) {
+				logger::critical("Game-frame Present relay is out of reach");
 				return false;
 			}
+			if (!::FlushInstructionCache(::GetCurrentProcess(), bridge, sizeof(*bridge))) { return false; }
 
-			ComPtr<IDXGIFactory2> factory;
-			if (FAILED(createFactory(0, IID_PPV_ARGS(factory.GetAddressOf())))) {
+			// CommonLib emits the CALL6. Its inferred original target is unused:
+			// the replaced six bytes are a MOV plus an indirect virtual CALL.
+			static_cast<void>(trampoline->write_call<6>(site, destination));
+			const REL::ASM::CALL6 expected{ site, relay };
+			if (std::memcmp(reinterpret_cast<void*>(site), &expected, sizeof(expected)) != 0 ||
+				!::FlushInstructionCache(::GetCurrentProcess(), reinterpret_cast<void*>(site), sizeof(expected))) {
+				REL::WriteSafeData(site, original);
+				if (std::memcmp(reinterpret_cast<void*>(site), original, sizeof(original)) != 0 ||
+					!::FlushInstructionCache(::GetCurrentProcess(), reinterpret_cast<void*>(site), sizeof(original))) {
+					REX::FAIL("Could not restore the game-frame Present hook");
+				}
 				return false;
 			}
-
-			const HWND window = ::CreateWindowExW(
-				WS_EX_TOOLWINDOW, L"STATIC", L"SFSEMenuFrameworkPresent", WS_OVERLAPPED,
-				0, 0, 2, 2, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-			if (!window) {
-				return false;
-			}
-
-			DXGI_SWAP_CHAIN_DESC1 desc{};
-			desc.Width = desc.Height = 2;
-			desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-			desc.SampleDesc.Count = 1;
-			desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-			desc.BufferCount = 2;
-			desc.Scaling = DXGI_SCALING_STRETCH;
-			desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-
-			ComPtr<IDXGISwapChain1> dummy;
-			const auto result = factory->CreateSwapChainForHwnd(
-				queue.Get(), window, &desc, nullptr, nullptr, dummy.GetAddressOf());
-			::DestroyWindow(window);
-			if (FAILED(result) || !dummy) {
-				return false;
-			}
-
-			auto** vtable = *reinterpret_cast<void***>(dummy.Get());
-			auto* present = vtable ? vtable[presentSlot] : nullptr;
-			auto* present1 = vtable ? vtable[present1Slot] : nullptr;
-			if (!present || !present1 ||
-				present == reinterpret_cast<void*>(&PresentThunk) ||
-				present1 == reinterpret_cast<void*>(&Present1Thunk)) {
-				return false;
-			}
-
-			originalPresent.store(reinterpret_cast<PresentFn>(present), std::memory_order_release);
-			originalPresent1.store(reinterpret_cast<Present1Fn>(present1), std::memory_order_release);
-			if (!WriteSlot(vtable, presentSlot, reinterpret_cast<void*>(&PresentThunk))) {
-				return false;
-			}
-			if (!WriteSlot(vtable, present1Slot, reinterpret_cast<void*>(&Present1Thunk))) {
-				static_cast<void>(WriteSlot(vtable, presentSlot, present));
-				return false;
-			}
-
-			logger::info("DXGI Present overlay installed");
+			logger::info("Game-frame Present routing installed; no elapsed-time fallback");
 			return true;
 		}
 	}

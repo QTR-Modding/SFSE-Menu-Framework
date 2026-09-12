@@ -8,11 +8,6 @@ namespace
 {
 	std::atomic<bool> earlyLifecycleReady{ false };
 
-	void EnsurePresentOverlay()
-	{
-		static_cast<void>(SFSEMenuFramework::PresentOverlay::EnsureInstalled());
-	}
-
 	void OnSFSEMessage(SFSE::MessagingInterface::Message* a_message)
 	{
 		if (!a_message || a_message->type != SFSE::MessagingInterface::kPostDataLoad) {
@@ -50,6 +45,10 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
+	// Patch executable code during plugin load, before rendering starts.
+	if (!SFSEMenuFramework::PresentOverlay::EnsureInstalled()) {
+		return false;
+	}
 	static_cast<void>(SFSEMenuFramework::StreamlineUIPrototype::Install());
 
 	const auto* taskInterface = SFSE::GetTaskInterface();
@@ -74,7 +73,6 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 			"Failed to install the early menu lifecycle; the plugin will remain loaded but inactive");
 		return true;
 	}
-	taskInterface->AddPermanentTask(&EnsurePresentOverlay);
 
 	earlyLifecycleReady.store(true, std::memory_order_release);
 	logger::info("Menu input ownership waiting for SFSE post-data-load");

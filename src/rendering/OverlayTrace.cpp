@@ -28,9 +28,9 @@ namespace SFSEMenuFramework::OverlayTrace
 		std::array<unsigned, Count> sample{};
 		for (unsigned i = 0; i < Count; ++i) { sample[i] = counts[i].exchange(0, std::memory_order_relaxed); }
 		logger::info("Overlay trace: tags={} null={} rejected={} state-missing={} ({}) duplicate={} "
-			"imgui={} imgui-skipped={} present={} route-on={} route-off={} timeout={}",
+			"imgui={} imgui-skipped={} present={} frame-ui={} frame-fallback={}",
 			sample[Tag], sample[NullTag], sample[Rejected], sample[StateMissing],
 			lastStateReason.load(std::memory_order_relaxed), sample[Duplicate], sample[ImGuiDraw],
-			sample[ImGuiSkipped], sample[PresentDraw], sample[RouteOn], sample[RouteOff], sample[Timeout]);
+			sample[ImGuiSkipped], sample[PresentDraw], sample[FrameUI], sample[FrameFallback]);
 	}
 }
