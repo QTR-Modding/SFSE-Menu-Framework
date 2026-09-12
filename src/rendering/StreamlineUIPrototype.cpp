@@ -42,13 +42,7 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 			std::size_t Version;
 		};
 
-		struct Extent final
-		{
-			std::uint32_t Top;
-			std::uint32_t Left;
-			std::uint32_t Width;
-			std::uint32_t Height;
-		};
+		using Extent = OverlayCompositor::Extent;
 
 		struct Resource final
 		{
@@ -289,6 +283,13 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 				return false;
 			}
 
+			D3D12_RECT region{};
+			if (!a_tag.Region.Resolve(desc.Width, desc.Height, region) ||
+				region.right - region.left < 256 || region.bottom - region.top < 256) {
+				LogRejection("UI texture extent is invalid or unsupported");
+				return false;
+			}
+
 			ComPtr<ID3D12GraphicsCommandList> proxyList;
 			if (FAILED(reinterpret_cast<IUnknown*>(a_commandBuffer)->QueryInterface(
 					IID_PPV_ARGS(proxyList.GetAddressOf()))) ||
@@ -328,13 +329,14 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 				return false;
 			}
 			const auto epoch = savedState.Epoch;
-			if (const auto generation = CommandListState::FindOverlay(nativeList.Get(), epoch, target.Get())) {
+			if (const auto generation = CommandListState::FindOverlay(nativeList.Get(), epoch, target.Get(), region)) {
 				D3D12Renderer::NotifyOverlayComposited(*generation);
 				return true;
 			}
 
 			auto& state = GetState();
-			if (!EnsureRenderer(state, targetDevice.Get(), desc.Width, desc.Height, targetFormat)) {
+			if (!EnsureRenderer(state, targetDevice.Get(), region.right - region.left,
+				region.bottom - region.top, targetFormat)) {
 				return false;
 			}
 
@@ -357,6 +359,8 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 				const CommandListState::Snapshot& Saved;
 				~RestoreOnExit() { Saved.Restore(List); }
 			} restore{ nativeList.Get(), savedState };
+			// Game occlusion predicates must not suppress the UI or its uploads.
+			nativeList->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
 			Transition(
 				nativeList.Get(), state.Overlay.Get(),
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
@@ -381,12 +385,12 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 				D3D12_RESOURCE_STATE_RENDER_TARGET);
 
 			OverlayCompositor::Draw(nativeList.Get(), state.Shaders, state.Pipeline.Get(),
-				state.SrvHeap.Get(), targetRtv, desc.Width, desc.Height);
+				state.SrvHeap.Get(), targetRtv, region);
 
 			Transition(
 				nativeList.Get(), target.Get(),
 				D3D12_RESOURCE_STATE_RENDER_TARGET, originalState);
-			CommandListState::RecordOverlay(nativeList.Get(), epoch, target.Get(), state.OverlayGeneration);
+			CommandListState::RecordOverlay(nativeList.Get(), epoch, target.Get(), state.OverlayGeneration, region);
 			D3D12Renderer::NotifyOverlayComposited(state.OverlayGeneration);
 			if (!routeLogged.test_and_set(std::memory_order_relaxed)) {
 				logger::info("Streamline UI overlay rendering SFSE-MF into UIColorAndAlpha with state restoration");

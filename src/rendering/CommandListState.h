@@ -34,6 +34,9 @@ namespace SFSEMenuFramework::CommandListState
 		const char* InvalidReason{ "invalid arguments" };
 		std::uint64_t Epoch{};
 		Microsoft::WRL::ComPtr<ID3D12PipelineState> Pipeline;
+		Microsoft::WRL::ComPtr<ID3D12Resource> PredicateBuffer;
+		UINT64 PredicateOffset{};
+		D3D12_PREDICATION_OP PredicateOperation{ D3D12_PREDICATION_OP_EQUAL_ZERO };
 		Microsoft::WRL::ComPtr<ID3D12RootSignature> GraphicsRoot;
 		Microsoft::WRL::ComPtr<ID3D12RootSignature> ComputeRoot;
 		std::array<RootArgument, 64> Graphics;
@@ -65,9 +68,9 @@ namespace SFSEMenuFramework::CommandListState
 		const char** a_reason = nullptr);
 	// Remember every composited target until this command-list recording ends.
 	[[nodiscard]] std::optional<std::uint64_t> FindOverlay(ID3D12GraphicsCommandList* a_list,
-		std::uint64_t a_epoch, ID3D12Resource* a_target);
+		std::uint64_t a_epoch, ID3D12Resource* a_target, const D3D12_RECT& a_region);
 	void RecordOverlay(ID3D12GraphicsCommandList* a_list, std::uint64_t a_epoch,
-		ID3D12Resource* a_target, std::uint64_t a_generation);
+		ID3D12Resource* a_target, std::uint64_t a_generation, const D3D12_RECT& a_region);
 	std::mutex& RoutingMutex();
 
 	class InjectionScope

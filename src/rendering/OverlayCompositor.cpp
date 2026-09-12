@@ -1,9 +1,28 @@
 #include "rendering/OverlayCompositor.h"
 #include "rendering/D3D12Texture.h"
 #include <cstring>
+#include <climits>
 
 namespace SFSEMenuFramework::OverlayCompositor
 {
+	bool Extent::Resolve(std::uint64_t textureWidth, std::uint32_t textureHeight, D3D12_RECT& rect) const noexcept
+	{
+		if (!textureWidth || !textureHeight || textureWidth > LONG_MAX || textureHeight > LONG_MAX) {
+			return false;
+		}
+		if (!(Top | Left | Width | Height)) {
+			rect = { 0, 0, static_cast<LONG>(textureWidth), static_cast<LONG>(textureHeight) };
+			return true;
+		}
+		if (!Width || !Height || Left >= textureWidth || Top >= textureHeight ||
+			Width > textureWidth - Left || Height > textureHeight - Top) {
+			return false;
+		}
+		rect = { static_cast<LONG>(Left), static_cast<LONG>(Top),
+			static_cast<LONG>(Left + Width), static_cast<LONG>(Top + Height) };
+		return true;
+	}
+
 	using Microsoft::WRL::ComPtr;
 	using SerializeRootFn = HRESULT(WINAPI*)(
 		const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**, ID3DBlob**);
@@ -182,8 +201,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 	}
 
 	void Draw(ID3D12GraphicsCommandList* list, const Shaders& shaders, ID3D12PipelineState* pipeline,
-		ID3D12DescriptorHeap* heap, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv, std::uint64_t width,
-		std::uint32_t height)
+		ID3D12DescriptorHeap* heap, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv, const D3D12_RECT& region)
 	{
 		ID3D12DescriptorHeap* heaps[]{heap};
 		list->SetDescriptorHeaps(1, heaps);
@@ -192,10 +210,10 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 		list->SetGraphicsRootDescriptorTable(0, heap->GetGPUDescriptorHandleForHeapStart());
 
 		const D3D12_VIEWPORT viewport{
-			0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f};
-		const D3D12_RECT scissor{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+			static_cast<float>(region.left), static_cast<float>(region.top),
+			static_cast<float>(region.right - region.left), static_cast<float>(region.bottom - region.top), 0.0f, 1.0f};
 		list->RSSetViewports(1, &viewport);
-		list->RSSetScissorRects(1, &scissor);
+		list->RSSetScissorRects(1, &region);
 		list->OMSetRenderTargets(1, &targetRtv, FALSE, nullptr);
 		list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		list->DrawInstanced(3, 1, 0, 0);

@@ -15,6 +15,25 @@ namespace
 		if (!ok) { std::fputs("FAIL: GPU target descriptor restoration\n", stderr); std::exit(1); }
 	}
 	void Hr(HRESULT hr) { Require(SUCCEEDED(hr)); }
+	void TestExtents()
+	{
+		using SFSEMenuFramework::OverlayCompositor::Extent;
+		D3D12_RECT rect{};
+		Require(Extent{}.Resolve(1920, 1080, rect) && rect.right == 1920 && rect.bottom == 1080);
+		Require(Extent{ 20, 10, 1900, 1000 }.Resolve(1920, 1080, rect) &&
+			rect.left == 10 && rect.top == 20 && rect.right == 1910 && rect.bottom == 1020);
+		Require(Extent{ 0, 0, 1920, 1080 }.Resolve(1920, 1080, rect));
+		for (const auto invalid : { Extent{ 0, 0, 0, 1 }, Extent{ 0, 0, 1, 0 },
+			Extent{ 1, 0, 0, 0 }, Extent{ 0, 1920, 1, 1 }, Extent{ 1080, 0, 1, 1 },
+			Extent{ 0, 1, 1920, 1080 }, Extent{ 1, 0, 1920, 1080 },
+			Extent{ 0, 1, UINT_MAX, 1 }, Extent{ UINT_MAX, UINT_MAX, 2, 2 } }) {
+			Require(!invalid.Resolve(1920, 1080, rect));
+		}
+		Require(!Extent{}.Resolve(UINT64_MAX, 1080, rect));
+		Require(!Extent{}.Resolve(1920, UINT_MAX, rect));
+		Require(!Extent{}.Resolve(0, 1080, rect));
+		Require(!Extent{}.Resolve(1920, 0, rect));
+	}
 	ComPtr<ID3DBlob> Compile(const char* source, const char* target)
 	{
 		ComPtr<ID3DBlob> code;
@@ -27,6 +46,7 @@ namespace
 void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D12DescriptorHeap* shaderHeap)
 {
 	using namespace SFSEMenuFramework::CommandListState;
+	TestExtents();
 	const auto vs = Compile(
 		"float4 main(uint i:SV_VertexID):SV_Position {"
 		"float2 p=float2((i<<1)&2,i&2); return float4(p*float2(2,-2)+float2(-1,1),0,1);}", "vs_5_0");
@@ -64,7 +84,7 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 	ComPtr<ID3D12PipelineState> compositePipeline;
 	Require(Compositor::CreateShaders(device, shaders));
 	Require(Compositor::CreatePipeline(device, shaders, DXGI_FORMAT_R8G8B8A8_UNORM, compositePipeline));
-	for (UINT pass = 0; pass < 2; ++pass) {
+	for (UINT pass = 0; pass < 3; ++pass) {
 		ComPtr<ID3D12CommandAllocator> allocator;
 		ComPtr<ID3D12GraphicsCommandList> list;
 		Hr(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
@@ -130,6 +150,25 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 		list->SetDescriptorHeaps(1, &shaderHeap);
 		list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		list->OMSetRenderTargets(2, handles.data(), pass == 0, &handles[4]);
+		ComPtr<ID3D12Resource> predicate;
+		if (pass == 2) {
+			const auto heap = SFSEMenuFramework::D3D12Textures::HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+			D3D12_RESOURCE_DESC buffer{};
+			buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			buffer.Width = 16;
+			buffer.Height = buffer.DepthOrArraySize = buffer.MipLevels = 1;
+			buffer.SampleDesc.Count = 1;
+			buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+			Hr(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer,
+				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&predicate)));
+			void* data{};
+			Hr(predicate->Map(0, nullptr, &data));
+			const UINT64 values[]{ 1, 0 };
+			std::memcpy(data, values, sizeof(values));
+			predicate->Unmap(0, nullptr);
+			// The zero predicate suppresses game draws. The overlay must still draw.
+			list->SetPredication(predicate.Get(), 8, D3D12_PREDICATION_OP_EQUAL_ZERO);
+		}
 		Snapshot saved;
 		Require(Capture(list.Get(), saved));
 		// The original slots now identify different resources.
@@ -143,9 +182,12 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 		hd = { D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0 };
 		Hr(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&overlayRtv)));
 		ComPtr<ID3D12Resource> overlay;
-		Require(Compositor::CreateTexture(device, 4, 4, overlaySrv.Get(), overlay));
+		const D3D12_RECT region = pass == 1 ? D3D12_RECT{ 1, 2, 3, 3 } : rect;
+		Require(Compositor::CreateTexture(device, region.right - region.left,
+			region.bottom - region.top, overlaySrv.Get(), overlay));
 		{
 			InjectionScope injecting;
+			list->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
 			D3D12_RESOURCE_BARRIER barrier{};
 			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 			barrier.Transition = { overlay.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
@@ -160,13 +202,14 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 			const auto compositeRtv = SFSEMenuFramework::D3D12Textures::RenderTargetView(
 				device, overlayRtv.Get(), textures[3].Get(),
 				DXGI_FORMAT_R8G8B8A8_UNORM);
-			Compositor::Draw(list.Get(), shaders, compositePipeline.Get(), overlaySrv.Get(), compositeRtv, 4, 4);
+			Compositor::Draw(list.Get(), shaders, compositePipeline.Get(), overlaySrv.Get(), compositeRtv, region);
 			// Reuse the compositor's CPU descriptor before submission; the recorded draw must not change.
 			static_cast<void>(SFSEMenuFramework::D3D12Textures::RenderTargetView(
 				device, overlayRtv.Get(), textures[2].Get(), DXGI_FORMAT_R8G8B8A8_UNORM));
 			saved.Restore(list.Get());
 			list->DrawInstanced(3, 1, 0, 0);
 		}
+		list->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
 		list->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
 		Snapshot empty;
 		Require(Capture(list.Get(), empty) && empty.RenderTargetCount == 0 && !empty.HasDepthTarget);
@@ -215,13 +258,14 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 					if (i >= 4) {
 						float depth{};
 						std::memcpy(&depth, pixel, sizeof(depth));
-						Require(depth == (i == 4 ? 0.25f : 1.0f));
-					} else if (i == 3) {
+						Require(depth == (i == 4 && pass != 2 ? 0.25f : 1.0f));
+					} else if (i == 3 && x >= static_cast<UINT>(region.left) && x < static_cast<UINT>(region.right) &&
+						y >= static_cast<UINT>(region.top) && y < static_cast<UINT>(region.bottom)) {
 						Require(pixel[0] == 127 && pixel[1] == 0 && pixel[2] == 128 && pixel[3] == 255);
 					} else {
-						Require(pixel[0] == (i >= 2 ? 255 : 0) &&
-							pixel[1] == (i == 0 ? 255 : 0) &&
-							pixel[2] == (i == 1 ? 255 : 0) && pixel[3] == 255);
+						Require(pixel[0] == (i >= 2 || pass == 2 ? 255 : 0) &&
+							pixel[1] == (i == 0 && pass != 2 ? 255 : 0) &&
+							pixel[2] == (i == 1 && pass != 2 ? 255 : 0) && pixel[3] == 255);
 					}
 				}
 			}
@@ -233,4 +277,6 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 	std::puts("PASS: shared overlay compositor draws premultiplied alpha and restores game drawing state");
 	std::puts("PASS: submitted GPU draw restores overwritten RTV/DSV descriptors (contiguous and individual)");
 	std::puts("PASS: resources retained before submission, released after GPU completion, and slots reused");
+	std::puts("PASS: cropped overlay preserves pixels outside its validated extent");
+	std::puts("PASS: overlay renders with game predication disabled, then restores suppressed game drawing");
 }

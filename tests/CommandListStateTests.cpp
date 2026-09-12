@@ -52,6 +52,44 @@ namespace
 		return pipeline;
 	}
 
+	void TestPredication(ID3D12Device* device, ID3D12GraphicsCommandList* list, const Snapshot& seed)
+	{
+		D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_DEFAULT };
+		D3D12_RESOURCE_DESC desc{};
+		desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		desc.Width = 16;
+		desc.Height = desc.DepthOrArraySize = desc.MipLevels = 1;
+		desc.SampleDesc.Count = 1;
+		desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		ComPtr<ID3D12Resource> predicate;
+		Hr(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+			D3D12_RESOURCE_STATE_PREDICATION, nullptr, IID_PPV_ARGS(&predicate)));
+		list->SetPredication(predicate.Get(), 8, D3D12_PREDICATION_OP_NOT_EQUAL_ZERO);
+		Snapshot predicated;
+		Check(Capture(list, predicated) && predicated.PredicateBuffer == predicate &&
+			predicated.PredicateOffset == 8 && predicated.PredicateOperation == D3D12_PREDICATION_OP_NOT_EQUAL_ZERO,
+			"capture predicate resource, offset and operation");
+		list->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+		Snapshot captured;
+		Check(Capture(list, captured) && !captured.PredicateBuffer, "capture disabled predication");
+		predicated.Restore(list);
+		Check(Capture(list, captured) && captured.PredicateBuffer == predicate &&
+			captured.PredicateOffset == 8 && captured.PredicateOperation == D3D12_PREDICATION_OP_NOT_EQUAL_ZERO,
+			"restore active predication");
+		{
+			InjectionScope injection;
+			list->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+			Check(Capture(list, captured) && captured.PredicateBuffer == predicate &&
+				captured.PredicateOffset == 8 && captured.PredicateOperation == D3D12_PREDICATION_OP_NOT_EQUAL_ZERO,
+				"injected predication changes do not contaminate game state");
+			predicated.Restore(list);
+		}
+		seed.Restore(list);
+		Check(Capture(list, captured) && !captured.PredicateBuffer && captured.PredicateOffset == 0 &&
+			captured.PredicateOperation == D3D12_PREDICATION_OP_EQUAL_ZERO,
+			"restoring an unpredicated snapshot disables an active predicate");
+	}
+
 	void TestConcurrentRecordings(ID3D12Device* device, const Snapshot& seed)
 	{
 		constexpr std::size_t workerCount = 8;
@@ -135,43 +173,48 @@ namespace
 		auto* second = lists[1].Get();
 		auto* a = targets[0].Get();
 		auto* b = targets[1].Get();
-		RecordOverlay(first, epochs[0], a, 0);
-		RecordOverlay(second, epochs[1], a, 7);
-		RecordOverlay(first, epochs[0], b, 11);
-		Check(FindOverlay(first, epochs[0], a) == 0 && FindOverlay(first, epochs[0], b) == 11,
+		const D3D12_RECT region{ 0, 0, 4, 4 }, cropped{ 1, 2, 3, 3 };
+		RecordOverlay(first, epochs[0], a, 55, cropped);
+		Check(!FindOverlay(first, epochs[0], a, region), "different extent is not a duplicate tag");
+		RecordOverlay(first, epochs[0], a, 0, region);
+		RecordOverlay(second, epochs[1], a, 7, region);
+		RecordOverlay(first, epochs[0], b, 11, region);
+		Check(FindOverlay(first, epochs[0], a, cropped) == 55,
+			"same target retains independent entries for different extents");
+		Check(FindOverlay(first, epochs[0], a, region) == 0 && FindOverlay(first, epochs[0], b, region) == 11,
 			"A/B/A target tags retain both entries, including generation zero");
-		Check(FindOverlay(second, epochs[1], a) == 7,
+		Check(FindOverlay(second, epochs[1], a, region) == 7,
 			"interleaved command lists retain independent overlay generations");
 		std::jthread handoff([&] {
-			Check(FindOverlay(first, epochs[0], a) == 0, "overlay history survives recording thread handoff");
-			RecordOverlay(first, epochs[0], b, 12);
+			Check(FindOverlay(first, epochs[0], a, region) == 0, "overlay history survives recording thread handoff");
+			RecordOverlay(first, epochs[0], b, 12, region);
 		});
 		handoff.join();
-		Check(FindOverlay(first, epochs[0], b) == 12, "another thread can update the same recording");
-		RecordOverlay(first, epochs[1], a, 99);
-		Check(!FindOverlay(first, epochs[1], a) && FindOverlay(first, epochs[0], a) == 0,
+		Check(FindOverlay(first, epochs[0], b, region) == 12, "another thread can update the same recording");
+		RecordOverlay(first, epochs[1], a, 99, region);
+		Check(!FindOverlay(first, epochs[1], a, region) && FindOverlay(first, epochs[0], a, region) == 0,
 			"wrong-epoch overlay access cannot change a live recording");
 		first->ClearState(seed.Pipeline.Get());
-		Check(!FindOverlay(first, epochs[0], a), "ClearState retires overlay history");
+		Check(!FindOverlay(first, epochs[0], a, region), "ClearState retires overlay history");
 		first->SetComputeRootSignature(seed.ComputeRoot.Get());
 		seed.Restore(first);
 		Snapshot captured;
 		Check(Capture(first, captured), "capture new ClearState epoch");
-		RecordOverlay(first, epochs[0], a, 99);
-		Check(!FindOverlay(first, captured.Epoch, a), "stale writes cannot seed the next recording");
-		RecordOverlay(first, captured.Epoch, a, 13);
+		RecordOverlay(first, epochs[0], a, 99, region);
+		Check(!FindOverlay(first, captured.Epoch, a, region), "stale writes cannot seed the next recording");
+		RecordOverlay(first, captured.Epoch, a, 13, region);
 		Hr(first->Close());
-		RecordOverlay(first, captured.Epoch, a, 99);
-		Check(!FindOverlay(first, captured.Epoch, a), "Close rejects overlay reads and writes");
+		RecordOverlay(first, captured.Epoch, a, 99, region);
+		Check(!FindOverlay(first, captured.Epoch, a, region), "Close rejects overlay reads and writes");
 		Hr(first->Reset(allocators[0].Get(), seed.Pipeline.Get()));
 		first->SetComputeRootSignature(seed.ComputeRoot.Get());
 		seed.Restore(first);
-		Check(Capture(first, captured) && !FindOverlay(first, captured.Epoch, a),
+		Check(Capture(first, captured) && !FindOverlay(first, captured.Epoch, a, region),
 			"Reset begins without overlays from an earlier recording");
 		Hr(first->Close());
-		Check(FindOverlay(second, epochs[1], a) == 7, "closing another list preserves this recording");
+		Check(FindOverlay(second, epochs[1], a, region) == 7, "closing another list preserves this recording");
 		Hr(second->Close());
-		Check(!FindOverlay(second, epochs[1], a), "final Close retires the remaining overlay history");
+		Check(!FindOverlay(second, epochs[1], a, region), "final Close retires the remaining overlay history");
 	}
 }
 
@@ -233,6 +276,7 @@ int main()
 	Check(before.Graphics[1].Value == table.ptr && before.ComputeTableSet[1], "track both root tables");
 	Check(before.Pipeline.Get() == pipeline.Get(), "capture initial Reset pipeline");
 	Check(before.Topology == D3D_PRIMITIVE_TOPOLOGY_LINELIST, "capture topology slot");
+	TestPredication(device.Get(), list.Get(), before);
 
 	// Record unrelated state, then exercise real D3D12 setters during replay.
 	list->SetGraphicsRootSignature(nullptr);

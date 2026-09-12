@@ -334,7 +334,8 @@ namespace SFSEMenuFramework::PresentOverlay
 					state.Device.Get(), state.RtvHeap.Get(), backBuffer.Get(), finalFormat);
 
 				OverlayCompositor::Draw(state.List.Get(), state.Shaders, state.Pipeline.Get(),
-					state.SrvHeap.Get(), finalRtv, backDesc.Width, backDesc.Height);
+					state.SrvHeap.Get(), finalRtv,
+					{ 0, 0, static_cast<LONG>(backDesc.Width), static_cast<LONG>(backDesc.Height) });
 
 				Transition(state.List.Get(), backBuffer.Get(),
 					D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);

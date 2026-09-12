@@ -20,6 +20,7 @@ namespace SFSEMenuFramework::CommandListState
 			{
 				Microsoft::WRL::ComPtr<ID3D12Resource> Target;
 				std::uint64_t Generation;
+				D3D12_RECT Region;
 			};
 			Snapshot State;
 			std::vector<Overlay> Overlays;
@@ -53,6 +54,12 @@ namespace SFSEMenuFramework::CommandListState
 		thread_local bool injecting{};
 
 		void Pipeline(Snapshot& s, ID3D12PipelineState* p) { s.Pipeline = p; }
+		void Predication(Snapshot& s, ID3D12Resource* buffer, UINT64 offset, D3D12_PREDICATION_OP operation)
+		{
+			s.PredicateBuffer = buffer;
+			s.PredicateOffset = offset;
+			s.PredicateOperation = operation;
+		}
 		void GraphicsRoot(Snapshot& s, ID3D12RootSignature* p)
 		{
 			if (s.GraphicsRoot.Get() != p) { s.Graphics = {}; }
@@ -311,6 +318,7 @@ namespace SFSEMenuFramework::CommandListState
 		list->IASetIndexBuffer(HasIndexBuffer ? &IndexBuffer : nullptr);
 		list->OMSetRenderTargets(RenderTargetCount, RenderTargets.data(), FALSE,
 			HasDepthTarget ? &DepthTarget : nullptr);
+		list->SetPredication(PredicateBuffer.Get(), PredicateOffset, PredicateOperation);
 	}
 
 	bool Install(List* list)
@@ -345,7 +353,8 @@ namespace SFSEMenuFramework::CommandListState
 			Hook<40, Address<RootArgument::Kind::SRV>>::Prepare(table),
 			Hook<42, Address<RootArgument::Kind::UAV>>::Prepare(table),
 			Hook<43, Index>::Prepare(table), Hook<44, Vertex>::Prepare(table),
-			Hook<46, Targets>::Prepare(table), Hook<59, Indirect>::Prepare(table)
+			Hook<46, Targets>::Prepare(table), Hook<55, Predication>::Prepare(table),
+			Hook<59, Indirect>::Prepare(table)
 		};
 		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList4> list4;
 		if (SUCCEEDED(list->QueryInterface(IID_PPV_ARGS(&list4)))) {
@@ -391,7 +400,8 @@ namespace SFSEMenuFramework::CommandListState
 		return true;
 	}
 
-	std::optional<std::uint64_t> FindOverlay(List* list, std::uint64_t epoch, ID3D12Resource* target)
+	std::optional<std::uint64_t> FindOverlay(List* list, std::uint64_t epoch, ID3D12Resource* target,
+		const D3D12_RECT& region)
 	{
 		if (!target) { return std::nullopt; }
 		auto& shard = States().For(list);
@@ -399,12 +409,13 @@ namespace SFSEMenuFramework::CommandListState
 		const auto found = shard.Lists.find(list);
 		if (found == shard.Lists.end() || found->second.State.Epoch != epoch) { return std::nullopt; }
 		for (const auto& overlay : found->second.Overlays) {
-			if (overlay.Target.Get() == target) { return overlay.Generation; }
+			if (overlay.Target.Get() == target && EqualRect(&overlay.Region, &region)) { return overlay.Generation; }
 		}
 		return std::nullopt;
 	}
 
-	void RecordOverlay(List* list, std::uint64_t epoch, ID3D12Resource* target, std::uint64_t generation)
+	void RecordOverlay(List* list, std::uint64_t epoch, ID3D12Resource* target, std::uint64_t generation,
+		const D3D12_RECT& region)
 	{
 		if (!target) { return; }
 		auto& shard = States().For(list);
@@ -413,9 +424,12 @@ namespace SFSEMenuFramework::CommandListState
 		if (found == shard.Lists.end() || found->second.State.Epoch != epoch) { return; }
 		auto& overlays = found->second.Overlays;
 		for (auto& overlay : overlays) {
-			if (overlay.Target.Get() == target) { overlay.Generation = generation; return; }
+			if (overlay.Target.Get() == target && EqualRect(&overlay.Region, &region)) {
+				overlay.Generation = generation;
+				return;
+			}
 		}
-		overlays.push_back({ Microsoft::WRL::ComPtr<ID3D12Resource>(target), generation });
+		overlays.push_back({ Microsoft::WRL::ComPtr<ID3D12Resource>(target), generation, region });
 	}
 
 	InjectionScope::InjectionScope() : previous(injecting) { injecting = true; }

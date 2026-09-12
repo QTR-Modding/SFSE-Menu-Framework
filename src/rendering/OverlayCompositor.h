@@ -7,6 +7,13 @@
 
 namespace SFSEMenuFramework::OverlayCompositor
 {
+	struct Extent
+	{
+		std::uint32_t Top, Left, Width, Height;
+		// An entirely zero extent selects the full texture. Reject malformed or out-of-bounds regions.
+		bool Resolve(std::uint64_t textureWidth, std::uint32_t textureHeight, D3D12_RECT& rect) const noexcept;
+	};
+
 	struct Shaders
 	{
 		Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
@@ -25,6 +32,5 @@ namespace SFSEMenuFramework::OverlayCompositor
 	void Transition(ID3D12GraphicsCommandList* list, ID3D12Resource* resource,
 		D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) noexcept;
 	void Draw(ID3D12GraphicsCommandList* list, const Shaders& shaders, ID3D12PipelineState* pipeline,
-		ID3D12DescriptorHeap* heap, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv, std::uint64_t width,
-		std::uint32_t height);
+		ID3D12DescriptorHeap* heap, D3D12_CPU_DESCRIPTOR_HANDLE targetRtv, const D3D12_RECT& region);
 } // namespace SFSEMenuFramework::OverlayCompositor
