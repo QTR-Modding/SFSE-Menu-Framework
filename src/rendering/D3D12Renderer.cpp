@@ -1,6 +1,7 @@
 #include "rendering/D3D12Renderer.h"
 #include "audio/MenuSounds.h"
 #include "rendering/D3D12Texture.h"
+#include "rendering/BlockingWindowVisibility.h"
 
 #include "appearance/FontManager.h"
 #include "appearance/CursorManager.h"
@@ -16,6 +17,7 @@
 #include "ui/WindowPlacement.h"
 
 #include <backends/imgui_impl_dx12.h>
+#include "DX12Draw.h"
 #include <imgui.h>
 
 #include <array>
@@ -31,8 +33,7 @@
 
 namespace SFSEMenuFramework::D3D12Renderer
 {
-	bool HasSameDeviceIdentity(
-		ID3D12Device* a_left, ID3D12Device* a_right) noexcept
+	bool HasSameIdentity(IUnknown* a_left, IUnknown* a_right) noexcept
 	{
 		if (!a_left || !a_right) {
 			return false;
@@ -53,12 +54,10 @@ namespace SFSEMenuFramework::D3D12Renderer
 		using D3D12Textures::HeapProperties;
 		constexpr std::size_t frameResourceCount = 4;
 		constexpr std::size_t imageCount = 2;  // Wallpaper and cursor; font is descriptor 0.
-		constexpr std::uint64_t maximumBlockingWindowFrameAgeMilliseconds = 250;
 		constexpr char imguiIniFilename[] =
 			"Data/SFSE/Plugins/SFSEMenuFramework.imgui.ini";
 
-		std::atomic<std::uint64_t> renderedBlockingWindowGeneration{ 0 };
-		std::atomic<std::uint64_t> lastBlockingWindowRenderTick{ 0 };
+		BlockingWindowVisibility blockingVisibility;
 		std::atomic<bool>          rendererReady{ false };
 		thread_local bool          renderInProgress{};
 
@@ -202,6 +201,27 @@ namespace SFSEMenuFramework::D3D12Renderer
 					logger::critical("Failed to map the GPU completion-marker buffer");
 					return false;
 				}
+			}
+			return true;
+		}
+
+		[[nodiscard]] bool SharedUploadsComplete(RendererState& a_state)
+		{
+			// Recording can run ahead of Present. A texture published by that recording
+			// must finish uploading before another path can use it, even on the same queue.
+			for (std::size_t i = 0; i < frameResourceCount; ++i) {
+				auto& slot = a_state.CompletionSlots[i];
+				bool hasUploads = slot.Resources.UploadBuffer != nullptr;
+				for (const auto& image : slot.Images) {
+					hasUploads |= image.UploadBuffer != nullptr;
+				}
+				if (!hasUploads) { continue; }
+				std::uint32_t completed{};
+				if (!ReadCompletionValue(a_state, i, completed) || completed != slot.PendingValue) {
+					return false;
+				}
+				slot.Resources.UploadBuffer.Reset();
+				for (auto& image : slot.Images) { image.UploadBuffer.Reset(); }
 			}
 			return true;
 		}
@@ -437,20 +457,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 			}
 		}
 
-		[[nodiscard]] bool HasValidHeapSnapshot(const DescriptorHeapSnapshot& a_snapshot)
-		{
-			if (a_snapshot.Count == 0 || a_snapshot.Count > a_snapshot.Heaps.size()) {
-				return false;
-			}
-
-			for (UINT index = 0; index < a_snapshot.Count; ++index) {
-				if (!a_snapshot.Heaps[index]) {
-					return false;
-				}
-			}
-
-			return true;
-		}
 	}
 
 	bool Initialize(ID3D12Device* a_device)
@@ -482,54 +488,51 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 	bool HasRecentBlockingWindowFrame(std::uint64_t a_generation) noexcept
 	{
-		if (a_generation == 0 ||
-			renderedBlockingWindowGeneration.load(std::memory_order_acquire) != a_generation) {
-			return false;
-		}
-
-		const auto lastTick = lastBlockingWindowRenderTick.load(std::memory_order_acquire);
-		return lastTick != 0 &&
-		       (::GetTickCount64() - lastTick) <= maximumBlockingWindowFrameAgeMilliseconds;
+		return blockingVisibility.IsRecent(a_generation, ::GetTickCount64());
 	}
 
-	void Render(
-		ID3D12GraphicsCommandList*    a_commandList,
-		ID3D12Resource*               a_renderTarget,
-		const DescriptorHeapSnapshot& a_engineHeaps,
-		SetDescriptorHeapsFunction    a_setDescriptorHeaps)
+	void NotifyOverlayComposited(std::uint64_t a_generation) noexcept
 	{
-		if (!a_commandList || !a_renderTarget || !a_setDescriptorHeaps ||
-			a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
-			!HasValidHeapSnapshot(a_engineHeaps)) {
-			return;
+		if (blockingVisibility.Refresh(a_generation,
+			WindowManager::IsBlockingWindowOpenGeneration(a_generation), ::GetTickCount64())) {
+			static_cast<void>(Win32Platform::PostHostWindowCallback());
+		}
+	}
+
+	bool Render(ID3D12GraphicsCommandList* a_commandList, ID3D12Resource* a_renderTarget,
+		std::uint64_t& a_generation)
+	{
+		if (!a_commandList || !a_renderTarget ||
+			a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) {
+			return false;
 		}
 
 		std::scoped_lock lock{ GetRendererMutex() };
 		if (renderInProgress) {
-			return;
+			return false;
 		}
 		renderInProgress = true;
 		const RenderScope renderScope{ renderInProgress };
 
 		Microsoft::WRL::ComPtr<ID3D12Device> commandListDevice;
 		if (FAILED(a_commandList->GetDevice(IID_PPV_ARGS(commandListDevice.GetAddressOf())))) {
-			return;
+			return false;
 		}
 
 		auto& rendererState = GetRendererState();
 		if (!rendererState.Context ||
-			!HasSameDeviceIdentity(rendererState.Device.Get(), commandListDevice.Get())) {
-			return;
+			!HasSameIdentity(rendererState.Device.Get(), commandListDevice.Get())) {
+			return false;
 		}
 
 		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList2> commandList2;
 		if (FAILED(a_commandList->QueryInterface(IID_PPV_ARGS(commandList2.GetAddressOf())))) {
-			return;
+			return false;
 		}
 
 		std::size_t frameSlot{};
-		if (!AcquireFrameSlot(rendererState, frameSlot)) {
-			return;
+		if (!SharedUploadsComplete(rendererState) || !AcquireFrameSlot(rendererState, frameSlot)) {
+			return false;
 		}
 
 		const auto description = a_renderTarget->GetDesc();
@@ -537,19 +540,19 @@ namespace SFSEMenuFramework::D3D12Renderer
 			description.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS ||
 			description.SampleDesc.Count != 1 || description.Width < 256 ||
 			description.Height < 256) {
-			return;
+			return false;
 		}
 
 		ImGui::SetCurrentContext(rendererState.Context);
 		EventManager::Snapshot lifecycleSnapshot;
 		if (!EventManager::BeginFrame(lifecycleSnapshot)) {
-			return;
+			return false;
 		}
 
 		auto& io = ImGui::GetIO();
 		if (!Win32Platform::PrepareFrame()) {
 			InputEventManager::SetImGuiItemActive(false);
-			return;
+			return false;
 		}
 		ImGui_ImplDX12_NewFrame();
 		FontManager::UpdateResolutionScale(io);
@@ -609,24 +612,15 @@ namespace SFSEMenuFramework::D3D12Renderer
 		// The Win32 backend still needs this flag to hide the OS pointer.
 		io.MouseDrawCursor = drawMouseCursor;
 
-		D3D12_RENDER_TARGET_VIEW_DESC renderTargetView{};
-		renderTargetView.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		renderTargetView.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-		renderTargetView.Texture2D.MipSlice = 0;
-		renderTargetView.Texture2D.PlaneSlice = 0;
-
-		const auto renderTargetHandle =
-			rendererState.RenderTargetHeap->GetCPUDescriptorHandleForHeapStart();
-		rendererState.Device->CreateRenderTargetView(
-			a_renderTarget,
-			&renderTargetView,
-			renderTargetHandle);
+		const auto renderTargetHandle = D3D12Textures::RenderTargetView(
+			rendererState.Device.Get(), rendererState.RenderTargetHeap.Get(),
+			a_renderTarget, DXGI_FORMAT_R8G8B8A8_UNORM);
 
 		auto* textureHeap = hasThemeImages ?
 			rendererState.CompletionSlots[frameSlot].TextureHeap.Get() :
 			rendererState.ActiveFontResources.ShaderHeap.Get();
 		if (!textureHeap) {
-			return;
+			return false;
 		}
 		const auto fontDescriptor =
 			reinterpret_cast<ImTextureID>(textureHeap->GetGPUDescriptorHandleForHeapStart().ptr);
@@ -634,30 +628,20 @@ namespace SFSEMenuFramework::D3D12Renderer
 			RemapFontDescriptor(ImGui::GetDrawData(), io.Fonts->TexID, fontDescriptor);
 		}
 		ID3D12DescriptorHeap* frameworkHeaps[]{ textureHeap };
-		a_setDescriptorHeaps(a_commandList, 1, frameworkHeaps);
-		a_commandList->OMSetRenderTargets(1, &renderTargetHandle, FALSE, nullptr);
-		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), a_commandList);
+		a_commandList->SetDescriptorHeaps(1, frameworkHeaps);
+		const bool recorded = ImGui_ImplDX12_RenderDrawDataChecked(
+			ImGui::GetDrawData(), a_commandList, renderTargetHandle, true);
 		if (hasThemeImages) {
 			RemapFontDescriptor(ImGui::GetDrawData(), fontDescriptor, io.Fonts->TexID);
 		}
 		MarkFrameSlot(rendererState, commandList2.Get(), frameSlot);
 
-		a_setDescriptorHeaps(
-			a_commandList,
-			a_engineHeaps.Count,
-			a_engineHeaps.Heaps.data());
-
-		if (renderedGeneration != 0) {
-			renderedBlockingWindowGeneration.store(
-				renderedGeneration,
-				std::memory_order_release);
-			lastBlockingWindowRenderTick.store(::GetTickCount64(), std::memory_order_release);
-			static_cast<void>(Win32Platform::PostHostWindowCallback());
-		}
+		if (recorded) { a_generation = renderedGeneration; }
 
 		EventManager::Dispatch(
 			Model::EventType::kAfterRender,
 			lifecycleSnapshot);
 
+		return recorded;
 	}
 }

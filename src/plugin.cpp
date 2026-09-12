@@ -1,5 +1,6 @@
 #include "lifecycle/MenuLifecycle.h"
-#include "rendering/RenderHooks.h"
+#include "rendering/PresentOverlay.h"
+#include "rendering/StreamlineUIPrototype.h"
 
 #include <atomic>
 
@@ -61,11 +62,13 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
-	if (!SFSEMenuFramework::RenderHooks::Install()) {
-		logger::critical(
-			"Failed to install the Scaleform render-pass hooks; the plugin will remain loaded but inactive");
+	// SFSE now owns our callback, so later failures must leave the DLL loaded.
+	// Install rendering hooks here, before rendering starts.
+	if (!SFSEMenuFramework::PresentOverlay::EnsureInstalled()) {
+		logger::critical("Failed to install frame presentation; the plugin will remain loaded but inactive");
 		return true;
 	}
+	static_cast<void>(SFSEMenuFramework::StreamlineUIPrototype::Install());
 
 	if (!SFSEMenuFramework::MenuLifecycle::InstallEarly(*taskInterface)) {
 		logger::critical(
