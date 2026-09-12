@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 // RenderHooks.cpp also contains the unused game-pass installer.
 namespace SFSEMenuFramework::RenderHooks::Detail
@@ -136,5 +137,35 @@ int main()
 	Hr(list->Reset(allocator.Get(), nullptr));
 	Check(!Capture(list.Get(), after), "Reset requires newly observed bindings");
 	Hr(list->Close());
-	std::puts("PASS: WARP command-list capture, replay, partial roots, injection isolation, reset guards");
+	// Keep every COM object alive: allocator address reuse must not hide the old 128-entry bug.
+	std::vector<ComPtr<ID3D12GraphicsCommandList>> recordings;
+	std::vector<ComPtr<ID3D12CommandAllocator>> allocators;
+	auto lastEpoch = before.Epoch;
+	for (int i = 0; i < 256; ++i) {
+		ComPtr<ID3D12CommandAllocator> nextAllocator;
+		Hr(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&nextAllocator)));
+		ComPtr<ID3D12GraphicsCommandList> next;
+		Hr(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+			nextAllocator.Get(), nullptr, IID_PPV_ARGS(&next)));
+		Hr(next->Close());
+		Hr(next->Reset(nextAllocator.Get(), pipeline.Get()));
+		before.Restore(next.Get());
+		Check(Capture(next.Get(), after), "capture more than 128 simultaneous recordings");
+		Check(after.Epoch > lastEpoch, "recording IDs are globally unique");
+		lastEpoch = after.Epoch;
+		recordings.push_back(std::move(next));
+		allocators.push_back(std::move(nextAllocator));
+	}
+	for (std::size_t i = 0; i < recordings.size(); ++i) {
+		auto* next = recordings[i].Get();
+		Hr(next->Close());
+		Check(!Capture(next, after), "Close retires a complete snapshot");
+		Hr(next->Reset(allocators[i].Get(), pipeline.Get()));
+		before.Restore(next);
+		Check(Capture(next, after) && after.Epoch > lastEpoch, "reused list gets a fresh recording ID");
+		lastEpoch = after.Epoch;
+		Hr(next->Close());
+		Check(!Capture(next, after), "reused recording is retired");
+	}
+	std::puts("PASS: WARP state replay, injection isolation, reset guards, 256 recordings and Close/Reset lifetimes");
 }

@@ -20,7 +20,7 @@ namespace SFSEMenuFramework::CommandListState
 			std::unordered_map<List*, std::unique_ptr<Snapshot>> Lists;
 			void** Vtable{};
 			bool Installed{};
-			std::size_t CapacityRejectedResets{};
+			std::uint64_t NextEpoch{};
 		};
 
 		Registry& States()
@@ -158,8 +158,10 @@ namespace SFSEMenuFramework::CommandListState
 			}
 		};
 
+		using CloseFunction = HRESULT(STDMETHODCALLTYPE*)(List*);
 		using ResetFunction = HRESULT(STDMETHODCALLTYPE*)(List*, ID3D12CommandAllocator*, ID3D12PipelineState*);
 		using ClearFunction = void(STDMETHODCALLTYPE*)(List*, ID3D12PipelineState*);
+		std::atomic<CloseFunction> originalClose{};
 		std::atomic<ResetFunction> originalReset{};
 		std::atomic<ClearFunction> originalClear{};
 		void ResetSnapshot(List* list, ID3D12PipelineState* pipeline)
@@ -169,20 +171,24 @@ namespace SFSEMenuFramework::CommandListState
 			std::scoped_lock lock{ registry.Mutex };
 			auto it = registry.Lists.find(list);
 			if (it == registry.Lists.end()) {
-				// Bound retained state. Unknown lists fall back rather than evicting live state.
-				if (registry.Lists.size() >= 128) {
-					if (++registry.CapacityRejectedResets == 1) {
-						logger::warn("Command-list tracker reached 128 entries; rejecting further new-list resets");
-					}
-					return;
-				}
 				it = registry.Lists.emplace(list, std::make_unique<Snapshot>()).first;
 			}
-			const auto epoch = it->second->Epoch + 1;
 			*it->second = {};
-			it->second->Epoch = epoch;
+			// Unique across Close/Reset and pointer reuse, including cleared recordings.
+			it->second->Epoch = ++registry.NextEpoch;
 			it->second->Complete = true;
 			it->second->Pipeline = pipeline;
+		}
+		HRESULT STDMETHODCALLTYPE Close(List* list)
+		{
+			const auto result = originalClose.load(std::memory_order_acquire)(list);
+			if (!injecting) {
+				auto& registry = States();
+				std::scoped_lock lock{ registry.Mutex };
+				// State is only needed while recording. A failed Close is not safe to inject into either.
+				registry.Lists.erase(list);
+			}
+			return result;
 		}
 		HRESULT STDMETHODCALLTYPE Reset(List* list, ID3D12CommandAllocator* allocator, ID3D12PipelineState* pipeline)
 		{
@@ -246,11 +252,14 @@ namespace SFSEMenuFramework::CommandListState
 		if (registry.Vtable) { return registry.Installed && registry.Vtable == vtable; }
 		registry.Vtable = vtable;
 		REL::Relocation<std::uintptr_t> table{ reinterpret_cast<std::uintptr_t>(vtable) };
+		const auto close = ReadVtableSlot(table, 9);
 		const auto reset = ReadVtableSlot(table, 10);
 		const auto clear = ReadVtableSlot(table, 11);
+		originalClose.store(reinterpret_cast<CloseFunction>(close), std::memory_order_release);
 		originalReset.store(reinterpret_cast<ResetFunction>(reset), std::memory_order_release);
 		originalClear.store(reinterpret_cast<ClearFunction>(clear), std::memory_order_release);
 		std::vector hooks{
+			VtableHook{ &table, 9, close, FunctionAddress(&Close) },
 			VtableHook{ &table, 10, reset, FunctionAddress(&Reset) },
 			VtableHook{ &table, 11, clear, FunctionAddress(&Clear) },
 			Hook<20, Topology>::Prepare(table), Hook<21, Viewports>::Prepare(table),
@@ -291,7 +300,7 @@ namespace SFSEMenuFramework::CommandListState
 		const auto found = registry.Lists.find(list);
 		if (!registry.Installed || found == registry.Lists.end()) {
 			if (reason) {
-				*reason = registry.CapacityRejectedResets ? "tracker capacity reached (128)" : "Reset not observed";
+				*reason = "no active tracked recording";
 			}
 			return false;
 		}
