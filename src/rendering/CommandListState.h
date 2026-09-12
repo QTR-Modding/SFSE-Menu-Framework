@@ -22,6 +22,7 @@ namespace SFSEMenuFramework::CommandListState
 	struct Snapshot
 	{
 		bool Complete{};
+		const char* InvalidReason{ "invalid arguments" };
 		std::uint64_t Epoch{};
 		Microsoft::WRL::ComPtr<ID3D12PipelineState> Pipeline;
 		Microsoft::WRL::ComPtr<ID3D12RootSignature> GraphicsRoot;
@@ -52,7 +53,8 @@ namespace SFSEMenuFramework::CommandListState
 
 	// Observe one native/wrapped implementation continuously, starting at Reset.
 	[[nodiscard]] bool Install(ID3D12GraphicsCommandList* a_list);
-	[[nodiscard]] bool Capture(ID3D12GraphicsCommandList* a_list, Snapshot& a_snapshot);
+	[[nodiscard]] bool Capture(ID3D12GraphicsCommandList* a_list, Snapshot& a_snapshot,
+		const char** a_reason = nullptr);
 	std::mutex& RoutingMutex();
 
 	class InjectionScope

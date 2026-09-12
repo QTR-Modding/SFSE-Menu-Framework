@@ -2,6 +2,7 @@
 
 #include "rendering/D3D12Renderer.h"
 #include "rendering/CommandListState.h"
+#include "rendering/OverlayTrace.h"
 
 #include <Windows.h>
 #include <d3d12.h>
@@ -594,7 +595,9 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				return false;
 			}
 			CommandListState::Snapshot savedState;
-			if (!CommandListState::Capture(nativeList.Get(), savedState)) {
+			const char* stateReason = "none";
+			if (!CommandListState::Capture(nativeList.Get(), savedState, &stateReason)) {
+				OverlayTrace::StateRejected(stateReason);
 				if (!heapWaitLogged.test_and_set(std::memory_order_relaxed)) {
 					logger::info("Streamline UI overlay waiting for complete command-list state");
 				}
@@ -607,6 +610,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			}
 			const auto epoch = savedState.Epoch;
 			if (lastRenderedCommandList == proxyList.Get() && lastRenderedEpoch == epoch) {
+				OverlayTrace::Record(OverlayTrace::Duplicate);
 				return true;
 			}
 
@@ -629,8 +633,9 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				D3D12_RESOURCE_STATE_RENDER_TARGET);
 			constexpr float clear[4]{};
 			nativeList->ClearRenderTargetView(overlayRtv, clear, 0, nullptr);
-			D3D12Renderer::Render(
+			const bool recorded = D3D12Renderer::Render(
 				nativeList.Get(), state.Overlay.Get(), heapSnapshot, &SetHeaps);
+			OverlayTrace::Record(recorded ? OverlayTrace::ImGuiDraw : OverlayTrace::ImGuiSkipped);
 			Transition(
 				nativeList.Get(), state.Overlay.Get(),
 				D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -676,7 +681,9 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			lastRenderedCommandList = proxyList.Get();
 			lastRenderedEpoch = epoch;
 			lastUiRenderTick.store(::GetTickCount64(), std::memory_order_release);
-			uiPathActive.store(true, std::memory_order_release);
+			if (!uiPathActive.exchange(true, std::memory_order_acq_rel)) {
+				OverlayTrace::Record(OverlayTrace::RouteOn);
+			}
 			if (!routeLogged.test_and_set(std::memory_order_relaxed)) {
 				logger::info("Streamline UI overlay rendering SFSE-MF into UIColorAndAlpha with state restoration");
 			}
@@ -698,14 +705,24 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 					}
 
 					if (!tag.ResourceData || !tag.ResourceData->Native) {
-						uiPathActive.store(false, std::memory_order_release);
-					} else if (!RenderFramework(tag, a_commandBuffer)) {
-						uiPathActive.store(false, std::memory_order_release);
+						OverlayTrace::Record(OverlayTrace::NullTag);
+						if (uiPathActive.exchange(false, std::memory_order_acq_rel)) {
+							OverlayTrace::Record(OverlayTrace::RouteOff);
+						}
+					} else {
+						OverlayTrace::Record(OverlayTrace::Tag);
+						if (!RenderFramework(tag, a_commandBuffer)) {
+							OverlayTrace::Record(OverlayTrace::Rejected);
+							if (uiPathActive.exchange(false, std::memory_order_acq_rel)) {
+								OverlayTrace::Record(OverlayTrace::RouteOff);
+							}
+						}
 					}
 					break;
 				}
 			}
 
+			OverlayTrace::Report();
 			const auto original = originalSetTag.load(std::memory_order_acquire);
 			return original ? original(a_viewport, a_tags, a_count, a_commandBuffer) : -1;
 		}
@@ -789,6 +806,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 		}
 		const auto last = lastUiRenderTick.load(std::memory_order_acquire);
 		if (!last || ::GetTickCount64() - last > uiRouteFreshMilliseconds) {
+			OverlayTrace::Record(OverlayTrace::Timeout);
 			uiPathActive.store(false, std::memory_order_release);
 			return false;
 		}

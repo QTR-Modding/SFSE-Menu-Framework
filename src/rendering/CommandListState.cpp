@@ -124,12 +124,14 @@ namespace SFSEMenuFramework::CommandListState
 			s.HasDepthTarget = depth != nullptr;
 			s.DepthTarget = depth ? *depth : D3D12_CPU_DESCRIPTOR_HANDLE{};
 		}
-		void Bundle(Snapshot& s, List*) { s.Complete = false; }
+		void Bundle(Snapshot& s, List*) { s.Complete = false; s.InvalidReason = "ExecuteBundle"; }
 		void Indirect(Snapshot& s, ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64,
-			ID3D12Resource*, UINT64) { s.Complete = false; }
+			ID3D12Resource*, UINT64) { s.Complete = false; s.InvalidReason = "ExecuteIndirect"; }
 		void RenderPass(Snapshot& s, UINT, const D3D12_RENDER_PASS_RENDER_TARGET_DESC*,
-			const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC*, D3D12_RENDER_PASS_FLAGS) { s.Complete = false; }
-		void RaytracingPipeline(Snapshot& s, ID3D12StateObject*) { s.Complete = false; }
+			const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC*, D3D12_RENDER_PASS_FLAGS)
+		{ s.Complete = false; s.InvalidReason = "BeginRenderPass"; }
+		void RaytracingPipeline(Snapshot& s, ID3D12StateObject*)
+		{ s.Complete = false; s.InvalidReason = "SetPipelineState1"; }
 
 		// Typed forwarding preserves each SDK method's calling convention and arguments.
 		template<std::size_t Slot, auto Observe> struct Hook;
@@ -276,12 +278,24 @@ namespace SFSEMenuFramework::CommandListState
 		return registry.Installed;
 	}
 
-	bool Capture(List* list, Snapshot& snapshot)
+	bool Capture(List* list, Snapshot& snapshot, const char** reason)
 	{
 		auto& registry = States();
 		std::scoped_lock lock{ registry.Mutex };
 		const auto found = registry.Lists.find(list);
-		if (!registry.Installed || found == registry.Lists.end() || !found->second->Ready()) { return false; }
+		if (!registry.Installed || found == registry.Lists.end()) {
+			if (reason) { *reason = "Reset not observed"; }
+			return false;
+		}
+		const auto& state = *found->second;
+		if (!state.Ready()) {
+			if (reason) {
+				*reason = !state.Complete ? state.InvalidReason :
+					!state.Pipeline ? "pipeline missing" : !state.GraphicsRoot ? "root missing" :
+					!state.HeapCount ? "heaps missing" : "viewport/scissor missing";
+			}
+			return false;
+		}
 		snapshot = *found->second;
 		return true;
 	}

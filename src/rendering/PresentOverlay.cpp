@@ -4,6 +4,7 @@
 #include "rendering/D3D12Renderer.h"
 #include "rendering/StreamlineUIPrototype.h"
 #include "rendering/CommandListState.h"
+#include "rendering/OverlayTrace.h"
 
 #include <RE/C/CreationRenderer.h>
 
@@ -583,6 +584,8 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				return;
 			}
 			frame.FenceValue = fenceValue;
+			OverlayTrace::Record(OverlayTrace::PresentDraw);
+			OverlayTrace::Report();
 		}
 
 		HRESULT STDMETHODCALLTYPE PresentThunk(IDXGISwapChain* a_swapChain, UINT a_sync, UINT a_flags) noexcept

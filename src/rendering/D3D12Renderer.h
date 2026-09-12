@@ -27,7 +27,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		std::uint64_t a_earlyRawMouseGeneration = 0);
 	[[nodiscard]] bool HasRecentBlockingWindowFrame(std::uint64_t a_generation) noexcept;
 
-	void Render(
+	bool Render(
 		ID3D12GraphicsCommandList*    a_commandList,
 		ID3D12Resource*               a_renderTarget,
 		const DescriptorHeapSnapshot& a_engineHeaps,
