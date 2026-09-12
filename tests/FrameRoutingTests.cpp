@@ -2,6 +2,7 @@
 #include "rendering/FramePresentBridge.h"
 #include "rendering/BlockingWindowVisibility.h"
 
+#include <REL/Trampoline.h>
 #include <Windows.h>
 #include <cstdio>
 #include <cstdlib>
@@ -30,21 +31,30 @@ namespace
 		using namespace SFSEMenuFramework;
 		auto* memory = static_cast<std::byte*>(VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 		Check(memory != nullptr);
-		// Synthetic caller preserves R15, places the packet there, then performs
-		// the same six-byte CALL used at the verified game callsite.
+		// Synthetic caller preserves R15 and places the packet there. Patch the
+		// same MOV/virtual-CALL bytes as the verified game callsite.
 		const std::uint8_t caller[]{
 			0x41, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x4D, 0x8B, 0xF9,
-			0xFF, 0x15, 0, 0, 0, 0,
+			0x48, 0x8B, 0x01, 0xFF, 0x50, 0x40,
 			0x48, 0x83, 0xC4, 0x20, 0x41, 0x5F, 0xC3
 		};
 		std::memcpy(memory, caller, sizeof(caller));
 		const auto base = reinterpret_cast<std::uintptr_t>(memory);
-		const FramePresentBridge bridge{ reinterpret_cast<std::uintptr_t>(&Capture) };
-		std::memcpy(memory + 64, &bridge, sizeof(bridge));
-		const auto target = base + 64;
-		std::memcpy(memory + 96, &target, sizeof(target));
-		const REL::ASM::CALL6 call{ base + 9, base + 96 };
-		std::memcpy(memory + 9, &call, sizeof(call));
+		REL::Trampoline trampoline{ "Frame bridge test" };
+		trampoline.set_trampoline(memory + 64, 64);
+		const auto* bridge = trampoline.allocate<FramePresentBridge>(reinterpret_cast<std::uintptr_t>(&Capture));
+		const auto target = reinterpret_cast<std::uintptr_t>(bridge);
+		const auto relay = trampoline.allocate_branch6(target);
+		const auto allocated = trampoline.allocated_size();
+		Check(allocated == sizeof(FramePresentBridge) + sizeof(std::uintptr_t));
+		static_cast<void>(trampoline.write_call<6>(base + 9, target));
+		Check(trampoline.allocated_size() == allocated);
+		Check(trampoline.allocate_branch6(target) == relay);
+		Check(trampoline.allocated_size() == allocated);
+		const REL::ASM::CALL6 call{ base + 9, relay };
+		Check(std::memcmp(memory + 9, &call, sizeof(call)) == 0);
+		Check(REL::ASM::CALL6::TARGET(base + 9) == relay);
+		Check(*reinterpret_cast<const std::uintptr_t*>(relay) == target);
 		DWORD previous{};
 		Check(VirtualProtect(memory, 4096, PAGE_EXECUTE_READ, &previous) != FALSE);
 		Check(FlushInstructionCache(GetCurrentProcess(), memory, 4096) != FALSE);

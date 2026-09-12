@@ -158,6 +158,7 @@ namespace SFSEMenuFramework::PresentOverlay
 					if (FAILED(a_state.Device->CreateCommandAllocator(
 							D3D12_COMMAND_LIST_TYPE_DIRECT,
 							IID_PPV_ARGS(a_state.Frames[i].Allocator.GetAddressOf())))) {
+						a_state.Frames.resize(oldSize);
 						return false;
 					}
 				}
@@ -167,6 +168,7 @@ namespace SFSEMenuFramework::PresentOverlay
 						0, D3D12_COMMAND_LIST_TYPE_DIRECT, a_state.Frames[0].Allocator.Get(),
 						nullptr, IID_PPV_ARGS(a_state.List.GetAddressOf()))) ||
 					FAILED(a_state.List->Close())) {
+					a_state.List.Reset();
 					return false;
 				}
 			}
