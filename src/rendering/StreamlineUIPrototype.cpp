@@ -3,7 +3,6 @@
 #include <Windows.h>
 #include <d3d12.h>
 
-#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -82,7 +81,7 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 		using SetTagFn = Result (*)(const void*, const ResourceTag*, std::uint32_t, void*);
 
 		constexpr std::uint32_t uiColorAndAlpha = 23;
-		constexpr std::size_t descriptorCount = 16;
+		constexpr std::size_t descriptorCount = 64;
 		constexpr StructType resourceTagType{
 			0x4C6A5AAD, 0xB445, 0x496C,
 			{ 0x87, 0xFF, 0x1A, 0xF3, 0x84, 0x5B, 0xE6, 0x53 }
@@ -94,23 +93,18 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 			{ 0xAD, 0x9F, 0x1B, 0x37, 0x37, 0x92, 0x84, 0xFF }
 		};
 
-		struct TargetSlot final
-		{
-			ComPtr<ID3D12Resource> Resource;
-		};
-
 		struct State final
 		{
 			ComPtr<ID3D12Device> Device;
 			ComPtr<ID3D12DescriptorHeap> RtvHeap;
-			std::array<TargetSlot, descriptorCount> Targets{};
 			UINT RtvStride{};
+			std::size_t NextDescriptor{};
 		};
 
 		std::atomic<SetTagFn> originalSetTag{};
 		std::atomic_flag installed{};
 		std::atomic_flag markerLogged{};
-		std::atomic_flag nativeListLogged{};
+		std::atomic_flag proxyListLogged{};
 		std::atomic_flag rejectionLogged{};
 
 		[[nodiscard]] State& GetState()
@@ -149,28 +143,25 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 			       left.Get() == right.Get();
 		}
 
-		[[nodiscard]] bool GetStreamlineNativeCommandList(
-			ID3D12GraphicsCommandList* a_commandList,
-			ComPtr<ID3D12GraphicsCommandList>& a_native) noexcept
+		[[nodiscard]] bool ResolveNativeDevice(
+			ID3D12Device* a_device,
+			ComPtr<ID3D12Device>& a_native) noexcept
 		{
 			a_native.Reset();
-			if (!a_commandList) {
+			if (!a_device) {
 				return false;
 			}
 
-			ID3D12GraphicsCommandList* native{};
-			if (FAILED(a_commandList->QueryInterface(
+			ID3D12Device* native{};
+			if (SUCCEEDED(a_device->QueryInterface(
 					streamlineNativeInterface,
-					reinterpret_cast<void**>(&native))) ||
-				!native) {
-				return false;
+					reinterpret_cast<void**>(&native))) &&
+				native) {
+				a_native.Attach(native);
+				return true;
 			}
 
-			a_native.Attach(native);
-			if (native == a_commandList) {
-				a_native.Reset();
-				return false;
-			}
+			a_native = a_device;
 			return true;
 		}
 
@@ -196,30 +187,14 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 				return false;
 			}
 
-			std::size_t slot = descriptorCount;
-			for (std::size_t index = 0; index < state.Targets.size(); ++index) {
-				if (state.Targets[index].Resource &&
-					SameIdentity(state.Targets[index].Resource.Get(), a_target)) {
-					slot = index;
-					break;
-				}
-				if (slot == descriptorCount && !state.Targets[index].Resource) {
-					slot = index;
-				}
-			}
-			if (slot == descriptorCount) {
-				return false;
-			}
-
+			const auto slot = state.NextDescriptor++ % descriptorCount;
 			a_handle = state.RtvHeap->GetCPUDescriptorHandleForHeapStart();
 			a_handle.ptr += slot * state.RtvStride;
-			if (!state.Targets[slot].Resource) {
-				D3D12_RENDER_TARGET_VIEW_DESC view{};
-				view.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-				view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-				a_device->CreateRenderTargetView(a_target, &view, a_handle);
-				state.Targets[slot].Resource = a_target;
-			}
+
+			D3D12_RENDER_TARGET_VIEW_DESC view{};
+			view.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+			view.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+			a_device->CreateRenderTargetView(a_target, &view, a_handle);
 			return true;
 		}
 
@@ -239,10 +214,12 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 
 			ComPtr<ID3D12Resource> target;
 			if (FAILED(reinterpret_cast<IUnknown*>(a_tag.ResourceData->Native)->QueryInterface(
-					IID_PPV_ARGS(target.GetAddressOf()))) || !target) {
+					IID_PPV_ARGS(target.GetAddressOf()))) ||
+				!target) {
 				LogRejection("UI native resource is not ID3D12Resource");
 				return;
 			}
+
 			const auto desc = target->GetDesc();
 			if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
 				desc.Format != DXGI_FORMAT_R16G16B16A16_TYPELESS ||
@@ -260,25 +237,24 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 				return;
 			}
 
-			ComPtr<ID3D12GraphicsCommandList> nativeCommandList;
-			if (GetStreamlineNativeCommandList(commandList.Get(), nativeCommandList)) {
-				commandList = nativeCommandList;
-				if (!nativeListLogged.test_and_set(std::memory_order_relaxed)) {
-					logger::info("Streamline UI overlay prototype using native command list");
-				}
-			}
-
 			ComPtr<ID3D12Device> targetDevice;
 			ComPtr<ID3D12Device> listDevice;
+			ComPtr<ID3D12Device> nativeListDevice;
 			if (FAILED(target->GetDevice(IID_PPV_ARGS(targetDevice.GetAddressOf()))) ||
 				FAILED(commandList->GetDevice(IID_PPV_ARGS(listDevice.GetAddressOf()))) ||
-				!targetDevice || !listDevice) {
+				!targetDevice || !listDevice ||
+				!ResolveNativeDevice(listDevice.Get(), nativeListDevice)) {
 				LogRejection("could not resolve D3D12 devices");
 				return;
 			}
-			if (!SameIdentity(targetDevice.Get(), listDevice.Get())) {
+			if (!SameIdentity(targetDevice.Get(), nativeListDevice.Get())) {
 				LogRejection("command list and UI resource device identity differ");
 				return;
+			}
+
+			if (nativeListDevice.Get() != listDevice.Get() &&
+				!proxyListLogged.test_and_set(std::memory_order_relaxed)) {
+				logger::info("Streamline UI overlay prototype using Streamline command list");
 			}
 
 			D3D12_CPU_DESCRIPTOR_HANDLE rtv{};
