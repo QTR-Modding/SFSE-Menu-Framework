@@ -119,11 +119,43 @@ namespace SFSEMenuFramework::CommandListState
 			BOOL contiguous, const D3D12_CPU_DESCRIPTOR_HANDLE* depth)
 		{
 			if (n > s.RenderTargets.size() || (n && !p)) { s.Complete = false; return; }
+			if ((n || depth) && !s.Device) { s.Complete = false; return; }
+			// Capture before forwarding: the caller may immediately reuse its CPU descriptors.
+			if (!s.OwnedTargets || s.OwnedTargets.use_count() != 1) {
+				s.OwnedTargets = std::make_shared<Snapshot::TargetDescriptors>();
+			}
+			auto ensureHeap = [&](Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>& heap,
+				D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count) {
+				if (heap) { return true; }
+				D3D12_DESCRIPTOR_HEAP_DESC desc{};
+				desc.Type = type;
+				desc.NumDescriptors = count;
+				return SUCCEEDED(s.Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&heap)));
+			};
+			if ((n && !ensureHeap(s.OwnedTargets->RTV, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 8)) ||
+				(depth && !ensureHeap(s.OwnedTargets->DSV, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1))) {
+				s.Complete = false;
+				s.InvalidReason = "target descriptor allocation failed";
+				return;
+			}
 			s.RenderTargetCount = n;
-			s.ContiguousTargets = contiguous;
-			if (n) { std::copy_n(p, contiguous ? 1 : n, s.RenderTargets.begin()); }
+			s.ContiguousTargets = FALSE;
+			if (n) {
+				const auto stride = s.Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+				auto destination = s.OwnedTargets->RTV->GetCPUDescriptorHandleForHeapStart();
+				for (UINT i = 0; i < n; ++i) {
+					const D3D12_CPU_DESCRIPTOR_HANDLE source{ contiguous ? p[0].ptr + i * stride : p[i].ptr };
+					s.Device->CopyDescriptorsSimple(1, destination, source, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+					s.RenderTargets[i] = destination;
+					destination.ptr += stride;
+				}
+			}
 			s.HasDepthTarget = depth != nullptr;
-			s.DepthTarget = depth ? *depth : D3D12_CPU_DESCRIPTOR_HANDLE{};
+			s.DepthTarget = {};
+			if (depth) {
+				s.DepthTarget = s.OwnedTargets->DSV->GetCPUDescriptorHandleForHeapStart();
+				s.Device->CopyDescriptorsSimple(1, s.DepthTarget, *depth, D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+			}
 		}
 		void Bundle(Snapshot& s, List*) { s.Complete = false; s.InvalidReason = "ExecuteBundle"; }
 		void Indirect(Snapshot& s, ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64,
@@ -143,12 +175,16 @@ namespace SFSEMenuFramework::CommandListState
 			inline static std::atomic<Function> Original{};
 			static void STDMETHODCALLTYPE Call(List* list, Args... args)
 			{
+				auto observe = [&] {
+					if (injecting) { return; }
+					auto& registry = States();
+					std::scoped_lock lock{ registry.Mutex };
+					const auto found = registry.Lists.find(list);
+					if (found != registry.Lists.end()) { Observe(*found->second, args...); }
+				};
+				if constexpr (Slot == 46) { observe(); }
 				Original.load(std::memory_order_acquire)(list, args...);
-				if (injecting) { return; }
-				auto& registry = States();
-				std::scoped_lock lock{ registry.Mutex };
-				const auto found = registry.Lists.find(list);
-				if (found != registry.Lists.end()) { Observe(*found->second, args...); }
+				if constexpr (Slot != 46) { observe(); }
 			}
 			static VtableHook Prepare(REL::Relocation<std::uintptr_t>& table)
 			{
@@ -178,6 +214,10 @@ namespace SFSEMenuFramework::CommandListState
 			it->second->Epoch = ++registry.NextEpoch;
 			it->second->Complete = true;
 			it->second->Pipeline = pipeline;
+			if (FAILED(list->GetDevice(IID_PPV_ARGS(&it->second->Device)))) {
+				it->second->Complete = false;
+				it->second->InvalidReason = "command-list device unavailable";
+			}
 		}
 		HRESULT STDMETHODCALLTYPE Close(List* list)
 		{

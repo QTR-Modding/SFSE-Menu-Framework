@@ -31,5 +31,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 		ID3D12GraphicsCommandList*    a_commandList,
 		ID3D12Resource*               a_renderTarget,
 		const DescriptorHeapSnapshot& a_engineHeaps,
-		SetDescriptorHeapsFunction    a_setDescriptorHeaps);
+		SetDescriptorHeapsFunction    a_setDescriptorHeaps,
+		bool                         a_clearTarget = false);
 }

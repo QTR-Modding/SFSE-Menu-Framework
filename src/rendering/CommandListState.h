@@ -5,6 +5,7 @@
 #include <bitset>
 #include <cstdint>
 #include <mutex>
+#include <memory>
 #include <wrl/client.h>
 
 namespace SFSEMenuFramework::CommandListState
@@ -21,6 +22,13 @@ namespace SFSEMenuFramework::CommandListState
 
 	struct Snapshot
 	{
+		struct TargetDescriptors
+		{
+			Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> RTV;
+			Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DSV;
+		};
+		Microsoft::WRL::ComPtr<ID3D12Device> Device;
+		std::shared_ptr<TargetDescriptors> OwnedTargets;
 		bool Complete{};
 		const char* InvalidReason{ "invalid arguments" };
 		std::uint64_t Epoch{};

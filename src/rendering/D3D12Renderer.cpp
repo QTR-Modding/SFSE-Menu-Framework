@@ -496,7 +496,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 		ID3D12GraphicsCommandList*    a_commandList,
 		ID3D12Resource*               a_renderTarget,
 		const DescriptorHeapSnapshot& a_engineHeaps,
-		SetDescriptorHeapsFunction    a_setDescriptorHeaps)
+		SetDescriptorHeapsFunction    a_setDescriptorHeaps,
+		bool                         a_clearTarget)
 	{
 		if (!a_commandList || !a_renderTarget || !a_setDescriptorHeaps ||
 			a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
@@ -635,6 +636,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 		}
 		ID3D12DescriptorHeap* frameworkHeaps[]{ textureHeap };
 		a_setDescriptorHeaps(a_commandList, 1, frameworkHeaps);
+		// Only replace the previous image after this frame has passed the skip gates.
+		constexpr float clear[4]{};
+		if (a_clearTarget) { a_commandList->ClearRenderTargetView(renderTargetHandle, clear, 0, nullptr); }
 		a_commandList->OMSetRenderTargets(1, &renderTargetHandle, FALSE, nullptr);
 		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), a_commandList);
 		if (hasThemeImages) {

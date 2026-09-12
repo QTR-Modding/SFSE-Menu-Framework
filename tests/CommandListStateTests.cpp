@@ -59,6 +59,8 @@ namespace
 	}
 }
 
+void TestTargetDescriptors(ID3D12Device*, ID3D12RootSignature*, ID3D12DescriptorHeap*);
+
 int main()
 {
 	ComPtr<IDXGIFactory4> factory;
@@ -167,5 +169,6 @@ int main()
 		Hr(next->Close());
 		Check(!Capture(next, after), "reused recording is retired");
 	}
+	TestTargetDescriptors(device.Get(), root.Get(), heap.Get());
 	std::puts("PASS: WARP state replay, injection isolation, reset guards, 256 recordings and Close/Reset lifetimes");
 }

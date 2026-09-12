@@ -3,6 +3,7 @@
 #include "rendering/D3D12Renderer.h"
 #include "rendering/CommandListState.h"
 #include "rendering/OverlayTrace.h"
+#include "rendering/GpuResourceRetirement.h"
 
 #include <Windows.h>
 #include <d3d12.h>
@@ -128,15 +129,14 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			ComPtr<ID3DBlob> PS;
 			ComPtr<ID3D12PipelineState> Pipeline;
 			ComPtr<ID3D12Resource> Overlay;
-			std::vector<ComPtr<ID3D12Resource>> RetiredOverlays;
-			std::vector<ComPtr<ID3D12DescriptorHeap>> RetiredSrvHeaps;
-			std::vector<ComPtr<ID3D12PipelineState>> RetiredPipelines;
+			GpuResourceRetirement Retirement;
 			UINT RtvStride{};
 			std::uint64_t Width{};
 			std::uint32_t Height{};
 			DXGI_FORMAT PipelineFormat{ DXGI_FORMAT_UNKNOWN };
 			std::size_t NextTargetDescriptor{};
 			bool Initialized{};
+			bool HasOverlayContent{};
 			bool Failed{};
 		};
 
@@ -375,9 +375,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 					return false;
 				}
 				// Old command lists still reference the old GPU descriptor after a resize.
-				a_state.RetiredSrvHeaps.push_back(a_state.SrvHeap);
 				a_state.SrvHeap = std::move(nextHeap);
-				a_state.RetiredOverlays.push_back(a_state.Overlay);
 				a_state.Overlay.Reset();
 			}
 
@@ -419,6 +417,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 
 			a_state.Width = a_width;
 			a_state.Height = a_height;
+			a_state.HasOverlayContent = false;
 			return true;
 		}
 
@@ -428,7 +427,6 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				return true;
 			}
 			if (a_state.Pipeline) {
-				a_state.RetiredPipelines.push_back(a_state.Pipeline);
 				a_state.Pipeline.Reset();
 			}
 
@@ -621,20 +619,30 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			}
 
 			CommandListState::InjectionScope injection;
+			ComPtr<ID3D12GraphicsCommandList2> markerList;
+			if (FAILED(nativeList.As(&markerList))) { return false; }
+			auto* use = state.Retirement.Begin(state.Device.Get(), state.Overlay.Get(),
+				state.SrvHeap.Get(), state.Pipeline.Get());
+			if (!use) {
+				LogRejection("compositor completion slots unavailable");
+				return false;
+			}
+			struct CompleteOnExit {
+				GpuResourceRetirement::Use& Use;
+				ID3D12GraphicsCommandList2* List;
+				~CompleteOnExit() { GpuResourceRetirement::End(Use, List); }
+			} completion{ *use, markerList.Get() };
 			struct RestoreOnExit {
 				ID3D12GraphicsCommandList* List;
 				const CommandListState::Snapshot& Saved;
 				~RestoreOnExit() { Saved.Restore(List); }
 			} restore{ nativeList.Get(), savedState };
-			const auto overlayRtv = state.RtvHeap->GetCPUDescriptorHandleForHeapStart();
 			Transition(
 				nativeList.Get(), state.Overlay.Get(),
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 				D3D12_RESOURCE_STATE_RENDER_TARGET);
-			constexpr float clear[4]{};
-			nativeList->ClearRenderTargetView(overlayRtv, clear, 0, nullptr);
 			const bool recorded = D3D12Renderer::Render(
-				nativeList.Get(), state.Overlay.Get(), heapSnapshot, &SetHeaps);
+				nativeList.Get(), state.Overlay.Get(), heapSnapshot, &SetHeaps, true);
 			OverlayTrace::Record(recorded ? OverlayTrace::ImGuiDraw : OverlayTrace::ImGuiSkipped);
 			Transition(
 				nativeList.Get(), state.Overlay.Get(),
@@ -642,6 +650,9 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
 			D3D12_CPU_DESCRIPTOR_HANDLE targetRtv{};
+			state.HasOverlayContent |= recorded;
+			// Reuse the last image on a busy frame, but never sample an uninitialized image.
+			if (!state.HasOverlayContent) { return false; }
 			if (!GetTargetRtv(state, target.Get(), targetFormat, targetRtv)) {
 				return false;
 			}

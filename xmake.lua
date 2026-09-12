@@ -207,7 +207,8 @@ target("command-list-state-tests", function()
     set_default(false)
     set_pcxxheader("src/PCH.h")
     add_deps("commonlibsf")
-    add_files("tests/CommandListStateTests.cpp", "src/rendering/CommandListState.cpp",
+    add_files("tests/CommandListStateTests.cpp", "tests/TargetDescriptorTests.cpp",
+        "src/rendering/CommandListState.cpp", "src/rendering/GpuResourceRetirement.cpp",
         "src/rendering/RenderHooks.cpp")
     add_includedirs("src")
     add_syslinks("d3d12", "dxgi", "d3dcompiler")
