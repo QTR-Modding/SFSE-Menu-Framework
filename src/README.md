@@ -24,8 +24,11 @@ Keep related state with the code that creates and releases it:
 - `D3D12Renderer.cpp` manages the ImGui context and frame resources together.
   Fonts, theme images and their descriptors stay alive until the GPU finishes
   using them. `D3D12Texture.cpp` handles their shared upload path.
-- `RenderHooks.cpp` installs the Scaleform hooks.
-  `D3D12CommandListHooks.cpp` handles command-list hooks and device checks.
+- `StreamlineUIPrototype.cpp` draws into the game's UI texture for frame generation.
+  `PresentOverlay.cpp` handles frames without that UI pass. `OverlayCompositor.cpp`
+  shares their drawing code; each path owns its submission and resource lifetimes.
+- `CommandListState.cpp` captures and restores game drawing state.
+  `VtableHooks.cpp` keeps hook validation, installation and rollback together.
 - `Win32Platform.cpp` owns the window subclass and shared input state.
   Keyboard, pointer and ImGui-backend work live in the neighboring files.
 - `InputCapture.cpp` and `BindingCapture.cpp` keep keyboard event matching

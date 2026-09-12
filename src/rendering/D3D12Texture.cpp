@@ -42,6 +42,18 @@ namespace SFSEMenuFramework::D3D12Textures
 		return result;
 	}
 
+	D3D12_CPU_DESCRIPTOR_HANDLE RenderTargetView(ID3D12Device* device,
+		ID3D12DescriptorHeap* heap, ID3D12Resource* target, DXGI_FORMAT format) noexcept
+	{
+		// RTV contents are consumed during recording, unlike shader-visible descriptors.
+		const auto handle = heap->GetCPUDescriptorHandleForHeapStart();
+		D3D12_RENDER_TARGET_VIEW_DESC rtv{};
+		rtv.Format = format;
+		rtv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+		device->CreateRenderTargetView(target, &rtv, handle);
+		return handle;
+	}
+
 	[[nodiscard]] bool CreateDescriptorHeap(
 		ID3D12Device*                  a_device,
 		D3D12_DESCRIPTOR_HEAP_TYPE     a_type,

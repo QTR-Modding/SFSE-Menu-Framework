@@ -1,5 +1,5 @@
 #include "rendering/CommandListState.h"
-#include "rendering/RenderHooksInternal.h"
+#include "rendering/VtableHooks.h"
 
 #include <algorithm>
 #include <atomic>
@@ -13,11 +13,11 @@ namespace SFSEMenuFramework::CommandListState
 	namespace
 	{
 		using List = ID3D12GraphicsCommandList;
-		using namespace RenderHooks::Detail;
+		using namespace VtableHooks;
 		struct Registry
 		{
 			std::mutex Mutex;
-			std::unordered_map<List*, std::unique_ptr<Snapshot>> Lists;
+			std::unordered_map<List*, Snapshot> Lists;
 			void** Vtable{};
 			bool Installed{};
 			std::uint64_t NextEpoch{};
@@ -139,7 +139,6 @@ namespace SFSEMenuFramework::CommandListState
 				return;
 			}
 			s.RenderTargetCount = n;
-			s.ContiguousTargets = FALSE;
 			if (n) {
 				const auto stride = s.Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 				auto destination = s.OwnedTargets->RTV->GetCPUDescriptorHandleForHeapStart();
@@ -180,7 +179,7 @@ namespace SFSEMenuFramework::CommandListState
 					auto& registry = States();
 					std::scoped_lock lock{ registry.Mutex };
 					const auto found = registry.Lists.find(list);
-					if (found != registry.Lists.end()) { Observe(*found->second, args...); }
+					if (found != registry.Lists.end()) { Observe(found->second, args...); }
 				};
 				if constexpr (Slot == 46) { observe(); }
 				Original.load(std::memory_order_acquire)(list, args...);
@@ -205,18 +204,15 @@ namespace SFSEMenuFramework::CommandListState
 			if (injecting) { return; }
 			auto& registry = States();
 			std::scoped_lock lock{ registry.Mutex };
-			auto it = registry.Lists.find(list);
-			if (it == registry.Lists.end()) {
-				it = registry.Lists.emplace(list, std::make_unique<Snapshot>()).first;
-			}
-			*it->second = {};
+			auto& state = registry.Lists[list];
+			state = {};
 			// Unique across Close/Reset and pointer reuse, including cleared recordings.
-			it->second->Epoch = ++registry.NextEpoch;
-			it->second->Complete = true;
-			it->second->Pipeline = pipeline;
-			if (FAILED(list->GetDevice(IID_PPV_ARGS(&it->second->Device)))) {
-				it->second->Complete = false;
-				it->second->InvalidReason = "command-list device unavailable";
+			state.Epoch = ++registry.NextEpoch;
+			state.Complete = true;
+			state.Pipeline = pipeline;
+			if (FAILED(list->GetDevice(IID_PPV_ARGS(&state.Device)))) {
+				state.Complete = false;
+				state.InvalidReason = "command-list device unavailable";
 			}
 		}
 		HRESULT STDMETHODCALLTYPE Close(List* list)
@@ -245,7 +241,13 @@ namespace SFSEMenuFramework::CommandListState
 
 	bool Snapshot::Ready() const noexcept
 	{
-		return Complete && Pipeline && GraphicsRoot && HeapCount && ViewportCount && ScissorCount;
+		if (!Complete || !Pipeline || !GraphicsRoot || !HeapCount || !ViewportCount || !ScissorCount) {
+			return false;
+		}
+		for (UINT i = 0; i < HeapCount; ++i) {
+			if (!Heaps[i]) { return false; }
+		}
+		return true;
 	}
 
 	void Snapshot::Restore(List* list) const
@@ -279,7 +281,7 @@ namespace SFSEMenuFramework::CommandListState
 		list->IASetPrimitiveTopology(Topology);
 		list->IASetVertexBuffers(0, 1, &VertexBuffer);
 		list->IASetIndexBuffer(HasIndexBuffer ? &IndexBuffer : nullptr);
-		list->OMSetRenderTargets(RenderTargetCount, RenderTargets.data(), ContiguousTargets,
+		list->OMSetRenderTargets(RenderTargetCount, RenderTargets.data(), FALSE,
 			HasDepthTarget ? &DepthTarget : nullptr);
 	}
 
@@ -344,7 +346,7 @@ namespace SFSEMenuFramework::CommandListState
 			}
 			return false;
 		}
-		const auto& state = *found->second;
+		const auto& state = found->second;
 		if (!state.Ready()) {
 			if (reason) {
 				*reason = !state.Complete ? state.InvalidReason :
@@ -353,7 +355,7 @@ namespace SFSEMenuFramework::CommandListState
 			}
 			return false;
 		}
-		snapshot = *found->second;
+		snapshot = state;
 		return true;
 	}
 

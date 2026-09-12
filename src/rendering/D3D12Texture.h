@@ -22,6 +22,8 @@ namespace SFSEMenuFramework::D3D12Textures
 
 	[[nodiscard]] D3D12_HEAP_PROPERTIES HeapProperties(D3D12_HEAP_TYPE) noexcept;
 	[[nodiscard]] D3D12_RESOURCE_DESC BufferDescription(std::uint64_t) noexcept;
+	[[nodiscard]] D3D12_CPU_DESCRIPTOR_HANDLE RenderTargetView(ID3D12Device*,
+		ID3D12DescriptorHeap*, ID3D12Resource*, DXGI_FORMAT) noexcept;
 	[[nodiscard]] bool CreateDescriptorHeap(ID3D12Device*, D3D12_DESCRIPTOR_HEAP_TYPE,
 		D3D12_DESCRIPTOR_HEAP_FLAGS, Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>&,
 		UINT a_count = 1) noexcept;

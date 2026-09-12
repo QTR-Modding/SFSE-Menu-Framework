@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <span>
 
-namespace SFSEMenuFramework::RenderHooks::Detail
+namespace SFSEMenuFramework::VtableHooks
 {
 	template <class Function>
 	[[nodiscard]] std::uintptr_t FunctionAddress(Function a_function)
@@ -37,8 +37,4 @@ namespace SFSEMenuFramework::RenderHooks::Detail
 	[[nodiscard]] bool CommitHooks(std::span<VtableHook> a_hooks);
 	[[nodiscard]] bool RollBackHooks(std::span<VtableHook> a_hooks);
 
-	void ResetRegion() noexcept;
-	[[nodiscard]] bool EnsureCommandListHooks() noexcept;
-	void ActivateRegionAfterScaleformEnd() noexcept;
-	void FinalizeRegionBeforeComposite() noexcept;
 }

@@ -51,7 +51,6 @@ namespace SFSEMenuFramework::CommandListState
 		bool HasIndexBuffer{};
 		std::array<D3D12_CPU_DESCRIPTOR_HANDLE, 8> RenderTargets{};
 		UINT RenderTargetCount{};
-		BOOL ContiguousTargets{};
 		D3D12_CPU_DESCRIPTOR_HANDLE DepthTarget{};
 		bool HasDepthTarget{};
 

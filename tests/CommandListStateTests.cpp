@@ -6,15 +6,6 @@
 #include <cstring>
 #include <vector>
 
-// RenderHooks.cpp also contains the unused game-pass installer.
-namespace SFSEMenuFramework::RenderHooks::Detail
-{
-	void ResetRegion() noexcept {}
-	bool EnsureCommandListHooks() noexcept { return false; }
-	void ActivateRegionAfterScaleformEnd() noexcept {}
-	void FinalizeRegionBeforeComposite() noexcept {}
-}
-
 namespace
 {
 	using Microsoft::WRL::ComPtr;
@@ -107,6 +98,11 @@ int main()
 	list->IASetIndexBuffer(nullptr);
 	list->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
 	Check(Capture(list.Get(), before), "capture complete state");
+	{
+		auto invalid = before;
+		invalid.Heaps[0].Reset();
+		Check(!invalid.Ready(), "reject a null entry in a nonempty heap snapshot");
+	}
 	Check(before.Graphics[0].Constants[3] == 99 && before.Graphics[0].Constants[4] == 43,
 		"track partial constant updates");
 	Check(before.Graphics[1].Value == table.ptr && before.ComputeTableSet[1], "track both root tables");

@@ -1,4 +1,5 @@
 #include "rendering/GpuResourceRetirement.h"
+#include "rendering/D3D12Texture.h"
 
 namespace SFSEMenuFramework
 {
@@ -20,11 +21,11 @@ namespace SFSEMenuFramework
 	{
 		std::size_t pending{};
 		for (auto& use : uses) {
-			if (!use->Pending) { continue; }
+			if (!use.Pending) { continue; }
 			UINT value{};
-			if (Read(use->Marker.Get(), value) && value == use->Value) {
-				use->Resources = {};
-				use->Pending = false;
+			if (Read(use.Marker.Get(), value) && value == use.Value) {
+				use.Resources = {};
+				use.Pending = false;
 			} else {
 				++pending;
 			}
@@ -38,24 +39,14 @@ namespace SFSEMenuFramework
 		Collect();
 		Use* available{};
 		for (auto& use : uses) {
-			if (!use->Pending) { available = use.get(); break; }
+			if (!use.Pending) { available = &use; break; }
 		}
-		if (!available) {
-			// Backpressure for stalled/unsubmitted work; never discard in-flight owners.
-			if (uses.size() >= 64) { return nullptr; }
-			auto use = std::make_unique<Use>();
-			D3D12_HEAP_PROPERTIES hp{};
-			hp.Type = D3D12_HEAP_TYPE_READBACK;
-			D3D12_RESOURCE_DESC desc{};
-			desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-			desc.Width = sizeof(UINT);
-			desc.Height = desc.DepthOrArraySize = desc.MipLevels = 1;
-			desc.SampleDesc.Count = 1;
-			desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		if (!available) { return nullptr; }
+		if (!available->Marker) {
+			const auto hp = D3D12Textures::HeapProperties(D3D12_HEAP_TYPE_READBACK);
+			const auto desc = D3D12Textures::BufferDescription(sizeof(UINT));
 			if (FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &desc,
-				D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&use->Marker)))) { return nullptr; }
-			available = use.get();
-			uses.push_back(std::move(use));
+				D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&available->Marker)))) { return nullptr; }
 		}
 		UINT previous{};
 		if (!Read(available->Marker.Get(), previous)) { return nullptr; }

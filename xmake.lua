@@ -226,7 +226,8 @@ target("command-list-state-tests", function()
     add_deps("commonlibsf")
     add_files("tests/CommandListStateTests.cpp", "tests/TargetDescriptorTests.cpp",
         "src/rendering/CommandListState.cpp", "src/rendering/GpuResourceRetirement.cpp",
-        "src/rendering/RenderHooks.cpp")
+        "src/rendering/VtableHooks.cpp", "src/rendering/OverlayCompositor.cpp",
+        "src/rendering/D3D12Texture.cpp")
     add_includedirs("src")
     add_syslinks("d3d12", "dxgi", "d3dcompiler")
     add_tests("default")

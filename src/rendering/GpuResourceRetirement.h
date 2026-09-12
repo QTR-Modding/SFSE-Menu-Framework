@@ -2,8 +2,6 @@
 
 #include <d3d12.h>
 #include <array>
-#include <memory>
-#include <vector>
 #include <wrl/client.h>
 
 namespace SFSEMenuFramework
@@ -25,6 +23,7 @@ namespace SFSEMenuFramework
 		static void End(Use& use, ID3D12GraphicsCommandList2* list);
 		std::size_t Collect();
 	private:
-		std::vector<std::unique_ptr<Use>> uses;
+		// Fixed capacity keeps Use pointers stable and applies backpressure at 64 uses.
+		std::array<Use, 64> uses;
 	};
 }

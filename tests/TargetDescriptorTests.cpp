@@ -1,5 +1,7 @@
 #include "rendering/CommandListState.h"
 #include "rendering/GpuResourceRetirement.h"
+#include "rendering/OverlayCompositor.h"
+#include "rendering/D3D12Texture.h"
 #include <d3dcompiler.h>
 #include <cstdio>
 #include <cstdlib>
@@ -57,6 +59,11 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 	const HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 	Require(event != nullptr);
 	SFSEMenuFramework::GpuResourceRetirement retirement;
+	namespace Compositor = SFSEMenuFramework::OverlayCompositor;
+	Compositor::Shaders shaders;
+	ComPtr<ID3D12PipelineState> compositePipeline;
+	Require(Compositor::CreateShaders(device, shaders));
+	Require(Compositor::CreatePipeline(device, shaders, DXGI_FORMAT_R8G8B8A8_UNORM, compositePipeline));
 	for (UINT pass = 0; pass < 2; ++pass) {
 		ComPtr<ID3D12CommandAllocator> allocator;
 		ComPtr<ID3D12GraphicsCommandList> list;
@@ -130,8 +137,33 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 		device->CreateRenderTargetView(textures[3].Get(), nullptr, handles[1]);
 		device->CreateDepthStencilView(textures[5].Get(), nullptr, handles[4]);
 		list->OMSetRenderTargets(2, handles.data(), FALSE, &handles[4]);
+		ComPtr<ID3D12DescriptorHeap> overlaySrv, overlayRtv;
+		hd = { D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0 };
+		Hr(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&overlaySrv)));
+		hd = { D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0 };
+		Hr(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&overlayRtv)));
+		ComPtr<ID3D12Resource> overlay;
+		Require(Compositor::CreateTexture(device, 4, 4, overlaySrv.Get(), overlay));
 		{
 			InjectionScope injecting;
+			D3D12_RESOURCE_BARRIER barrier{};
+			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barrier.Transition = { overlay.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET };
+			list->ResourceBarrier(1, &barrier);
+			constexpr float halfBlue[]{ 0, 0, 0.5f, 0.5f };
+			list->ClearRenderTargetView(SFSEMenuFramework::D3D12Textures::RenderTargetView(
+				device, overlayRtv.Get(), overlay.Get(),
+				DXGI_FORMAT_R8G8B8A8_UNORM), halfBlue, 0, nullptr);
+			std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
+			list->ResourceBarrier(1, &barrier);
+			const auto compositeRtv = SFSEMenuFramework::D3D12Textures::RenderTargetView(
+				device, overlayRtv.Get(), textures[3].Get(),
+				DXGI_FORMAT_R8G8B8A8_UNORM);
+			Compositor::Draw(list.Get(), shaders, compositePipeline.Get(), overlaySrv.Get(), compositeRtv, 4, 4);
+			// Reuse the compositor's CPU descriptor before submission; the recorded draw must not change.
+			static_cast<void>(SFSEMenuFramework::D3D12Textures::RenderTargetView(
+				device, overlayRtv.Get(), textures[2].Get(), DXGI_FORMAT_R8G8B8A8_UNORM));
 			saved.Restore(list.Get());
 			list->DrawInstanced(3, 1, 0, 0);
 		}
@@ -184,6 +216,8 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 						float depth{};
 						std::memcpy(&depth, pixel, sizeof(depth));
 						Require(depth == (i == 4 ? 0.25f : 1.0f));
+					} else if (i == 3) {
+						Require(pixel[0] == 127 && pixel[1] == 0 && pixel[2] == 128 && pixel[3] == 255);
 					} else {
 						Require(pixel[0] == (i >= 2 ? 255 : 0) &&
 							pixel[1] == (i == 0 ? 255 : 0) &&
@@ -196,6 +230,7 @@ void TestTargetDescriptors(ID3D12Device* device, ID3D12RootSignature* root, ID3D
 		}
 	}
 	CloseHandle(event);
+	std::puts("PASS: shared overlay compositor draws premultiplied alpha and restores game drawing state");
 	std::puts("PASS: submitted GPU draw restores overwritten RTV/DSV descriptors (contiguous and individual)");
 	std::puts("PASS: resources retained before submission, released after GPU completion, and slots reused");
 }

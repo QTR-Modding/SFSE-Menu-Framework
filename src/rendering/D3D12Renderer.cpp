@@ -32,8 +32,7 @@
 
 namespace SFSEMenuFramework::D3D12Renderer
 {
-	bool HasSameDeviceIdentity(
-		ID3D12Device* a_left, ID3D12Device* a_right) noexcept
+	bool HasSameIdentity(IUnknown* a_left, IUnknown* a_right) noexcept
 	{
 		if (!a_left || !a_right) {
 			return false;
@@ -459,20 +458,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 			}
 		}
 
-		[[nodiscard]] bool HasValidHeapSnapshot(const DescriptorHeapSnapshot& a_snapshot)
-		{
-			if (a_snapshot.Count == 0 || a_snapshot.Count > a_snapshot.Heaps.size()) {
-				return false;
-			}
-
-			for (UINT index = 0; index < a_snapshot.Count; ++index) {
-				if (!a_snapshot.Heaps[index]) {
-					return false;
-				}
-			}
-
-			return true;
-		}
 	}
 
 	bool Initialize(ID3D12Device* a_device)
@@ -514,16 +499,10 @@ namespace SFSEMenuFramework::D3D12Renderer
 		       (::GetTickCount64() - lastTick) <= maximumBlockingWindowFrameAgeMilliseconds;
 	}
 
-	bool Render(
-		ID3D12GraphicsCommandList*    a_commandList,
-		ID3D12Resource*               a_renderTarget,
-		const DescriptorHeapSnapshot& a_engineHeaps,
-		SetDescriptorHeapsFunction    a_setDescriptorHeaps,
-		bool                         a_clearTarget)
+	bool Render(ID3D12GraphicsCommandList* a_commandList, ID3D12Resource* a_renderTarget)
 	{
-		if (!a_commandList || !a_renderTarget || !a_setDescriptorHeaps ||
-			a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
-			!HasValidHeapSnapshot(a_engineHeaps)) {
+		if (!a_commandList || !a_renderTarget ||
+			a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) {
 			return false;
 		}
 
@@ -541,7 +520,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 
 		auto& rendererState = GetRendererState();
 		if (!rendererState.Context ||
-			!HasSameDeviceIdentity(rendererState.Device.Get(), commandListDevice.Get())) {
+			!HasSameIdentity(rendererState.Device.Get(), commandListDevice.Get())) {
 			return false;
 		}
 
@@ -632,18 +611,9 @@ namespace SFSEMenuFramework::D3D12Renderer
 		// The Win32 backend still needs this flag to hide the OS pointer.
 		io.MouseDrawCursor = drawMouseCursor;
 
-		D3D12_RENDER_TARGET_VIEW_DESC renderTargetView{};
-		renderTargetView.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		renderTargetView.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-		renderTargetView.Texture2D.MipSlice = 0;
-		renderTargetView.Texture2D.PlaneSlice = 0;
-
-		const auto renderTargetHandle =
-			rendererState.RenderTargetHeap->GetCPUDescriptorHandleForHeapStart();
-		rendererState.Device->CreateRenderTargetView(
-			a_renderTarget,
-			&renderTargetView,
-			renderTargetHandle);
+		const auto renderTargetHandle = D3D12Textures::RenderTargetView(
+			rendererState.Device.Get(), rendererState.RenderTargetHeap.Get(),
+			a_renderTarget, DXGI_FORMAT_R8G8B8A8_UNORM);
 
 		auto* textureHeap = hasThemeImages ?
 			rendererState.CompletionSlots[frameSlot].TextureHeap.Get() :
@@ -657,18 +627,13 @@ namespace SFSEMenuFramework::D3D12Renderer
 			RemapFontDescriptor(ImGui::GetDrawData(), io.Fonts->TexID, fontDescriptor);
 		}
 		ID3D12DescriptorHeap* frameworkHeaps[]{ textureHeap };
-		a_setDescriptorHeaps(a_commandList, 1, frameworkHeaps);
+		a_commandList->SetDescriptorHeaps(1, frameworkHeaps);
 		const bool recorded = ImGui_ImplDX12_RenderDrawDataChecked(
-			ImGui::GetDrawData(), a_commandList, renderTargetHandle, a_clearTarget);
+			ImGui::GetDrawData(), a_commandList, renderTargetHandle, true);
 		if (hasThemeImages) {
 			RemapFontDescriptor(ImGui::GetDrawData(), fontDescriptor, io.Fonts->TexID);
 		}
 		MarkFrameSlot(rendererState, commandList2.Get(), frameSlot);
-
-		a_setDescriptorHeaps(
-			a_commandList,
-			a_engineHeaps.Count,
-			a_engineHeaps.Heaps.data());
 
 		if (recorded && renderedGeneration != 0) {
 			renderedBlockingWindowGeneration.store(
