@@ -72,7 +72,6 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			ComPtr<ID3D12CommandQueue> Queue;
 			ComPtr<ID3D12GraphicsCommandList> List;
 			ComPtr<ID3D12Fence> Fence;
-			HANDLE FenceEvent{};
 			std::vector<Frame> Frames;
 			std::uint64_t NextFence{ 1 };
 
@@ -89,12 +88,15 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			ComPtr<ID3D12PipelineState> Pipeline;
 			DXGI_FORMAT PipelineFormat{ DXGI_FORMAT_UNKNOWN };
 			bool Initialized{};
+			bool SubmissionFailed{};
 		};
 
 		std::atomic<HookState> hookState{ HookState::Uninitialized };
 		std::atomic<PresentFn> originalPresent{};
 		std::atomic<Present1Fn> originalPresent1{};
 		std::atomic_flag deviceChangeLogged{};
+		std::atomic_flag queueChangeLogged{};
+		std::atomic_flag signalFailureLogged{};
 		thread_local std::uint32_t presentDepth{};
 
 		[[nodiscard]] State& GetState()
@@ -120,6 +122,19 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			return platform.SubclassActive.load(std::memory_order_acquire) &&
 			       !platform.HostWindowTearingDown.load(std::memory_order_acquire) &&
 			       platform.InitializedHostWindow.load(std::memory_order_acquire) == window;
+		}
+
+		[[nodiscard]] bool HasSameIdentity(IUnknown* a_left, IUnknown* a_right) noexcept
+		{
+			if (!a_left || !a_right) {
+				return false;
+			}
+
+			ComPtr<IUnknown> left;
+			ComPtr<IUnknown> right;
+			return SUCCEEDED(a_left->QueryInterface(IID_PPV_ARGS(left.GetAddressOf()))) &&
+			       SUCCEEDED(a_right->QueryInterface(IID_PPV_ARGS(right.GetAddressOf()))) &&
+			       left.Get() == right.Get();
 		}
 
 		template <class T>
@@ -255,27 +270,19 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			a_state.RtvStride =
 				a_state.Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-			if (FAILED(a_state.Device->CreateFence(
-					0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(a_state.Fence.GetAddressOf())))) {
-				return false;
-			}
-			a_state.FenceEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
-			return a_state.FenceEvent != nullptr;
+			return SUCCEEDED(a_state.Device->CreateFence(
+				0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(a_state.Fence.GetAddressOf())));
 		}
 
-		[[nodiscard]] bool Wait(State& a_state, std::uint64_t a_value)
+		[[nodiscard]] bool IsComplete(State& a_state, std::uint64_t a_value) noexcept
 		{
-			if (!a_value || a_state.Fence->GetCompletedValue() >= a_value) {
-				return true;
-			}
-			return SUCCEEDED(a_state.Fence->SetEventOnCompletion(a_value, a_state.FenceEvent)) &&
-			       ::WaitForSingleObject(a_state.FenceEvent, 2000) == WAIT_OBJECT_0;
+			return !a_value || a_state.Fence->GetCompletedValue() >= a_value;
 		}
 
-		[[nodiscard]] bool WaitAll(State& a_state)
+		[[nodiscard]] bool AreAllComplete(State& a_state) noexcept
 		{
 			for (const auto& frame : a_state.Frames) {
-				if (!Wait(a_state, frame.FenceValue)) {
+				if (!IsComplete(a_state, frame.FenceValue)) {
 					return false;
 				}
 			}
@@ -314,7 +321,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			if (a_state.Overlay && a_state.Width == a_width && a_state.Height == a_height) {
 				return true;
 			}
-			if (!WaitAll(a_state)) {
+			if (!AreAllComplete(a_state)) {
 				return false;
 			}
 			a_state.Overlay.Reset();
@@ -362,7 +369,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			if (a_state.Pipeline && a_state.PipelineFormat == a_format) {
 				return true;
 			}
-			if (!WaitAll(a_state)) {
+			if (!AreAllComplete(a_state)) {
 				return false;
 			}
 			a_state.Pipeline.Reset();
@@ -397,6 +404,18 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 
 		[[nodiscard]] bool Initialize(State& a_state, ID3D12Device* a_device, UINT a_bufferCount)
 		{
+			if (a_state.SubmissionFailed) {
+				return false;
+			}
+
+			auto* renderer = RE::CreationRendererPrivate::Renderer::GetSingleton();
+			ComPtr<ID3D12CommandQueue> queue;
+			if (!renderer || !renderer->GetGraphicsQueue() ||
+				!GetNative(
+					reinterpret_cast<ID3D12CommandQueue*>(renderer->GetGraphicsQueue()), queue)) {
+				return false;
+			}
+
 			if (a_state.Initialized) {
 				if (!D3D12Renderer::HasSameDeviceIdentity(a_state.Device.Get(), a_device)) {
 					if (!deviceChangeLogged.test_and_set(std::memory_order_relaxed)) {
@@ -405,17 +424,18 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 					}
 					return false;
 				}
+				if (!HasSameIdentity(a_state.Queue.Get(), queue.Get())) {
+					if (!queueChangeLogged.test_and_set(std::memory_order_relaxed)) {
+						logger::critical(
+							"DXGI Present overlay graphics queue changed; rendering is disabled for the replacement queue");
+					}
+					return false;
+				}
 				return EnsureFrames(a_state, a_bufferCount);
 			}
 
 			a_state.Device = a_device;
-			auto* renderer = RE::CreationRendererPrivate::Renderer::GetSingleton();
-			if (!renderer || !renderer->GetGraphicsQueue() ||
-				!GetNative(
-					reinterpret_cast<ID3D12CommandQueue*>(renderer->GetGraphicsQueue()),
-					a_state.Queue)) {
-				return false;
-			}
+			a_state.Queue = std::move(queue);
 
 			ComPtr<ID3D12Device> queueDevice;
 			if (FAILED(a_state.Queue->GetDevice(IID_PPV_ARGS(queueDevice.GetAddressOf()))) ||
@@ -477,7 +497,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			}
 
 			auto& frame = state.Frames[index];
-			if (!Wait(state, frame.FenceValue) || FAILED(frame.Allocator->Reset()) ||
+			if (!IsComplete(state, frame.FenceValue) || FAILED(frame.Allocator->Reset()) ||
 				FAILED(state.List->Reset(frame.Allocator.Get(), nullptr))) {
 				return;
 			}
@@ -546,9 +566,15 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			ID3D12CommandList* lists[]{ state.List.Get() };
 			state.Queue->ExecuteCommandLists(1, lists);
 			const auto fenceValue = state.NextFence++;
-			if (SUCCEEDED(state.Queue->Signal(state.Fence.Get(), fenceValue))) {
-				frame.FenceValue = fenceValue;
+			if (FAILED(state.Queue->Signal(state.Fence.Get(), fenceValue))) {
+				state.SubmissionFailed = true;
+				if (!signalFailureLogged.test_and_set(std::memory_order_relaxed)) {
+					logger::critical(
+						"DXGI Present overlay fence signal failed; rendering is disabled");
+				}
+				return;
 			}
+			frame.FenceValue = fenceValue;
 		}
 
 		HRESULT STDMETHODCALLTYPE PresentThunk(IDXGISwapChain* a_swapChain, UINT a_sync, UINT a_flags) noexcept
