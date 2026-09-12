@@ -3,6 +3,7 @@
 #include "platform/win32/Win32PlatformInternal.h"
 #include "rendering/D3D12Renderer.h"
 #include "rendering/StreamlineUIPrototype.h"
+#include "rendering/CommandListState.h"
 
 #include <RE/C/CreationRenderer.h>
 
@@ -454,11 +455,13 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 
 		void Draw(IDXGISwapChain* a_swapChain) noexcept
 		{
+			std::scoped_lock routingLock{ CommandListState::RoutingMutex() };
 			if (StreamlineUIPrototype::HasRecentUIRender()) {
 				return;
 			}
 
 			std::scoped_lock lock{ GetMutex() };
+			CommandListState::InjectionScope injection;
 
 			ComPtr<IDXGISwapChain3> swapChain;
 			if (!a_swapChain ||

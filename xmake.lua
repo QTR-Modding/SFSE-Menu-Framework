@@ -202,6 +202,18 @@ target("menu-path-tests", function()
     add_tests("default")
 end)
 
+target("command-list-state-tests", function()
+    set_kind("binary")
+    set_default(false)
+    set_pcxxheader("src/PCH.h")
+    add_deps("commonlibsf")
+    add_files("tests/CommandListStateTests.cpp", "src/rendering/CommandListState.cpp",
+        "src/rendering/RenderHooks.cpp")
+    add_includedirs("src")
+    add_syslinks("d3d12", "dxgi", "d3dcompiler")
+    add_tests("default")
+end)
+
 target("theme-cursor-tests", function()
     set_kind("binary")
     set_pcxxheader("src/PCH.h")

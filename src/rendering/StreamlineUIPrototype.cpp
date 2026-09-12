@@ -1,6 +1,7 @@
 #include "rendering/StreamlineUIPrototype.h"
 
 #include "rendering/D3D12Renderer.h"
+#include "rendering/CommandListState.h"
 
 #include <Windows.h>
 #include <d3d12.h>
@@ -84,20 +85,11 @@ namespace SFSEMenuFramework::StreamlineUIPrototype
 
 		using Result = std::int32_t;
 		using SetTagFn = Result (*)(const void*, const ResourceTag*, std::uint32_t, void*);
-		using ResetFn = HRESULT(STDMETHODCALLTYPE*)(
-			ID3D12GraphicsCommandList*, ID3D12CommandAllocator*, ID3D12PipelineState*);
-		using ClearStateFn = void(STDMETHODCALLTYPE*)(
-			ID3D12GraphicsCommandList*, ID3D12PipelineState*);
-		using SetDescriptorHeapsFn = void(STDMETHODCALLTYPE*)(
-			ID3D12GraphicsCommandList*, UINT, ID3D12DescriptorHeap* const*);
 		using SerializeRootFn = HRESULT(WINAPI*)(
 			const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION, ID3DBlob**, ID3DBlob**);
 
 		constexpr std::uint32_t uiColorAndAlpha = 23;
 		constexpr std::size_t descriptorCount = 64;
-		constexpr std::size_t resetSlot = 10;
-		constexpr std::size_t clearStateSlot = 11;
-		constexpr std::size_t setDescriptorHeapsSlot = 28;
 		constexpr std::uint64_t uiRouteFreshMilliseconds = 250;
 		constexpr StructType resourceTagType{
 			0x4C6A5AAD, 0xB445, 0x496C,
@@ -136,6 +128,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			ComPtr<ID3D12PipelineState> Pipeline;
 			ComPtr<ID3D12Resource> Overlay;
 			std::vector<ComPtr<ID3D12Resource>> RetiredOverlays;
+			std::vector<ComPtr<ID3D12DescriptorHeap>> RetiredSrvHeaps;
 			std::vector<ComPtr<ID3D12PipelineState>> RetiredPipelines;
 			UINT RtvStride{};
 			std::uint64_t Width{};
@@ -146,18 +139,8 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			bool Failed{};
 		};
 
-		struct HeapState final
-		{
-			ID3D12GraphicsCommandList* CommandList{};
-			std::array<ComPtr<ID3D12DescriptorHeap>, 2> Heaps;
-			UINT Count{};
-			std::uint64_t Epoch{ 1 };
-		};
 
 		std::atomic<SetTagFn> originalSetTag{};
-		std::atomic<ResetFn> originalReset{};
-		std::atomic<ClearStateFn> originalClearState{};
-		std::atomic<SetDescriptorHeapsFn> originalSetDescriptorHeaps{};
 		std::atomic_flag installed{};
 		std::atomic_flag rejectionLogged{};
 		std::atomic_flag heapWaitLogged{};
@@ -165,10 +148,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 		std::atomic_flag routeLogged{};
 		std::atomic<bool> uiPathActive{ false };
 		std::atomic<std::uint64_t> lastUiRenderTick{};
-		void** hookedCommandListVtable{};
 
-		thread_local HeapState heapState;
-		thread_local std::uint64_t commandEpoch{ 1 };
 		thread_local ID3D12GraphicsCommandList* lastRenderedCommandList{};
 		thread_local std::uint64_t lastRenderedEpoch{};
 
@@ -184,11 +164,6 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			return *mutex;
 		}
 
-		[[nodiscard]] std::mutex& GetHookMutex()
-		{
-			static auto* mutex = new std::mutex();
-			return *mutex;
-		}
 
 		void LogRejection(const char* a_reason) noexcept
 		{
@@ -258,153 +233,6 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			return true;
 		}
 
-		[[nodiscard]] bool WriteSlot(void** a_vtable, std::size_t a_slot, void* a_value) noexcept
-		{
-			DWORD oldProtect{};
-			if (!a_vtable || !::VirtualProtect(
-					&a_vtable[a_slot], sizeof(void*), PAGE_READWRITE, &oldProtect)) {
-				return false;
-			}
-			a_vtable[a_slot] = a_value;
-			DWORD ignored{};
-			static_cast<void>(::VirtualProtect(
-				&a_vtable[a_slot], sizeof(void*), oldProtect, &ignored));
-			return a_vtable[a_slot] == a_value;
-		}
-
-		HRESULT STDMETHODCALLTYPE ResetThunk(
-			ID3D12GraphicsCommandList* a_commandList,
-			ID3D12CommandAllocator* a_allocator,
-			ID3D12PipelineState* a_initialState) noexcept
-		{
-			const auto original = originalReset.load(std::memory_order_acquire);
-			if (!original) {
-				return E_FAIL;
-			}
-			const auto result = original(a_commandList, a_allocator, a_initialState);
-			if (SUCCEEDED(result)) {
-				++commandEpoch;
-				heapState = {};
-				heapState.CommandList = a_commandList;
-				heapState.Epoch = commandEpoch;
-			}
-			return result;
-		}
-
-		void STDMETHODCALLTYPE ClearStateThunk(
-			ID3D12GraphicsCommandList* a_commandList,
-			ID3D12PipelineState* a_pipelineState) noexcept
-		{
-			const auto original = originalClearState.load(std::memory_order_acquire);
-			if (!original) {
-				return;
-			}
-			original(a_commandList, a_pipelineState);
-			if (heapState.CommandList == a_commandList) {
-				heapState.Count = 0;
-				heapState.Heaps = {};
-			}
-		}
-
-		void STDMETHODCALLTYPE SetDescriptorHeapsThunk(
-			ID3D12GraphicsCommandList* a_commandList,
-			UINT a_count,
-			ID3D12DescriptorHeap* const* a_heaps) noexcept
-		{
-			const auto original = originalSetDescriptorHeaps.load(std::memory_order_acquire);
-			if (!original) {
-				return;
-			}
-			original(a_commandList, a_count, a_heaps);
-
-			if (!a_commandList || a_commandList->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT ||
-				!a_heaps || a_count == 0 || a_count > heapState.Heaps.size()) {
-				if (heapState.CommandList == a_commandList) {
-					heapState.Count = 0;
-					heapState.Heaps = {};
-				}
-				return;
-			}
-
-			heapState.CommandList = a_commandList;
-			heapState.Count = a_count;
-			heapState.Epoch = commandEpoch;
-			for (UINT index = 0; index < a_count; ++index) {
-				heapState.Heaps[index] = a_heaps[index];
-			}
-		}
-
-		[[nodiscard]] bool EnsureCommandListHooks(ID3D12GraphicsCommandList* a_commandList) noexcept
-		{
-			if (!a_commandList) {
-				return false;
-			}
-
-			std::scoped_lock lock{ GetHookMutex() };
-			auto** vtable = *reinterpret_cast<void***>(a_commandList);
-			if (!vtable) {
-				return false;
-			}
-			if (hookedCommandListVtable) {
-				return hookedCommandListVtable == vtable;
-			}
-
-			auto* reset = vtable[resetSlot];
-			auto* clearState = vtable[clearStateSlot];
-			auto* setDescriptorHeaps = vtable[setDescriptorHeapsSlot];
-			if (!reset || !clearState || !setDescriptorHeaps ||
-				reset == reinterpret_cast<void*>(&ResetThunk) ||
-				clearState == reinterpret_cast<void*>(&ClearStateThunk) ||
-				setDescriptorHeaps == reinterpret_cast<void*>(&SetDescriptorHeapsThunk)) {
-				return false;
-			}
-
-			originalReset.store(reinterpret_cast<ResetFn>(reset), std::memory_order_release);
-			originalClearState.store(reinterpret_cast<ClearStateFn>(clearState), std::memory_order_release);
-			originalSetDescriptorHeaps.store(
-				reinterpret_cast<SetDescriptorHeapsFn>(setDescriptorHeaps),
-				std::memory_order_release);
-
-			if (!WriteSlot(vtable, resetSlot, reinterpret_cast<void*>(&ResetThunk))) {
-				return false;
-			}
-			if (!WriteSlot(vtable, clearStateSlot, reinterpret_cast<void*>(&ClearStateThunk))) {
-				static_cast<void>(WriteSlot(vtable, resetSlot, reset));
-				return false;
-			}
-			if (!WriteSlot(
-					vtable, setDescriptorHeapsSlot,
-					reinterpret_cast<void*>(&SetDescriptorHeapsThunk))) {
-				static_cast<void>(WriteSlot(vtable, clearStateSlot, clearState));
-				static_cast<void>(WriteSlot(vtable, resetSlot, reset));
-				return false;
-			}
-
-			hookedCommandListVtable = vtable;
-			logger::info("Streamline UI overlay command-list state tracking installed");
-			return true;
-		}
-
-		[[nodiscard]] bool CopyHeapSnapshot(
-			ID3D12GraphicsCommandList* a_commandList,
-			D3D12Renderer::DescriptorHeapSnapshot& a_snapshot) noexcept
-		{
-			a_snapshot = {};
-			if (!a_commandList || heapState.CommandList != a_commandList ||
-				heapState.Count == 0 || heapState.Count > heapState.Heaps.size()) {
-				return false;
-			}
-
-			a_snapshot.Count = heapState.Count;
-			for (UINT index = 0; index < heapState.Count; ++index) {
-				if (!heapState.Heaps[index]) {
-					a_snapshot = {};
-					return false;
-				}
-				a_snapshot.Heaps[index] = heapState.Heaps[index].Get();
-			}
-			return true;
-		}
 
 		void STDMETHODCALLTYPE SetHeaps(
 			ID3D12GraphicsCommandList* a_list,
@@ -537,6 +365,17 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				return true;
 			}
 			if (a_state.Overlay) {
+				D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
+				heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+				heapDesc.NumDescriptors = 1;
+				heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+				ComPtr<ID3D12DescriptorHeap> nextHeap;
+				if (FAILED(a_state.Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&nextHeap)))) {
+					return false;
+				}
+				// Old command lists still reference the old GPU descriptor after a resize.
+				a_state.RetiredSrvHeaps.push_back(a_state.SrvHeap);
+				a_state.SrvHeap = std::move(nextHeap);
 				a_state.RetiredOverlays.push_back(a_state.Overlay);
 				a_state.Overlay.Reset();
 			}
@@ -692,6 +531,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			const ResourceTag& a_tag,
 			void* a_commandBuffer) noexcept
 		{
+			std::scoped_lock routingLock{ CommandListState::RoutingMutex() };
 			if (!a_tag.ResourceData || !a_tag.ResourceData->Native) {
 				return false;
 			}
@@ -731,19 +571,6 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				return false;
 			}
 
-			if (!EnsureCommandListHooks(proxyList.Get())) {
-				LogRejection("could not track Streamline command-list descriptor state");
-				return false;
-			}
-
-			D3D12Renderer::DescriptorHeapSnapshot heapSnapshot;
-			if (!CopyHeapSnapshot(proxyList.Get(), heapSnapshot)) {
-				if (!heapWaitLogged.test_and_set(std::memory_order_relaxed)) {
-					logger::info("Streamline UI overlay waiting for command-list descriptor state");
-				}
-				return false;
-			}
-
 			ComPtr<ID3D12GraphicsCommandList> nativeList;
 			if (!ResolveNativeCommandList(proxyList.Get(), nativeList) || !nativeList) {
 				LogRejection("could not resolve native D3D12 command list");
@@ -762,7 +589,23 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				return false;
 			}
 
-			const auto epoch = heapState.Epoch;
+			if (!CommandListState::Install(nativeList.Get())) {
+				LogRejection("could not install complete command-list state tracking");
+				return false;
+			}
+			CommandListState::Snapshot savedState;
+			if (!CommandListState::Capture(nativeList.Get(), savedState)) {
+				if (!heapWaitLogged.test_and_set(std::memory_order_relaxed)) {
+					logger::info("Streamline UI overlay waiting for complete command-list state");
+				}
+				return false;
+			}
+			D3D12Renderer::DescriptorHeapSnapshot heapSnapshot;
+			heapSnapshot.Count = savedState.HeapCount;
+			for (UINT i = 0; i < savedState.HeapCount; ++i) {
+				heapSnapshot.Heaps[i] = savedState.Heaps[i].Get();
+			}
+			const auto epoch = savedState.Epoch;
 			if (lastRenderedCommandList == proxyList.Get() && lastRenderedEpoch == epoch) {
 				return true;
 			}
@@ -773,6 +616,12 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				return false;
 			}
 
+			CommandListState::InjectionScope injection;
+			struct RestoreOnExit {
+				ID3D12GraphicsCommandList* List;
+				const CommandListState::Snapshot& Saved;
+				~RestoreOnExit() { Saved.Restore(List); }
+			} restore{ nativeList.Get(), savedState };
 			const auto overlayRtv = state.RtvHeap->GetCPUDescriptorHandleForHeapStart();
 			Transition(
 				nativeList.Get(), state.Overlay.Get(),
@@ -829,7 +678,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			lastUiRenderTick.store(::GetTickCount64(), std::memory_order_release);
 			uiPathActive.store(true, std::memory_order_release);
 			if (!routeLogged.test_and_set(std::memory_order_relaxed)) {
-				logger::info("Streamline UI overlay rendering SFSE-MF into UIColorAndAlpha");
+				logger::info("Streamline UI overlay rendering SFSE-MF into UIColorAndAlpha with state restoration");
 			}
 			return true;
 		}
