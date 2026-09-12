@@ -1,5 +1,6 @@
 #include "lifecycle/MenuLifecycle.h"
 #include "rendering/PresentOverlay.h"
+#include "rendering/StreamlineUIPrototype.h"
 
 #include <atomic>
 
@@ -48,6 +49,8 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		logger::critical("Unsupported Starfield runtime {}", runtime);
 		return false;
 	}
+
+	static_cast<void>(SFSEMenuFramework::StreamlineUIPrototype::Install());
 
 	const auto* taskInterface = SFSE::GetTaskInterface();
 	if (!taskInterface) {
