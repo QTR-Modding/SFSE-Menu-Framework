@@ -59,6 +59,7 @@ target("imgui", function()
     on_load(function(target)
         import("scripts.imgui-audio", { rootdir = project_root })(target)
         import("scripts.imgui-navigation", { rootdir = project_root })(target)
+        import("scripts.imgui-dx12", { rootdir = project_root })(target)
     end)
     set_kind("static")
     set_default(false)
@@ -73,9 +74,6 @@ target("imgui", function()
     )
     add_files("extern/imgui/imgui_draw.cpp", {
         defines = "IMGUI_ENABLE_STB_TRUETYPE"
-    })
-    add_files("extern/imgui/backends/imgui_impl_dx12.cpp", {
-        cxflags = "/wd4189"
     })
     add_headerfiles(
         "extern/imgui/imconfig.h",
@@ -209,6 +207,15 @@ target("frame-routing-tests", function()
     add_deps("commonlibsf")
     add_files("tests/FrameRoutingTests.cpp")
     add_includedirs("src")
+    add_tests("default")
+end)
+
+target("dx12-draw-tests", function()
+    set_kind("binary")
+    set_default(false)
+    add_deps("imgui")
+    add_files("tests/DX12DrawTests.cpp")
+    add_syslinks("d3d12", "dxgi")
     add_tests("default")
 end)
 

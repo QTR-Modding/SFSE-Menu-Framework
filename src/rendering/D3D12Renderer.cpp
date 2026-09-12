@@ -16,6 +16,7 @@
 #include "ui/WindowPlacement.h"
 
 #include <backends/imgui_impl_dx12.h>
+#include "DX12Draw.h"
 #include <imgui.h>
 
 #include <array>
@@ -202,6 +203,27 @@ namespace SFSEMenuFramework::D3D12Renderer
 					logger::critical("Failed to map the GPU completion-marker buffer");
 					return false;
 				}
+			}
+			return true;
+		}
+
+		[[nodiscard]] bool SharedUploadsComplete(RendererState& a_state)
+		{
+			// Recording can run ahead of Present. A texture published by that recording
+			// must finish uploading before another path can use it, even on the same queue.
+			for (std::size_t i = 0; i < frameResourceCount; ++i) {
+				auto& slot = a_state.CompletionSlots[i];
+				bool hasUploads = slot.Resources.UploadBuffer != nullptr;
+				for (const auto& image : slot.Images) {
+					hasUploads |= image.UploadBuffer != nullptr;
+				}
+				if (!hasUploads) { continue; }
+				std::uint32_t completed{};
+				if (!ReadCompletionValue(a_state, i, completed) || completed != slot.PendingValue) {
+					return false;
+				}
+				slot.Resources.UploadBuffer.Reset();
+				for (auto& image : slot.Images) { image.UploadBuffer.Reset(); }
 			}
 			return true;
 		}
@@ -529,7 +551,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 		}
 
 		std::size_t frameSlot{};
-		if (!AcquireFrameSlot(rendererState, frameSlot)) {
+		if (!SharedUploadsComplete(rendererState) || !AcquireFrameSlot(rendererState, frameSlot)) {
 			return false;
 		}
 
@@ -636,11 +658,8 @@ namespace SFSEMenuFramework::D3D12Renderer
 		}
 		ID3D12DescriptorHeap* frameworkHeaps[]{ textureHeap };
 		a_setDescriptorHeaps(a_commandList, 1, frameworkHeaps);
-		// Only replace the previous image after this frame has passed the skip gates.
-		constexpr float clear[4]{};
-		if (a_clearTarget) { a_commandList->ClearRenderTargetView(renderTargetHandle, clear, 0, nullptr); }
-		a_commandList->OMSetRenderTargets(1, &renderTargetHandle, FALSE, nullptr);
-		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), a_commandList);
+		const bool recorded = ImGui_ImplDX12_RenderDrawDataChecked(
+			ImGui::GetDrawData(), a_commandList, renderTargetHandle, a_clearTarget);
 		if (hasThemeImages) {
 			RemapFontDescriptor(ImGui::GetDrawData(), fontDescriptor, io.Fonts->TexID);
 		}
@@ -651,7 +670,7 @@ namespace SFSEMenuFramework::D3D12Renderer
 			a_engineHeaps.Count,
 			a_engineHeaps.Heaps.data());
 
-		if (renderedGeneration != 0) {
+		if (recorded && renderedGeneration != 0) {
 			renderedBlockingWindowGeneration.store(
 				renderedGeneration,
 				std::memory_order_release);
@@ -663,6 +682,6 @@ namespace SFSEMenuFramework::D3D12Renderer
 			Model::EventType::kAfterRender,
 			lifecycleSnapshot);
 
-		return true;
+		return recorded;
 	}
 }

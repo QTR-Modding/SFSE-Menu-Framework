@@ -81,6 +81,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			UINT RtvStride{};
 
 			ComPtr<ID3D12Resource> Overlay;
+			bool OverlayInitialized{};
 			std::uint64_t Width{};
 			std::uint32_t Height{};
 			ComPtr<ID3D12PipelineState> Pipeline;
@@ -320,6 +321,7 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 				return false;
 			}
 			a_state.Overlay.Reset();
+			a_state.OverlayInitialized = false;
 
 			D3D12_HEAP_PROPERTIES heap{};
 			heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -509,60 +511,63 @@ float4 main(float4 p : SV_Position, float2 uv : TEXCOORD0) : SV_Target {
 			state.List->ResourceBarrier(1, &overlay);
 
 			const auto overlayRtv = state.RtvHeap->GetCPUDescriptorHandleForHeapStart();
-			constexpr float clear[4]{};
-			state.List->ClearRenderTargetView(overlayRtv, clear, 0, nullptr);
 
 			D3D12Renderer::DescriptorHeapSnapshot restore{};
 			restore.Count = 1;
 			restore.Heaps[0] = state.SrvHeap.Get();
-			D3D12Renderer::Render(state.List.Get(), state.Overlay.Get(), restore, &SetHeaps);
+			const bool recorded = D3D12Renderer::Render(
+				state.List.Get(), state.Overlay.Get(), restore, &SetHeaps, true);
 
 			std::swap(overlay.Transition.StateBefore, overlay.Transition.StateAfter);
 			state.List->ResourceBarrier(1, &overlay);
 
-			D3D12_RESOURCE_BARRIER back{};
-			back.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			back.Transition.pResource = backBuffer.Get();
-			back.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-			back.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-			back.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-			state.List->ResourceBarrier(1, &back);
+			// A skipped draw keeps the last submitted image, if one exists.
+			if (recorded || state.OverlayInitialized) {
+				D3D12_RESOURCE_BARRIER back{};
+				back.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				back.Transition.pResource = backBuffer.Get();
+				back.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				back.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+				back.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				state.List->ResourceBarrier(1, &back);
 
-			auto finalRtv = overlayRtv;
-			finalRtv.ptr += state.RtvStride;
-			D3D12_RENDER_TARGET_VIEW_DESC rtv{};
-			rtv.Format = finalFormat;
-			rtv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-			state.Device->CreateRenderTargetView(backBuffer.Get(), &rtv, finalRtv);
+				auto finalRtv = overlayRtv;
+				finalRtv.ptr += state.RtvStride;
+				D3D12_RENDER_TARGET_VIEW_DESC rtv{};
+				rtv.Format = finalFormat;
+				rtv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+				state.Device->CreateRenderTargetView(backBuffer.Get(), &rtv, finalRtv);
 
-			ID3D12DescriptorHeap* heaps[]{ state.SrvHeap.Get() };
-			state.List->SetDescriptorHeaps(1, heaps);
-			state.List->SetGraphicsRootSignature(state.RootSignature.Get());
-			state.List->SetPipelineState(state.Pipeline.Get());
-			state.List->SetGraphicsRootDescriptorTable(
-				0, state.SrvHeap->GetGPUDescriptorHandleForHeapStart());
+				ID3D12DescriptorHeap* heaps[]{ state.SrvHeap.Get() };
+				state.List->SetDescriptorHeaps(1, heaps);
+				state.List->SetGraphicsRootSignature(state.RootSignature.Get());
+				state.List->SetPipelineState(state.Pipeline.Get());
+				state.List->SetGraphicsRootDescriptorTable(
+					0, state.SrvHeap->GetGPUDescriptorHandleForHeapStart());
 
-			const D3D12_VIEWPORT viewport{
-				0.0f, 0.0f, static_cast<float>(backDesc.Width), static_cast<float>(backDesc.Height),
-				0.0f, 1.0f
-			};
-			const D3D12_RECT scissor{
-				0, 0, static_cast<LONG>(backDesc.Width), static_cast<LONG>(backDesc.Height)
-			};
-			state.List->RSSetViewports(1, &viewport);
-			state.List->RSSetScissorRects(1, &scissor);
-			state.List->OMSetRenderTargets(1, &finalRtv, FALSE, nullptr);
-			state.List->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-			state.List->DrawInstanced(3, 1, 0, 0);
+				const D3D12_VIEWPORT viewport{
+					0.0f, 0.0f, static_cast<float>(backDesc.Width), static_cast<float>(backDesc.Height),
+					0.0f, 1.0f
+				};
+				const D3D12_RECT scissor{
+					0, 0, static_cast<LONG>(backDesc.Width), static_cast<LONG>(backDesc.Height)
+				};
+				state.List->RSSetViewports(1, &viewport);
+				state.List->RSSetScissorRects(1, &scissor);
+				state.List->OMSetRenderTargets(1, &finalRtv, FALSE, nullptr);
+				state.List->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+				state.List->DrawInstanced(3, 1, 0, 0);
 
-			std::swap(back.Transition.StateBefore, back.Transition.StateAfter);
-			state.List->ResourceBarrier(1, &back);
+				std::swap(back.Transition.StateBefore, back.Transition.StateAfter);
+				state.List->ResourceBarrier(1, &back);
+			}
 			if (FAILED(state.List->Close())) {
 				return;
 			}
 
 			ID3D12CommandList* lists[]{ state.List.Get() };
 			state.Queue->ExecuteCommandLists(1, lists);
+			state.OverlayInitialized = state.OverlayInitialized || recorded;
 			const auto fenceValue = state.NextFence++;
 			if (FAILED(state.Queue->Signal(state.Fence.Get(), fenceValue))) {
 				state.SubmissionFailed = true;
