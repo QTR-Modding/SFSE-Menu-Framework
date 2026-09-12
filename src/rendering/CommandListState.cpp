@@ -20,6 +20,7 @@ namespace SFSEMenuFramework::CommandListState
 			std::unordered_map<List*, std::unique_ptr<Snapshot>> Lists;
 			void** Vtable{};
 			bool Installed{};
+			std::size_t CapacityRejectedResets{};
 		};
 
 		Registry& States()
@@ -169,7 +170,12 @@ namespace SFSEMenuFramework::CommandListState
 			auto it = registry.Lists.find(list);
 			if (it == registry.Lists.end()) {
 				// Bound retained state. Unknown lists fall back rather than evicting live state.
-				if (registry.Lists.size() >= 128) { return; }
+				if (registry.Lists.size() >= 128) {
+					if (++registry.CapacityRejectedResets == 1) {
+						logger::warn("Command-list tracker reached 128 entries; rejecting further new-list resets");
+					}
+					return;
+				}
 				it = registry.Lists.emplace(list, std::make_unique<Snapshot>()).first;
 			}
 			const auto epoch = it->second->Epoch + 1;
@@ -284,7 +290,9 @@ namespace SFSEMenuFramework::CommandListState
 		std::scoped_lock lock{ registry.Mutex };
 		const auto found = registry.Lists.find(list);
 		if (!registry.Installed || found == registry.Lists.end()) {
-			if (reason) { *reason = "Reset not observed"; }
+			if (reason) {
+				*reason = registry.CapacityRejectedResets ? "tracker capacity reached (128)" : "Reset not observed";
+			}
 			return false;
 		}
 		const auto& state = *found->second;
