@@ -1,11 +1,16 @@
 #include "lifecycle/MenuLifecycle.h"
-#include "rendering/RenderHooks.h"
+#include "rendering/PresentOverlay.h"
 
 #include <atomic>
 
 namespace
 {
 	std::atomic<bool> earlyLifecycleReady{ false };
+
+	void EnsurePresentOverlay()
+	{
+		static_cast<void>(SFSEMenuFramework::PresentOverlay::EnsureInstalled());
+	}
 
 	void OnSFSEMessage(SFSE::MessagingInterface::Message* a_message)
 	{
@@ -61,17 +66,12 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 		return false;
 	}
 
-	if (!SFSEMenuFramework::RenderHooks::Install()) {
-		logger::critical(
-			"Failed to install the Scaleform render-pass hooks; the plugin will remain loaded but inactive");
-		return true;
-	}
-
 	if (!SFSEMenuFramework::MenuLifecycle::InstallEarly(*taskInterface)) {
 		logger::critical(
 			"Failed to install the early menu lifecycle; the plugin will remain loaded but inactive");
 		return true;
 	}
+	taskInterface->AddPermanentTask(&EnsurePresentOverlay);
 
 	earlyLifecycleReady.store(true, std::memory_order_release);
 	logger::info("Menu input ownership waiting for SFSE post-data-load");
