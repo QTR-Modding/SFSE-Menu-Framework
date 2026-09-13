@@ -174,7 +174,12 @@ namespace SFSEMenuFramework::SettingsWindow
 			FrameworkSettings::ToggleMode& a_current)
 		{
 			int selected = std::to_underlying(a_current);
-			constexpr std::array names{ "SINGLEPRESS", "HOLD", "DOUBLEPRESS", "OFF" };
+			const std::array names{
+				Translations::Get("Settings.ToggleMode.SinglePress", "SINGLEPRESS"),
+				Translations::Get("Settings.ToggleMode.Hold", "HOLD"),
+				Translations::Get("Settings.ToggleMode.DoublePress", "DOUBLEPRESS"),
+				Translations::Get("Settings.ToggleMode.Off", "OFF")
+			};
 			ImGui::TextUnformatted(Translations::Get(a_label, a_label));
 			if (!ImGui::Combo(a_id, &selected, names.data(), static_cast<int>(names.size()))) {
 				return false;
@@ -498,7 +503,11 @@ namespace SFSEMenuFramework::SettingsWindow
 
 			ImGui::SeparatorText(SFSEMenuFramework::Translations::Get("Fonts", "Fonts"));
 			ImGui::TextUnformatted(SFSEMenuFramework::Translations::Get("Font rendering", "Font rendering"));
-			constexpr std::array renderingNames{ "NATIVE", "LIGHT", "AUTO" };
+			const std::array renderingNames{
+				Translations::Get("Settings.FontRendering.Native", "NATIVE"),
+				Translations::Get("Settings.FontRendering.Light", "LIGHT"),
+				Translations::Get("Settings.FontRendering.Auto", "AUTO")
+			};
 			int rendering = std::to_underlying(pending.Rendering);
 			if (ImGui::Combo("##FontRendering", &rendering, renderingNames.data(),
 					static_cast<int>(renderingNames.size()))) {

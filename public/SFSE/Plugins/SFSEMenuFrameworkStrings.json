@@ -1,4 +1,11 @@
 {
+  "Settings.ToggleMode.SinglePress": "SINGLEPRESS",
+  "Settings.ToggleMode.Hold": "HOLD",
+  "Settings.ToggleMode.DoublePress": "DOUBLEPRESS",
+  "Settings.ToggleMode.Off": "OFF",
+  "Settings.FontRendering.Native": "NATIVE",
+  "Settings.FontRendering.Light": "LIGHT",
+  "Settings.FontRendering.Auto": "AUTO",
   "A is also the controller's Confirm button.\nWhile this shortcut is enabled, selecting an item will close this menu.": "A is also the controller's Confirm button.\nWhile this shortcut is enabled, selecting an item will close this menu.",
   "Active: %.*s | %.1f px | %d%% | %.1f raster px": "Active: %.*s | %.1f px | %d%% | %.1f raster px",
   "Active: %.*s | weight %.0f | %.1f px | %d%% | %.1f raster px": "Active: %.*s | weight %.0f | %.1f px | %d%% | %.1f raster px",
