@@ -166,7 +166,7 @@ target(dll_name, function()
     )
     add_installfiles("COPYING", "EXCEPTIONS", "THIRD_PARTY_NOTICES.md")
     add_installfiles("public/SFSE/Plugins/SFSEMenuFrameworkStrings.json", { prefixdir = "SFSE/Plugins" })
-    add_installfiles("public/SFSE/Plugins/SFSEMenuFramework.ini", { prefixdir = "SFSE/Plugins" })
+    add_installfiles("public/SFSE/Plugins/SFSEMenuFramework.ini.example", { prefixdir = "SFSE/Plugins" })
 
     -- CommonLibSF derives an automatic post-build install destination from
     -- environment variables. Override it with build-local staging so compiling

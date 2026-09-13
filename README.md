@@ -184,8 +184,11 @@ xmake
 ```
 
 Release and releasedbg builds automatically prepare `build/staging/` and a ZIP
-in `build/packages/`, including the default INI, translation JSON, licenses,
+in `build/packages/`, including an example INI, translation JSON, licenses,
 and the PDB when present. Personal window layouts are not included.
+The example is named `SFSEMenuFramework.ini.example` so upgrades don't overwrite
+saved settings. Defaults work without an INI. For manual editing, copy the example
+to `SFSEMenuFramework.ini` only if you don't already have one.
 To generate a Visual Studio solution, run `xmake project -k vsxmake`.
 
 Signing uses the SDK's pinned QTR Utils signing module. Other QTR modules are not required.
