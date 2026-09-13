@@ -24,6 +24,8 @@ $expectedFiles = @(
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk-OFL.txt'
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk[wght].ttf'
 	'Data/SFSE/Plugins/SFSEMenuFramework.dll'
+	'Data/SFSE/Plugins/SFSEMenuFramework.ini'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkStrings.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkCursors/ring.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkCursors/ring.png'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/blackest sea.json'
@@ -39,6 +41,10 @@ $expectedFiles = @(
 
 $archivePath = (Resolve-Path -LiteralPath $Archive).Path
 $builtDllPath = (Resolve-Path -LiteralPath $BuiltDll).Path
+$builtPdbPath = [IO.Path]::ChangeExtension($builtDllPath, '.pdb')
+if (Test-Path -LiteralPath $builtPdbPath) {
+	$expectedFiles = @($expectedFiles) + 'SFSE/Plugins/SFSEMenuFramework.pdb' | Sort-Object
+}
 $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
 	$actualFiles = @(
@@ -78,6 +84,27 @@ try {
 	}
 	if ($archiveDllHash -ne $builtDllHash) {
 		throw 'Packaged DLL does not match the reviewed build output.'
+	}
+	$repo = Split-Path $PSScriptRoot
+	$payload = @{
+		'SFSE/Plugins/SFSEMenuFramework.ini' = Join-Path $repo 'public/SFSE/Plugins/SFSEMenuFramework.ini'
+		'SFSE/Plugins/SFSEMenuFrameworkStrings.json' = Join-Path $repo 'public/SFSE/Plugins/SFSEMenuFrameworkStrings.json'
+		'COPYING' = Join-Path $repo 'COPYING'
+		'EXCEPTIONS' = Join-Path $repo 'EXCEPTIONS'
+		'THIRD_PARTY_NOTICES.md' = Join-Path $repo 'THIRD_PARTY_NOTICES.md'
+	}
+	if (Test-Path -LiteralPath $builtPdbPath) {
+		$payload['SFSE/Plugins/SFSEMenuFramework.pdb'] = $builtPdbPath
+	}
+	foreach ($item in $payload.GetEnumerator()) {
+		$stream = $zip.GetEntry($item.Key).Open()
+		$sha = [Security.Cryptography.SHA256]::Create()
+		try {
+			$hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '')
+		} finally { $sha.Dispose(); $stream.Dispose() }
+		if ($hash -ne (Get-FileHash -LiteralPath $item.Value -Algorithm SHA256).Hash) {
+			throw "Packaged file differs from its source: $($item.Key)"
+		}
 	}
 } finally {
 	$zip.Dispose()

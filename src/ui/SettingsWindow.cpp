@@ -1,3 +1,4 @@
+#include "localization/Translations.h"
 #include "ui/SettingsWindow.h"
 #include "ui/SoundSettings.h"
 #include "audio/InteractionSounds.h"
@@ -140,9 +141,9 @@ namespace SFSEMenuFramework::SettingsWindow
 				const auto configured = control.Read();
 				const auto displayed = control.Edit ? control.Edit->Preview : configured;
 				int percentage = static_cast<int>(std::lround(displayed * 100.0F));
-				ImGui::TextUnformatted(control.Label);
+				ImGui::TextUnformatted(Translations::Get(control.Label, control.Label));
 				if (ImGui::IsItemHovered()) {
-					ImGui::SetTooltip("%s", control.Hint);
+					ImGui::SetTooltip("%s", Translations::Get(control.Hint, control.Hint));
 				}
 				ImGui::PushID(control.Label);
 				if (ImGui::SliderInt("##Value", &percentage, 0, 100, "%d%%",
@@ -164,7 +165,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 			if (ThemeManager::HasWallpaperUploadError()) {
 				ImGui::TextColored(ImVec4{ 1.0F, 0.4F, 0.4F, 1.0F },
-					"Could not upload the wallpaper. Reselect the theme to retry.");
+					Translations::Get("Could not upload the wallpaper. Reselect the theme to retry.", "Could not upload the wallpaper. Reselect the theme to retry."));
 			}
 		}
 
@@ -173,8 +174,13 @@ namespace SFSEMenuFramework::SettingsWindow
 			FrameworkSettings::ToggleMode& a_current)
 		{
 			int selected = std::to_underlying(a_current);
-			constexpr std::array names{ "SINGLEPRESS", "HOLD", "DOUBLEPRESS", "OFF" };
-			ImGui::TextUnformatted(a_label);
+			const std::array names{
+				Translations::Get("Settings.ToggleMode.SinglePress", "SINGLEPRESS"),
+				Translations::Get("Settings.ToggleMode.Hold", "HOLD"),
+				Translations::Get("Settings.ToggleMode.DoublePress", "DOUBLEPRESS"),
+				Translations::Get("Settings.ToggleMode.Off", "OFF")
+			};
+			ImGui::TextUnformatted(Translations::Get(a_label, a_label));
 			if (!ImGui::Combo(a_id, &selected, names.data(), static_cast<int>(names.size()))) {
 				return false;
 			}
@@ -184,7 +190,7 @@ namespace SFSEMenuFramework::SettingsWindow
 
 		// The press-to-bind controls and warnings adapt the approved
 		// QTR-Modding/SKSE-Menu-Framework-3 user-authored commits 5b269fa through
-		// e297bbd (GPL-3.0). Text remains embedded English in this port.
+		// e297bbd (GPL-3.0). Text uses the framework translation table.
 		struct PendingToggleChange final
 		{
 			BindingCapture::Device       Device{ BindingCapture::Device::Keyboard };
@@ -277,7 +283,7 @@ namespace SFSEMenuFramework::SettingsWindow
 		void RenderBindingConfirmation(
 			bool& a_saveFailed, bool& a_themeLoadFailed)
 		{
-			constexpr char title[]{ "Change Shortcut?###BindingWarning" };
+			const auto titleText = std::string{Translations::Get("Change Shortcut?", "Change Shortcut?")} + "###BindingWarning"; const auto* title = titleText.c_str();
 			if (pendingToggleChange.OpenRequested) {
 				ImGui::OpenPopup(title);
 				pendingToggleChange.OpenRequested = false;
@@ -294,15 +300,15 @@ namespace SFSEMenuFramework::SettingsWindow
 				return;
 			}
 
-			ImGui::TextUnformatted(pendingToggleChange.Warning);
+			ImGui::TextUnformatted(Translations::Get(pendingToggleChange.Warning, pendingToggleChange.Warning));
 			ImGui::Separator();
 			if (ImGui::IsWindowAppearing()) {
 				ImGui::NavRestoreHighlightAfterMove();
 			}
-			const bool cancel = ImGui::Button("Cancel");
+			const bool cancel = ImGui::Button(SFSEMenuFramework::Translations::Get("Cancel", "Cancel"));
 			ImGui::SetItemDefaultFocus();
 			ImGui::SameLine();
-			const bool confirm = ImGui::Button("Change Anyway");
+			const bool confirm = ImGui::Button(SFSEMenuFramework::Translations::Get("Change Anyway", "Change Anyway"));
 			if (cancel || confirm) {
 				if (confirm && !cancel) {
 					SaveToggleChange(
@@ -327,8 +333,8 @@ namespace SFSEMenuFramework::SettingsWindow
 			bool&                         a_themeLoadFailed)
 		{
 			ImGui::PushID("ToggleKey");
-			constexpr char title[]{ "Set Binding###CaptureBinding" };
-			constexpr char clearLabel[]{ "Clear" };
+			const auto titleText = std::string{Translations::Get("Set Binding", "Set Binding")} + "###CaptureBinding"; const auto* title = titleText.c_str();
+			const auto* clearLabel = Translations::Get("Clear", "Clear");
 			const auto clearWidth =
 				ImGui::CalcTextSize(clearLabel).x +
 				ImGui::GetStyle().FramePadding.x * 2.0F;
@@ -358,10 +364,10 @@ namespace SFSEMenuFramework::SettingsWindow
 				auto state = BindingCapture::Poll(newKey, a_device);
 				ImGui::TextUnformatted(
 					a_device == BindingCapture::Device::Keyboard ?
-						"Press and release a key. Escape cancels." :
-						"Press and release a controller button. Escape cancels.");
+						Translations::Get("Binding.KeyboardPrompt", "Press and release a key. Escape cancels.") :
+						Translations::Get("Binding.GamepadPrompt", "Press and release a controller button. Escape cancels."));
 				ImGui::BeginDisabled(state == BindingCapture::State::Pressed);
-				if (ImGui::Button("Cancel")) {
+				if (ImGui::Button(SFSEMenuFramework::Translations::Get("Cancel", "Cancel"))) {
 					state = BindingCapture::State::Cancelled;
 				}
 				ImGui::EndDisabled();
@@ -417,7 +423,7 @@ namespace SFSEMenuFramework::SettingsWindow
 				radius - 1.5F, IM_COL32(255, 255, 255, 255));
 
 			ImGui::SameLine();
-			ImGui::TextUnformatted(a_label);
+			ImGui::TextUnformatted(Translations::Get(a_label, a_label));
 			return clicked;
 		}
 
@@ -461,12 +467,12 @@ namespace SFSEMenuFramework::SettingsWindow
 					&FrameworkSettings::GlyphCoverage::ChineseFull }
 			};
 
-			ImGui::SeparatorText("Glyph coverage");
+			ImGui::SeparatorText(SFSEMenuFramework::Translations::Get("Glyph coverage", "Glyph coverage"));
 			ImGui::TextDisabled(
-				"Enable only the character sets needed by framework panels.");
+				SFSEMenuFramework::Translations::Get("Enable only the character sets needed by framework panels.", "Enable only the character sets needed by framework panels."));
 			for (const auto& toggle : toggles) {
 				auto& enabled = a_pending.Glyphs.*toggle.Value;
-				if (!ToggleButton(toggle.Label, &enabled)) {
+				if (!ToggleButton(Translations::Get(toggle.Label, toggle.Label), &enabled)) {
 					continue;
 				}
 				if (enabled &&
@@ -481,7 +487,7 @@ namespace SFSEMenuFramework::SettingsWindow
 					!FontManager::RequestAtlasRebuild(a_pending);
 			}
 			ImGui::TextDisabled(
-				"The two Chinese ranges are alternatives; Full uses substantially more atlas space.");
+				SFSEMenuFramework::Translations::Get("The two Chinese ranges are alternatives; Full uses substantially more atlas space.", "The two Chinese ranges are alternatives; Full uses substantially more atlas space."));
 		}
 
 		void RenderFontSettings(bool& a_saveFailed)
@@ -495,9 +501,13 @@ namespace SFSEMenuFramework::SettingsWindow
 				fontSettingsInvalid = false;
 			}
 
-			ImGui::SeparatorText("Fonts");
-			ImGui::TextUnformatted("Font rendering");
-			constexpr std::array renderingNames{ "NATIVE", "LIGHT", "AUTO" };
+			ImGui::SeparatorText(SFSEMenuFramework::Translations::Get("Fonts", "Fonts"));
+			ImGui::TextUnformatted(SFSEMenuFramework::Translations::Get("Font rendering", "Font rendering"));
+			const std::array renderingNames{
+				Translations::Get("Settings.FontRendering.Native", "NATIVE"),
+				Translations::Get("Settings.FontRendering.Light", "LIGHT"),
+				Translations::Get("Settings.FontRendering.Auto", "AUTO")
+			};
 			int rendering = std::to_underlying(pending.Rendering);
 			if (ImGui::Combo("##FontRendering", &rendering, renderingNames.data(),
 					static_cast<int>(renderingNames.size()))) {
@@ -507,19 +517,19 @@ namespace SFSEMenuFramework::SettingsWindow
 			switch (pending.Rendering) {
 			case FrameworkSettings::FontRendering::Light:
 				ImGui::TextDisabled(
-					"Uses FreeType's light target; often smoother, sometimes softer.");
+					SFSEMenuFramework::Translations::Get("Uses FreeType's light target; often smoother, sometimes softer.", "Uses FreeType's light target; often smoother, sometimes softer."));
 				break;
 			case FrameworkSettings::FontRendering::Auto:
-				ImGui::TextDisabled("FreeType auto-hinting; useful for weakly hinted fonts.");
+				ImGui::TextDisabled(SFSEMenuFramework::Translations::Get("FreeType auto-hinting; useful for weakly hinted fonts.", "FreeType auto-hinting; useful for weakly hinted fonts."));
 				break;
 			case FrameworkSettings::FontRendering::Native:
 			default:
 				ImGui::TextDisabled(
-					"Prefers the font's built-in hinter; FreeType may fall back to auto.");
+					SFSEMenuFramework::Translations::Get("Prefers the font's built-in hinter; FreeType may fall back to auto.", "Prefers the font's built-in hinter; FreeType may fall back to auto."));
 				break;
 			}
 
-			ImGui::TextUnformatted("Primary font");
+			ImGui::TextUnformatted(SFSEMenuFramework::Translations::Get("Primary font", "Primary font"));
 			const auto pendingFontName = FrameworkSettings::GetFontFileNameView(pending.PrimaryFont);
 
 			const auto fonts = FontManager::GetFonts();
@@ -565,27 +575,27 @@ namespace SFSEMenuFramework::SettingsWindow
 
 			if (pendingFont && pendingFont->WeightAxis) {
 				const auto& axis = *pendingFont->WeightAxis;
-				ImGui::Text("Font weight (%.0f - %.0f)", axis.Minimum, axis.Maximum);
+				ImGui::Text(SFSEMenuFramework::Translations::Get("Font weight (%.0f - %.0f)", "Font weight (%.0f - %.0f)"), axis.Minimum, axis.Maximum);
 				const bool weightEdited = ImGui::SliderFloat(
 					"##FontWeight", &pending.FontWeight, axis.Minimum, axis.Maximum,
 					"%.0f", ImGuiSliderFlags_AlwaysClamp);
 				FinishFontEdit(pending, weightEdited);
 				ImGui::TextDisabled(
-					"Variable font; built-in default weight %.0f.", axis.Default);
+					SFSEMenuFramework::Translations::Get("Variable font; built-in default weight %.0f.", "Variable font; built-in default weight %.0f."), axis.Default);
 			} else if (pendingFont) {
-				ImGui::TextDisabled("Font weight: fixed by this font file.");
+				ImGui::TextDisabled(SFSEMenuFramework::Translations::Get("Font weight: fixed by this font file.", "Font weight: fixed by this font file."));
 			} else {
-				ImGui::TextDisabled("Font weight: unavailable until the font is found.");
+				ImGui::TextDisabled(SFSEMenuFramework::Translations::Get("Font weight: unavailable until the font is found.", "Font weight: unavailable until the font is found."));
 			}
 
-			ImGui::Text("Font size (%.0f - %.0f)", pending.MinFontSize, pending.MaxFontSize);
+			ImGui::Text("%s (%.0f - %.0f)", Translations::Get("Settings.FontSize", "Font size"), pending.MinFontSize, pending.MaxFontSize);
 			const bool fontSizeEdited = ImGui::InputFloat(
 				"##FontSizeMedium", &pending.FontSizeMedium, 1.0F, 4.0F, "%.1f");
 			FinishFontEdit(pending, fontSizeEdited);
 
-			ImGui::TextUnformatted("UI scale");
+			ImGui::TextUnformatted(SFSEMenuFramework::Translations::Get("UI scale", "UI scale"));
 			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Scales text, controls and layout relative to the game window. 100%% preserves the 4K baseline.");
+				ImGui::SetTooltip(SFSEMenuFramework::Translations::Get("Scales text, controls and layout relative to the game window. 100%% preserves the 4K baseline.", "Scales text, controls and layout relative to the game window. 100%% preserves the 4K baseline."));
 			}
 			int uiScalePercent = static_cast<int>(std::lround(pending.UIScale * 100.0F));
 			const bool uiScaleEdited = ImGui::SliderInt(
@@ -594,7 +604,7 @@ namespace SFSEMenuFramework::SettingsWindow
 				pending.UIScale = static_cast<float>(uiScalePercent) / 100.0F;
 			}
 			FinishFontEdit(pending, uiScaleEdited);
-			ImGui::TextDisabled("Resolution-adjusted scale: %.0f%%", active.EffectiveUIScale * 100.0F);
+			ImGui::TextDisabled(SFSEMenuFramework::Translations::Get("Resolution-adjusted scale: %.0f%%", "Resolution-adjusted scale: %.0f%%"), active.EffectiveUIScale * 100.0F);
 
 			RenderGlyphCoverage(pending);
 
@@ -602,23 +612,23 @@ namespace SFSEMenuFramework::SettingsWindow
 				static_cast<int>(std::lround(active.Settings.UIScale * 100.0F));
 			const auto activeRendering = FrameworkSettings::GetFontRenderingName(
 				active.Settings.Rendering);
-			ImGui::TextDisabled("Rendering: %.*s",
+			ImGui::TextDisabled(SFSEMenuFramework::Translations::Get("Rendering: %.*s", "Rendering: %.*s"),
 				static_cast<int>(activeRendering.size()), activeRendering.data());
 			if (active.WeightAxis) {
 				ImGui::TextDisabled(
-					"Active: %.*s | weight %.0f | %.1f px | %d%% | %.1f raster px",
+					SFSEMenuFramework::Translations::Get("Active: %.*s | weight %.0f | %.1f px | %d%% | %.1f raster px", "Active: %.*s | weight %.0f | %.1f px | %d%% | %.1f raster px"),
 					static_cast<int>(active.Name.size()), active.Name.data(),
 					active.Settings.FontWeight, active.Settings.FontSizeMedium,
 					activeScalePercent, active.RasterSize);
 			} else {
 				ImGui::TextDisabled(
-					"Active: %.*s | %.1f px | %d%% | %.1f raster px",
+					SFSEMenuFramework::Translations::Get("Active: %.*s | %.1f px | %d%% | %.1f raster px", "Active: %.*s | %.1f px | %d%% | %.1f raster px"),
 					static_cast<int>(active.Name.size()), active.Name.data(),
 					active.Settings.FontSizeMedium, activeScalePercent, active.RasterSize);
 			}
 			if (!active.FallbackReason.empty()) {
 				ImGui::TextColored(
-					ImVec4{ 1.0F, 0.75F, 0.25F, 1.0F }, "Fallback: %.*s",
+					ImVec4{ 1.0F, 0.75F, 0.25F, 1.0F }, Translations::Get("Fallback: %.*s", "Fallback: %.*s"),
 					static_cast<int>(active.FallbackReason.size()), active.FallbackReason.data());
 			}
 
@@ -631,7 +641,7 @@ namespace SFSEMenuFramework::SettingsWindow
 				!FontManager::HasPendingAtlasRebuild() &&
 				matchesLive();
 			ImGui::BeginDisabled(!canSave);
-			if (ImGui::Button("Save")) {
+			if (ImGui::Button(SFSEMenuFramework::Translations::Get("Save", "Save"))) {
 				const auto previous = FrameworkSettings::GetFontSettings();
 				if (!FrameworkSettings::SetFontSettings(pending)) {
 					fontSettingsInvalid = true;
@@ -646,7 +656,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 			ImGui::EndDisabled();
 			ImGui::SameLine();
-			if (ImGui::Button("Reset font settings")) {
+			if (ImGui::Button(SFSEMenuFramework::Translations::Get("Reset font settings", "Reset font settings"))) {
 				pending = FrameworkSettings::GetDefaultFontSettings();
 				fontSettingsInvalid = !FontManager::RequestAtlasRebuild(pending);
 			}
@@ -654,28 +664,27 @@ namespace SFSEMenuFramework::SettingsWindow
 			if (fontSettingsInvalid || !pendingValid) {
 				ImGui::TextColored(
 					ImVec4{ 1.0F, 0.35F, 0.35F, 1.0F },
-					"Font weight must be 1 - 1000 and size must be within the displayed range; "
-					"font size x UI scale must be at most 96 px.");
+					"%s", Translations::Get("Fonts.InvalidSettings", "Font weight must be 1 - 1000 and size must be within the displayed range; font size x UI scale must be at most 96 px."));
 			}
 			const auto configured = FrameworkSettings::GetFontSettings();
 			const auto applyError = FontManager::GetLastApplyError();
 			if (pendingValid && FontManager::HasPendingAtlasRebuild()) {
 				ImGui::TextColored(
-					ImVec4{ 0.35F, 0.8F, 1.0F, 1.0F }, "Applying live font changes...");
+					ImVec4{ 0.35F, 0.8F, 1.0F, 1.0F }, Translations::Get("Applying live font changes...", "Applying live font changes..."));
 			} else if (!applyError.empty()) {
 				ImGui::TextColored(
 					ImVec4{ 1.0F, 0.35F, 0.35F, 1.0F }, "%.*s",
 					static_cast<int>(applyError.size()), applyError.data());
 			} else if (pendingValid && !matchesLive()) {
-				ImGui::TextDisabled("Finish editing to apply the live preview.");
+				ImGui::TextDisabled(SFSEMenuFramework::Translations::Get("Finish editing to apply the live preview.", "Finish editing to apply the live preview."));
 			} else if (!FrameworkSettings::FontSettingsEqual(
 				pending, configured, 0.0001F, true)) {
 				ImGui::TextColored(
 					ImVec4{ 1.0F, 0.75F, 0.25F, 1.0F },
-					"Live preview applied; changes are not saved.");
+					Translations::Get("Live preview applied; changes are not saved.", "Live preview applied; changes are not saved."));
 			} else {
 				ImGui::TextDisabled(
-					"Font rendering, face, weight, scale, and glyph coverage apply live.");
+					SFSEMenuFramework::Translations::Get("Font rendering, face, weight, scale, and glyph coverage apply live.", "Font rendering, face, weight, scale, and glyph coverage apply live."));
 			}
 		}
 
@@ -689,7 +698,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			const char* themePreview = selectedTheme < themes.size() ?
 				themes[selectedTheme].Name.c_str() :
 				"BUILT-IN DARK";
-			ImGui::TextUnformatted("Menu style");
+			ImGui::TextUnformatted(SFSEMenuFramework::Translations::Get("Settings.MenuStyle", "Menu style"));
 			if (themes.empty()) {
 				ImGui::BeginDisabled();
 				ImGui::Button("No themes found##MenuStyle");
@@ -736,11 +745,11 @@ namespace SFSEMenuFramework::SettingsWindow
 				ToggleSetting{ "Blur background while menu is open", &FrameworkSettings::SettingsSnapshot::BlurBackgroundOnMenu }
 			};
 			for (const auto& toggle : toggles) {
-				changed = ToggleButton(toggle.Label, &(edited.*toggle.Value)) || changed;
+				changed = ToggleButton(Translations::Get(toggle.Label, toggle.Label), &(edited.*toggle.Value)) || changed;
 			}
 
 			int iconStyle = edited.PlayStationIcons ? 1 : 0;
-			if (ImGui::Combo("Controller icons", &iconStyle, "Xbox\0PlayStation\0")) {
+			if (ImGui::Combo(SFSEMenuFramework::Translations::Get("Controller icons", "Controller icons"), &iconStyle, "Xbox\0PlayStation\0")) {
 				edited.PlayStationIcons = iconStyle == 1;
 				changed = true;
 			}
@@ -754,13 +763,13 @@ namespace SFSEMenuFramework::SettingsWindow
 				edited.Mode : edited.ModeGamePad;
 			ImGui::Separator();
 			if (RenderToggleMode(
-					"Toggle mode", "##ToggleMode", toggleMode)) {
+					Translations::Get(keyboard ? "Settings.ToggleMode.Keyboard" : "Settings.ToggleMode.Gamepad", "Toggle mode"), "##ToggleMode", toggleMode)) {
 				RequestToggleChange(
 					inputDevice, binding, toggleMode,
 					saveFailed, themeLoadFailed);
 			}
 			ImGui::Separator();
-			ImGui::TextUnformatted("Toggle key");
+			ImGui::TextUnformatted(Translations::Get(keyboard ? "Settings.ToggleKey.Keyboard" : "Settings.ToggleKey.Gamepad", "Toggle key"));
 			RenderKeyBinding(
 				binding, inputDevice, toggleMode,
 				saveFailed, themeLoadFailed);
@@ -801,7 +810,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			static const char* selectedTab{};
 			if (ImGui::BeginTabBar("FrameworkSettings", ImGuiTabBarFlags_FittingPolicyScroll)) {
 				for (const auto& tab : tabs) {
-					if (!ImGui::BeginTabItem(tab.Name)) continue;
+					if (!ImGui::BeginTabItem(Translations::Get(tab.Name, tab.Name))) continue;
 					if (selectedTab != tab.Name) {
 						FinishTabEdits();
 						selectedTab = tab.Name;
@@ -822,7 +831,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			}
 
 			ImGui::Spacing();
-			if (ImGui::Button("Reset to defaults")) {
+			if (ImGui::Button(SFSEMenuFramework::Translations::Get("Reset to defaults", "Reset to defaults"))) {
 				FinishTabEdits();
 				const auto settingsBeforeReset = FrameworkSettings::CaptureSnapshot();
 				FrameworkSettings::ResetDefaults();
@@ -838,15 +847,15 @@ namespace SFSEMenuFramework::SettingsWindow
 			if (themeLoadFailed) {
 				ImGui::TextColored(
 					ImVec4{ 1.0F, 0.35F, 0.35F, 1.0F },
-					"Could not apply the selected appearance");
+					Translations::Get("Could not apply the selected appearance", "Could not apply the selected appearance"));
 			}
 			if (saveFailed) {
 				ImGui::TextColored(
 					ImVec4{ 1.0F, 0.35F, 0.35F, 1.0F },
-					"Could not save Data\\SFSE\\Plugins\\SFSEMenuFramework.ini");
+					Translations::Get("Could not save Data\\SFSE\\Plugins\\SFSEMenuFramework.ini", "Could not save Data\\SFSE\\Plugins\\SFSEMenuFramework.ini"));
 			} else {
 				ImGui::TextDisabled(
-					"Settings file: Data\\SFSE\\Plugins\\SFSEMenuFramework.ini");
+					SFSEMenuFramework::Translations::Get("Settings file: Data\\SFSE\\Plugins\\SFSEMenuFramework.ini", "Settings file: Data\\SFSE\\Plugins\\SFSEMenuFramework.ini"));
 			}
 		}
 	}
@@ -916,7 +925,7 @@ namespace SFSEMenuFramework::SettingsWindow
 			Close();
 		}
 		if (!closeRequested && drawContents && ImGui::BeginMenuBar()) {
-			ImGui::TextUnformatted("Settings");
+			ImGui::TextUnformatted(SFSEMenuFramework::Translations::Get("Settings.Title", "Settings"));
 			if (SFSEMenuFramework::UI::RenderCloseButton()) {
 				Close();
 			}

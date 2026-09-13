@@ -1,4 +1,5 @@
 #include "ui/McpGamepad.h"
+#include "localization/Translations.h"
 #include "appearance/GamepadIcons.h"
 #include "ItemObserver.h"
 
@@ -383,7 +384,7 @@ namespace SFSEMenuFramework::McpGamepad {
                 width += iconSize + ImGui::GetStyle().ItemInnerSpacing.x;
             }
             width += ImGui::GetStyle().ItemInnerSpacing.x;
-            width += ImGui::CalcTextSize(hint.Text).x;
+            width += ImGui::CalcTextSize(Translations::Get(hint.Text, hint.Text)).x;
             return width;
         }
 
@@ -396,7 +397,7 @@ namespace SFSEMenuFramework::McpGamepad {
             }
             ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(hint.Text);
+            ImGui::TextUnformatted(Translations::Get(hint.Text, hint.Text));
             ImGui::EndGroup();
         }
         void RenderHighlight(ImGuiWindow* boundary, ImVec4 accent) {

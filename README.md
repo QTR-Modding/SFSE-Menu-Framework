@@ -184,7 +184,8 @@ xmake
 ```
 
 Release and releasedbg builds automatically prepare `build/staging/` and a ZIP
-in `build/packages/`, excluding debug symbols and personal settings.
+in `build/packages/`, including the default INI, translation JSON, licenses,
+and the PDB when present. Personal window layouts are not included.
 To generate a Visual Studio solution, run `xmake project -k vsxmake`.
 
 Signing uses the SDK's pinned QTR Utils signing module. Other QTR modules are not required.
@@ -192,6 +193,14 @@ Signing uses the SDK's pinned QTR Utils signing module. Other QTR modules are no
 For a fork, `scripts/signing/Initialize-Signing.ps1` creates a non-exportable
 key; pair it with your SDK's public-key setting. Do not replace an existing
 signing key: clients built for it will reject the replacement.
+
+## Translations
+
+Translate the values in `SFSE/Plugins/SFSEMenuFrameworkStrings.json`, keeping
+the keys and `%` format placeholders unchanged. Install the translated file
+over the original and restart the game. Missing entries fall back to English.
+Enable the needed glyph ranges in Fonts. This translates the framework's own
+menus; client mods provide their own text.
 
 ## License and credits
 

@@ -1,5 +1,10 @@
 # Third-Party Notices
 
+The translation-table loader and built-in UI translation pattern adapt
+`Translations.cpp`, `Translations.h` and `UI.cpp` from SKSE Menu Framework at
+`4c11522539153ceaa4076ac03403de55838ee0ca` under GPL-3.0.
+SFSE retains English fallbacks and owns the loaded strings.
+
 ## SKSE Menu Framework 3
 
 SFSE Menu Framework directly adapts selected implementation behavior and assets
