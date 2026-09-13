@@ -40,7 +40,7 @@ add_requires("freetype 2.14.1", {
 
 local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
-local plugin_version = "1.0.1"
+local plugin_version = "1.1.0"
 local plugin_author = "Quantumyilmaz"
 local build_staging_dir = path.join(project_root, "build", "staging")
 local sdk_root = path.join(project_root, "..", "SFSE-MCP")
