@@ -28,6 +28,10 @@ try {
         Copy-Item -LiteralPath (Join-Path $repo $license) -Destination $temporary
     }
     Copy-Item -LiteralPath $dll -Destination (Join-Path $temporary "SFSE\Plugins\$name.dll")
+    $pdb = [IO.Path]::ChangeExtension($dll, '.pdb')
+    if (Test-Path -LiteralPath $pdb) {
+        Copy-Item -LiteralPath $pdb -Destination (Join-Path $temporary "SFSE\Plugins\$name.pdb")
+    }
     Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
     $temporaryZip = "$temporary.zip"
     $zip = [IO.Compression.ZipFile]::Open($temporaryZip, [IO.Compression.ZipArchiveMode]::Create)

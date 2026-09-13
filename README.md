@@ -184,7 +184,8 @@ xmake
 ```
 
 Release and releasedbg builds automatically prepare `build/staging/` and a ZIP
-in `build/packages/`, excluding debug symbols and personal settings.
+in `build/packages/`, including the default INI, translation JSON, licenses,
+and the PDB when present. Personal window layouts are not included.
 To generate a Visual Studio solution, run `xmake project -k vsxmake`.
 
 Signing uses the SDK's pinned QTR Utils signing module. Other QTR modules are not required.

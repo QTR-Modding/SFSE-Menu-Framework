@@ -165,11 +165,12 @@ target(dll_name, function()
     )
     add_installfiles("COPYING", "EXCEPTIONS", "THIRD_PARTY_NOTICES.md")
     add_installfiles("public/SFSE/Plugins/SFSEMenuFrameworkStrings.json", { prefixdir = "SFSE/Plugins" })
+    add_installfiles("public/SFSE/Plugins/SFSEMenuFramework.ini", { prefixdir = "SFSE/Plugins" })
 
     -- CommonLibSF derives an automatic post-build install destination from
     -- environment variables. Override it with build-local staging so compiling
     -- cannot touch an active game or mod-manager setup. Deployment is explicit.
-    -- It also adds the PDB during configuration; keep symbols local for packages.
+    -- Packaging copies the matching PDB directly from the build output.
     on_config(function(target)
         target:set("installdir", build_staging_dir)
         target:remove("installfiles", target:symbolfile())
