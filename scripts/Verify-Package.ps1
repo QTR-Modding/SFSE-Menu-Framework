@@ -24,7 +24,7 @@ $expectedFiles = @(
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk-OFL.txt'
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk[wght].ttf'
 	'Data/SFSE/Plugins/SFSEMenuFramework.dll'
-	'Data/SFSE/Plugins/SFSEMenuFramework.ini.example'
+	'Data/SFSE/Plugins/SFSEMenuFramework.ini'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkStrings.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkCursors/ring.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkCursors/ring.png'
@@ -87,7 +87,7 @@ try {
 	}
 	$repo = Split-Path $PSScriptRoot
 	$payload = @{
-		'SFSE/Plugins/SFSEMenuFramework.ini.example' = Join-Path $repo 'public/SFSE/Plugins/SFSEMenuFramework.ini.example'
+		'SFSE/Plugins/SFSEMenuFramework.ini' = Join-Path $repo 'public/SFSE/Plugins/SFSEMenuFramework.ini'
 		'SFSE/Plugins/SFSEMenuFrameworkStrings.json' = Join-Path $repo 'public/SFSE/Plugins/SFSEMenuFrameworkStrings.json'
 		'COPYING' = Join-Path $repo 'COPYING'
 		'EXCEPTIONS' = Join-Path $repo 'EXCEPTIONS'
