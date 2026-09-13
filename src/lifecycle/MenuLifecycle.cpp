@@ -1,4 +1,5 @@
 #include "lifecycle/MenuLifecycle.h"
+#include "localization/Translations.h"
 
 #include "rendering/D3D12Renderer.h"
 #include "config/FrameworkSettings.h"
@@ -179,6 +180,10 @@ namespace SFSEMenuFramework::MenuLifecycle
 			return earlyInstallReady.load(std::memory_order_acquire);
 		}
 
+		if (!Translations::Load(FrameworkSettings::BuildGamePath(
+			L"Data/SFSE/Plugins/SFSEMenuFrameworkStrings.json"))) {
+			logger::info("Translation file missing or invalid; using English");
+		}
 		if (!FrameworkSettings::Load()) {
 			logger::warn(
 				"One or more SFSEMenuFramework.ini values were invalid; defaults were applied to those fields");

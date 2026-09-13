@@ -1,4 +1,6 @@
 #include "ui/WindowPlacement.h"
+#include "localization/Translations.h"
+#include <string>
 
 #include "config/FrameworkSettings.h"
 
@@ -82,7 +84,11 @@ namespace SFSEMenuFramework::WindowPlacement
 
 	const char* GetName(BuiltInWindow a_window) noexcept
 	{
-		return placements[static_cast<std::size_t>(a_window)].Name;
+		static const std::array names{
+			std::string{Translations::Get("ModControlPanel", "Mod Control Panel")} + "###MCPMainWindow",
+			std::string{Translations::Get("Settings.Title", "Settings")} + "###MCPSettingsWindow"
+		};
+		return names[static_cast<std::size_t>(a_window)].c_str();
 	}
 
 	void Apply(BuiltInWindow a_window)
@@ -142,8 +148,9 @@ namespace SFSEMenuFramework::WindowPlacement
 			const float margin = (1.0F - state.DefaultRatio) * 0.5F;
 			Restore(state, { state.Section, margin, margin, state.DefaultRatio, state.DefaultRatio }, viewport);
 			state.PendingSave = true;
-			ImGui::SetWindowPos(state.Name, state.Position, ImGuiCond_Always);
-			ImGui::SetWindowSize(state.Name, state.Size, ImGuiCond_Always);
+			const auto* name = GetName(static_cast<BuiltInWindow>(&state - placements.data()));
+			ImGui::SetWindowPos(name, state.Position, ImGuiCond_Always);
+			ImGui::SetWindowSize(name, state.Size, ImGuiCond_Always);
 		}
 	}
 

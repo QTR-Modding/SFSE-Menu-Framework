@@ -1,3 +1,4 @@
+#include "localization/Translations.h"
 #include "ui/CursorSettings.h"
 
 #include "appearance/CursorManager.h"
@@ -29,9 +30,9 @@ namespace SFSEMenuFramework::CursorSettings
 	void Render(bool& a_saveFailed)
 	{
 		const auto name = FrameworkSettings::GetCursorName();
-		ImGui::TextUnformatted("Cursor");
+		ImGui::TextUnformatted(SFSEMenuFramework::Translations::Get("Cursor", "Cursor"));
 		if (ImGui::BeginCombo("##Cursor", std::string_view{ name.data() } == "DEFAULT" ?
-			"Default" : name.data())) {
+			Translations::Get("Default", "Default") : name.data())) {
 			const auto choose = [&](const char* label, const char* value) {
 				const bool selected = std::string_view{ name.data() } == value;
 				if (ImGui::Selectable(label, selected) && FrameworkSettings::SetCursorName(value)) {
@@ -44,13 +45,13 @@ namespace SFSEMenuFramework::CursorSettings
 					ImGui::SetItemDefaultFocus();
 				}
 			};
-			choose("Default", "DEFAULT");
+			choose(Translations::Get("Default", "Default"), "DEFAULT");
 			for (const auto& entry : CursorManager::GetCursors()) {
 				choose(entry.Name.c_str(), entry.Name.c_str());
 			}
 			ImGui::EndCombo();
 		}
-		ImGui::TextUnformatted("Cursor size");
+		ImGui::TextUnformatted(SFSEMenuFramework::Translations::Get("Cursor size", "Cursor size"));
 		auto scale = FrameworkSettings::GetCursorScale();
 		const auto previous = scale;
 		if (ImGui::SliderFloat("##CursorSize", &scale, 0.5F, 3.0F, "%.2fx",
@@ -63,11 +64,11 @@ namespace SFSEMenuFramework::CursorSettings
 		if (!ImGui::IsItemActive()) {
 			FinishEdit(a_saveFailed);
 		}
-		if (ImGui::Button("Refresh cursors")) {
+		if (ImGui::Button(SFSEMenuFramework::Translations::Get("Refresh cursors", "Refresh cursors"))) {
 			CursorManager::Refresh();
 		}
 		if (CursorManager::HasError()) {
-			ImGui::TextWrapped("Could not load the selected cursor. Using the default pointer.");
+			ImGui::TextWrapped(SFSEMenuFramework::Translations::Get("Could not load the selected cursor. Using the default pointer.", "Could not load the selected cursor. Using the default pointer."));
 		}
 	}
 }

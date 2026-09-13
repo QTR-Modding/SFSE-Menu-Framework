@@ -45,6 +45,15 @@ local plugin_author = "Quantumyilmaz"
 local build_staging_dir = path.join(project_root, "build", "staging")
 local sdk_root = path.join(project_root, "..", "SFSE-MCP")
 
+target("translation-tests", function()
+    set_kind("binary")
+    set_default(false)
+    set_languages("c++23")
+    add_files("tests/TranslationsTests.cpp", "src/localization/Translations.cpp")
+    add_includedirs("src")
+    add_packages("nlohmann_json")
+end)
+
 set_project(plugin_name)
 set_version(plugin_version)
 set_license("GPL-3.0-only")
@@ -155,6 +164,7 @@ target(dll_name, function()
         { prefixdir = "SFSE/Plugins/Fonts" }
     )
     add_installfiles("COPYING", "EXCEPTIONS", "THIRD_PARTY_NOTICES.md")
+    add_installfiles("public/SFSE/Plugins/SFSEMenuFrameworkStrings.json", { prefixdir = "SFSE/Plugins" })
 
     -- CommonLibSF derives an automatic post-build install destination from
     -- environment variables. Override it with build-local staging so compiling

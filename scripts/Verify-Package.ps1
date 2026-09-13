@@ -24,6 +24,7 @@ $expectedFiles = @(
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk-OFL.txt'
 	'Data/SFSE/Plugins/Fonts/SpaceGrotesk[wght].ttf'
 	'Data/SFSE/Plugins/SFSEMenuFramework.dll'
+	'Data/SFSE/Plugins/SFSEMenuFrameworkStrings.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkCursors/ring.json'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkCursors/ring.png'
 	'Data/SFSE/Plugins/SFSEMenuFrameworkThemes/blackest sea.json'

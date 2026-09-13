@@ -1,3 +1,4 @@
+#include "localization/Translations.h"
 #include "ui/McpWindow.h"
 #include "ui/McpGamepad.h"
 
@@ -27,7 +28,7 @@
 
 namespace
 {
-	constexpr char MCP_TITLE[] = "Mod Control Panel";
+	const char* MainTitle() { return SFSEMenuFramework::Translations::Get("ModControlPanel", "Mod Control Panel"); }
 	constexpr char menuConfigPath[] =
 		"Data\\SFSE\\Plugins\\SFSEMenuFrameworkMenuConfig.json";
 
@@ -232,14 +233,14 @@ namespace
 		}
 		RenderFavoriteStar(a_favorite);
 		RenderTooltip(
-			a_favorite ? "Remove from favorites" : "Add to favorites");
+			a_favorite ? SFSEMenuFramework::Translations::Get("Menu.RemoveFavorite", "Remove from favorites") : SFSEMenuFramework::Translations::Get("Menu.AddFavorite", "Add to favorites"));
 
 		ImGui::TableSetColumnIndex(2);
 		if (ImGui::Button("-", ImVec2{ a_buttonSize, a_buttonSize })) {
 			pendingArchiveMenu = a_menu;
 			archiveConfirmationRequested = true;
 		}
-		RenderTooltip("Archive menu");
+		RenderTooltip(SFSEMenuFramework::Translations::Get("Menu.Archive", "Archive menu"));
 
 		ImGui::PopStyleColor();
 		PopNodeID();
@@ -320,7 +321,7 @@ namespace
 
 	void RenderArchivedMenuRecovery()
 	{
-		if (!ImGui::BeginMenu("Restore Archived Menus")) {
+		if (!ImGui::BeginMenu(SFSEMenuFramework::Translations::Get("Options.RestoreArchivedMenus", "Restore Archived Menus"))) {
 			return;
 		}
 
@@ -373,15 +374,15 @@ namespace
 		}
 
 		if (archivedMenus.empty()) {
-			ImGui::MenuItem("No archived menus", nullptr, false, false);
+			ImGui::MenuItem(SFSEMenuFramework::Translations::Get("Options.NoArchivedMenus", "No archived menus"), nullptr, false, false);
 		}
 		ImGui::EndMenu();
 	}
 
 	void RenderArchiveConfirmation()
 	{
-		constexpr char popupTitle[] =
-			"Archive menu##ArchiveRootMenuConfirmation";
+		const auto title = std::string{SFSEMenuFramework::Translations::Get("Menu.Archive.Title", "Archive menu")} + "###ArchiveRootMenuConfirmation";
+		const char* popupTitle = title.c_str();
 		if (pendingArchiveMenu) {
 			pendingArchiveMenu = FindNodeByIdentity(
 				SFSEMenuFramework::PanelRegistry::GetMenuTree(),
@@ -409,16 +410,16 @@ namespace
 			return;
 		}
 
-		ImGui::TextUnformatted("Archive this menu?");
+		ImGui::TextUnformatted(SFSEMenuFramework::Translations::Get("Menu.Archive.Confirm", "Archive this menu?"));
 		ImGui::TextUnformatted(pendingArchiveMenu->Name.c_str());
 		ImGui::Separator();
-		if (ImGui::Button("Yes")) {
+		if (ImGui::Button(SFSEMenuFramework::Translations::Get("Menu.Archive.Yes", "Yes"))) {
 			SetRootMenuArchived(pendingArchiveMenu, true);
 			pendingArchiveMenu.reset();
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("No")) {
+		if (ImGui::Button(SFSEMenuFramework::Translations::Get("Menu.Archive.No", "No"))) {
 			pendingArchiveMenu.reset();
 			ImGui::CloseCurrentPopup();
 		}
@@ -450,24 +451,24 @@ namespace
 			return;
 		}
 
-		const bool optionsWasOpen = ImGui::IsPopupOpen("Options");
+		const bool optionsWasOpen = ImGui::IsPopupOpen(SFSEMenuFramework::Translations::Get("Options", "Options"));
 		const bool toggleOptions = SFSEMenuFramework::McpGamepad::IsOptionsToggleRequested();
 		if (toggleOptions && !optionsWasOpen) {
-			ImGui::OpenPopup("Options");
+			ImGui::OpenPopup(SFSEMenuFramework::Translations::Get("Options", "Options"));
 		}
-		if (ImGui::BeginMenu("Options")) {
+		if (ImGui::BeginMenu(SFSEMenuFramework::Translations::Get("Options", "Options"))) {
 			SFSEMenuFramework::McpGamepad::BeginOptionsMenu();
 			if (toggleOptions && optionsWasOpen) {
 				ImGui::CloseCurrentPopup();
 				SFSEMenuFramework::McpGamepad::NotifyOptionsMenuClosed();
 			} else {
-				if (ImGui::MenuItem("Reset Windows")) {
+				if (ImGui::MenuItem(SFSEMenuFramework::Translations::Get("Settings.ResetWindows", "Reset Windows"))) {
 					SFSEMenuFramework::WindowPlacement::Reset();
 				}
-				if (ImGui::MenuItem("Resume Game")) {
+				if (ImGui::MenuItem(SFSEMenuFramework::Translations::Get("Options.ResumeGame", "Resume Game"))) {
 					ResumeGame();
 				}
-				if (ImGui::MenuItem("Open Settings")) {
+				if (ImGui::MenuItem(SFSEMenuFramework::Translations::Get("Options.OpenSettings", "Open Settings"))) {
 					SFSEMenuFramework::SettingsWindow::Open();
 				}
 				ImGui::Separator();
@@ -477,7 +478,7 @@ namespace
 			ImGui::EndMenu();
 		}
 
-		const float textWidth = ImGui::CalcTextSize(MCP_TITLE).x;
+		const float textWidth = ImGui::CalcTextSize(MainTitle()).x;
 		const float availableWidth =
 			ImGui::GetWindowWidth() - ImGui::GetFrameHeight() -
 			ImGui::GetStyle().ItemSpacing.x;
@@ -485,7 +486,7 @@ namespace
 			availableWidth * 0.5F - textWidth * 0.5F;
 
 		ImGui::SameLine(titlePosition);
-		ImGui::TextUnformatted(MCP_TITLE);
+		ImGui::TextUnformatted(MainTitle());
 		if (SFSEMenuFramework::UI::RenderCloseButton()) {
 			CloseMainWindow();
 		}
@@ -510,7 +511,7 @@ namespace
 			rootFilter.Clear();
 		}
 		ImGui::EndDisabled();
-		RenderTooltip("Clear search");
+		RenderTooltip(SFSEMenuFramework::Translations::Get("Clear search", "Clear search"));
 	}
 
 	void RenderNavigation()
@@ -656,7 +657,7 @@ namespace
 			if (menuConfigSaveFailed) {
 				ImGui::Spacing();
 				ImGui::TextColored(
-					ImVec4{ 1.0F, 0.35F, 0.35F, 1.0F }, "Could not save %s", menuConfigPath);
+					ImVec4{ 1.0F, 0.35F, 0.35F, 1.0F }, SFSEMenuFramework::Translations::Get("Could not save %s", "Could not save %s"), menuConfigPath);
 			}
 			ImGui::PopStyleVar();
 			SFSEMenuFramework::McpGamepad::EndArea();
