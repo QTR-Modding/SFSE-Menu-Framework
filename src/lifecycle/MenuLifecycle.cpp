@@ -86,15 +86,13 @@ namespace SFSEMenuFramework::MenuLifecycle
 			static_cast<void>(D3D12Renderer::SetPlatformInputEnabled(false));
 		}
 
-		void ReconcileFrameworkOnlyHostWindow() noexcept
+		void ReconcileFrameworkOnlyHostWindow(bool a_renderEnabled) noexcept
 		{
-			const bool renderEnabled =
-				Win32Platform::IsHostWindowUsable();
-			WindowManager::SetMainWindowRenderEnabled(renderEnabled);
+			WindowManager::SetMainWindowRenderEnabled(a_renderEnabled);
 
 			const auto generation =
 				WindowManager::GetBlockingWindowOpenGeneration();
-			const bool routeToMenu = renderEnabled &&
+			const bool routeToMenu = a_renderEnabled &&
 				WindowManager::IsAnyBlockingWindowOpened() &&
 				generation != 0 &&
 				D3D12Renderer::HasRecentBlockingWindowFrame(generation) &&
@@ -112,19 +110,19 @@ namespace SFSEMenuFramework::MenuLifecycle
 			// native input behind an invisible menu.
 			InputCapture::SetModal(true);
 			if (!InputCapture::IsModal()) {
-				AbortBlockingInteraction("Early native input capture could not be armed");
+				AbortBlockingInteraction("Framework-only native input capture could not be armed");
 				InputCapture::SetModal(false);
 				return;
 			}
 
 			if (!D3D12Renderer::SetPlatformInputEnabled(true, generation)) {
-				AbortBlockingInteraction("Early relative mouse routing could not be armed");
+				AbortBlockingInteraction("Framework-only relative mouse routing could not be armed");
 				InputCapture::SetModal(false);
 				return;
 			}
 			if (!earlyInteractionLogged.test_and_set(std::memory_order_relaxed)) {
 				logger::info(
-					"Pre-post-data-load blocking framework input activated for rendered generation {}",
+					"Framework-only blocking input activated for rendered generation {}",
 					generation);
 			}
 		}
@@ -132,12 +130,26 @@ namespace SFSEMenuFramework::MenuLifecycle
 		void ReconcileHostWindow() noexcept
 		{
 			if (!postDataLoadReady.load(std::memory_order_acquire)) {
-				ReconcileFrameworkOnlyHostWindow();
+				ReconcileFrameworkOnlyHostWindow(Win32Platform::IsHostWindowUsable());
 				return;
 			}
 
 			using InputDisposition = MenuOwnership::InputDisposition;
 			const auto host = ClassifyHost();
+			if (!RE::PlayerCharacter::GetSingleton()) {
+				// Post-data-load is permanent, but the player is cleared on return to
+				// the main menu. Release existing ownership before using raw capture;
+				// acquiring an input layer here notifies player-dependent engine sinks.
+				MenuOwnership::ReleaseOnHostWindowThread();
+				if (MenuOwnership::GetInputDisposition() != InputDisposition::PassThrough) {
+					WindowManager::SetMainWindowRenderEnabled(host.RenderEnabled);
+					InputCapture::SetModal(true);
+					static_cast<void>(D3D12Renderer::SetPlatformInputEnabled(false));
+					return;
+				}
+				ReconcileFrameworkOnlyHostWindow(host.RenderEnabled);
+				return;
+			}
 			const auto availability = host.Availability;
 			WindowManager::SetMainWindowRenderEnabled(host.RenderEnabled);
 			MenuOwnership::ReconcileOnHostWindowThread({
