@@ -73,6 +73,14 @@ extern "C" __declspec(dllexport)
 	return AddWindow(a_render);
 }
 
+extern "C" __declspec(dllexport) bool SetWindowBlurBackground(
+	SFSEMenuFramework::Model::WindowInterface* a_window,
+	bool a_enabled)
+{
+	return SFSEMenuFramework::WindowManager::SetWindowBlurBackground(
+		a_window, a_enabled);
+}
+
 extern "C" __declspec(dllexport) void PushDefault()
 {
 	static_cast<void>(SFSEMenuFramework::FontManager::PushDefaultFont());
