@@ -53,56 +53,78 @@ namespace
 
         first->IsOpen = true;
         Check(WindowManager::IsAnyWindowOpen(), "open external window must be observed");
-        CheckEffects(true, true, false);
+        CheckEffects(true, false, false);
         const auto generation = WindowManager::GetBlockingWindowOpenGeneration();
         Check(generation != 0, "blocking window must keep its input generation");
+
+        const auto notificationsBeforePause = hostNotifications;
+        Check(WindowManager::SetWindowPauseGame(first, true), "external pause opt-in must succeed");
+        Check(hostNotifications > notificationsBeforePause, "pause changes must notify the host");
+        freezeTime = false;
+        CheckEffects(true, true, false);
+        freezeTime = true;
+        CheckEffects(true, true, false);
+        Check(WindowManager::GetBlockingWindowOpenGeneration() == generation,
+            "pause changes must not renew the blocking input generation");
+        first->BlockUserInput = false;
+        CheckEffects(false, true, false);
+        first->BlockUserInput = true;
+        Check(WindowManager::SetWindowPauseGame(second, true), "second window may request pause");
+        second->IsOpen = true;
+        Check(WindowManager::SetWindowPauseGame(first, false), "first window may stop pausing");
+        CheckEffects(true, true, false);
+        second->IsOpen = false;
+        CheckEffects(true, false, false);
+        Check(WindowManager::SetWindowPauseGame(second, false), "closed window may clear pause");
+
+        const auto blurGeneration = WindowManager::GetBlockingWindowOpenGeneration();
 
         const auto notificationsBeforeOptIn = hostNotifications;
         Check(WindowManager::SetWindowBlurBackground(first, true),
             "registered external window must accept blur opt-in");
         Check(hostNotifications > notificationsBeforeOptIn,
             "live blur opt-in must notify the host");
-        CheckEffects(true, true, true);
-        Check(WindowManager::GetBlockingWindowOpenGeneration() == generation,
+        CheckEffects(true, false, true);
+        Check(WindowManager::GetBlockingWindowOpenGeneration() == blurGeneration,
             "changing blur must not renew the blocking input generation");
 
         blurBackground = false;
-        CheckEffects(true, true, false);
+        CheckEffects(true, false, false);
         blurBackground = true;
-        CheckEffects(true, true, true);
+        CheckEffects(true, false, true);
 
         const auto notificationsBeforeOptOut = hostNotifications;
         Check(WindowManager::SetWindowBlurBackground(first, false),
             "registered external window must accept blur opt-out");
         Check(hostNotifications > notificationsBeforeOptOut,
             "live blur opt-out must notify the host");
-        CheckEffects(true, true, false);
+        CheckEffects(true, false, false);
 
         first->IsOpen = false;
         Check(WindowManager::SetWindowBlurBackground(first, true),
             "closed external window may retain an explicit blur preference");
         CheckEffects(false, false, false);
         first->IsOpen = true;
-        CheckEffects(true, true, true);
+        CheckEffects(true, false, true);
         first->IsOpen = false;
         CheckEffects(false, false, false);
         first->IsOpen = true;
-        CheckEffects(true, true, true);
+        CheckEffects(true, false, true);
 
         second->IsOpen = true;
-        CheckEffects(true, true, true);
+        CheckEffects(true, false, true);
         first->IsOpen = false;
-        CheckEffects(true, true, false);
+        CheckEffects(true, false, false);
         Check(WindowManager::SetWindowBlurBackground(second, true),
             "a second external window may independently opt in");
-        CheckEffects(true, true, true);
+        CheckEffects(true, false, true);
         first->IsOpen = true;
         Check(WindowManager::SetWindowBlurBackground(second, false),
             "one external window may opt out while another requests blur");
-        CheckEffects(true, true, true);
+        CheckEffects(true, false, true);
         Check(WindowManager::SetWindowBlurBackground(first, false),
             "disabling the last open blur requester must succeed");
-        CheckEffects(true, true, false);
+        CheckEffects(true, false, false);
 
         freezeTime = false;
         CheckEffects(true, false, false);
@@ -128,9 +150,12 @@ namespace
         auto* external = WindowManager::AddExternalWindow(Render);
         Check(main && settings && external, "mixed window registration must succeed");
         Check(WindowManager::SetMainWindow(main), "main window registration must succeed");
+        Check(!WindowManager::SetWindowPauseGame(nullptr, true), "null pause target must be rejected");
+        Check(!WindowManager::SetWindowPauseGame(main, true), "built-in pause target must be rejected");
         Check(!WindowManager::SetWindowBlurBackground(nullptr, true),
             "null window must be rejected");
         Model::WindowInterface unknown;
+        Check(!WindowManager::SetWindowPauseGame(&unknown, true), "unknown pause target must be rejected");
         Check(!WindowManager::SetWindowBlurBackground(&unknown, true),
             "unregistered window must be rejected");
         Check(!WindowManager::SetWindowBlurBackground(
@@ -158,10 +183,10 @@ namespace
         settings->PauseGame = true;
 
         external->IsOpen = true;
-        CheckEffects(true, true, false);
+        CheckEffects(true, false, false);
         Check(WindowManager::SetWindowBlurBackground(external, true),
             "external opt-in must work after main registration");
-        CheckEffects(true, true, true);
+        CheckEffects(true, false, true);
         main->BlurBackground = false;
         blurBackground = false;
         settings->IsOpen = true;
@@ -239,6 +264,6 @@ int main()
 
     TestExternalWindows();
     TestBuiltInWindowsAndValidation();
-    std::cout << "WindowManager blur tests passed\n";
+    std::cout << "WindowManager tests passed\n";
     return 0;
 }
