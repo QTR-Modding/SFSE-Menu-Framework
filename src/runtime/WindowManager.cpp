@@ -89,11 +89,8 @@ namespace
 				state.AnyBlocking |= blocking;
 				state.BlurBackground |= open && (window->ExternalRender || blocking) &&
 					window->Interface.BlurBackground.load(std::memory_order_acquire);
-				if (blocking) {
-					state.PauseGame |= window->ExternalRender ?
-						FrameworkSettings::GetFreezeTimeOnMenu() :
-						window->Interface.PauseGame.load(std::memory_order_acquire);
-				}
+				state.PauseGame |= open && (window->ExternalRender || blocking) &&
+					window->Interface.PauseGame.load(std::memory_order_acquire);
 				state.BlockingOpenEdges += blocking && !window->WasBlockingOpen;
 				window->WasBlockingOpen = blocking;
 			}
@@ -216,6 +213,7 @@ namespace SFSEMenuFramework
 			auto window = std::make_unique<Window>();
 			window->ExternalRender = a_renderFunction;
 			window->Interface.BlurBackground.store(false, std::memory_order_relaxed);
+			window->Interface.PauseGame.store(false, std::memory_order_relaxed);
 			return PublishWindow(*registry, std::move(window));
 		} catch (const std::bad_alloc&) {
 			return nullptr;
@@ -235,6 +233,25 @@ namespace SFSEMenuFramework
 			for (auto* window : *windows) {
 				if (window && window->ExternalRender && &window->Interface == a_window) {
 					window->Interface.BlurBackground.store(a_enabled, std::memory_order_release);
+					static_cast<void>(ReadState(*registry));
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	bool WindowManager::SetWindowPauseGame(
+		Model::WindowInterface* a_window, bool a_enabled) noexcept
+	{
+		auto* registry = GetWindowRegistry();
+		if (!registry || !a_window) {
+			return false;
+		}
+		if (const auto windows = registry->Published.load(std::memory_order_acquire)) {
+			for (auto* window : *windows) {
+				if (window && window->ExternalRender && &window->Interface == a_window) {
+					window->Interface.PauseGame.store(a_enabled, std::memory_order_release);
 					static_cast<void>(ReadState(*registry));
 					return true;
 				}

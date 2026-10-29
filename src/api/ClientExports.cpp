@@ -81,6 +81,14 @@ extern "C" __declspec(dllexport) bool SetWindowBlurBackground(
 		a_window, a_enabled);
 }
 
+extern "C" __declspec(dllexport) bool SetWindowPauseGame(
+	SFSEMenuFramework::Model::WindowInterface* a_window,
+	bool a_enabled)
+{
+	return SFSEMenuFramework::WindowManager::SetWindowPauseGame(
+		a_window, a_enabled);
+}
+
 extern "C" __declspec(dllexport) void PushDefault()
 {
 	static_cast<void>(SFSEMenuFramework::FontManager::PushDefaultFont());

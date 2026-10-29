@@ -25,6 +25,8 @@ namespace SFSEMenuFramework
 			Model::ClientWindowRenderFunction a_renderFunction) noexcept;
 		[[nodiscard]] static bool SetWindowBlurBackground(
 			Model::WindowInterface* a_window, bool a_enabled) noexcept;
+		[[nodiscard]] static bool SetWindowPauseGame(
+			Model::WindowInterface* a_window, bool a_enabled) noexcept;
 		[[nodiscard]] static std::uint64_t RenderOpenWindows();
 		static bool SetMainWindow(WindowInterface* a_window) noexcept;
 		[[nodiscard]] static WindowInterface* GetMainWindow() noexcept;
