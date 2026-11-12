@@ -127,6 +127,7 @@ target(dll_name, function()
         })
     end)
     set_kind("shared")
+    add_rules("sf1sdk.plugin", { symbols = false })
     add_deps("SF1SDK")
     add_packages("spdlog")
     add_files("src/Version.rc")
@@ -175,10 +176,8 @@ target(dll_name, function()
     add_installfiles("public/SFSE/Plugins/SFSEMenuFrameworkStrings.json", { prefixdir = "SFSE/Plugins" })
     add_installfiles("public/SFSE/Plugins/SFSEMenuFramework.ini", { prefixdir = "SFSE/Plugins" })
 
-    -- Packaging copies the matching PDB directly from the build output.
     on_config(function(target)
         target:set("installdir", build_staging_dir)
-        target:remove("installfiles", target:symbolfile())
     end)
 
     before_build(function(target)
