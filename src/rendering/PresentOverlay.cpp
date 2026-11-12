@@ -8,7 +8,7 @@
 #include "rendering/OverlayCompositor.h"
 #include "rendering/D3D12Texture.h"
 
-#include <RE/C/CreationRenderer.h>
+#include <SF1SDK/Hooks.h>
 
 #include <Windows.h>
 #include <d3d12.h>
@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -220,11 +221,10 @@ namespace SFSEMenuFramework::PresentOverlay
 				return false;
 			}
 
-			auto* renderer = RE::CreationRendererPrivate::Renderer::GetSingleton();
+			const auto renderer = RE::CreationRendererPrivate::Renderer::GetSingleton();
 			ComPtr<ID3D12CommandQueue> queue;
-			if (!renderer || !renderer->GetGraphicsQueue() ||
-				!GetNative(
-					reinterpret_cast<ID3D12CommandQueue*>(renderer->GetGraphicsQueue()), queue)) {
+			const auto graphicsQueue = renderer ? renderer->GetGraphicsQueue() : nullptr;
+			if (!graphicsQueue || !GetNative(graphicsQueue, queue)) {
 				return false;
 			}
 
@@ -374,14 +374,14 @@ namespace SFSEMenuFramework::PresentOverlay
 
 		[[nodiscard]] bool Install()
 		{
-			const auto execute = RE::CreationRendererPrivate::PresentRequest::Execute.address();
+			const auto execute = reinterpret_cast<std::uintptr_t>(RE::CreationRendererPrivate::PresentRequest::GetExecute());
 			const auto site = execute + 0x100;
 			constexpr std::uint8_t prologue[]{ 0x41, 0x57, 0x48, 0x83, 0xEC, 0x40 };
 			constexpr std::uint8_t requestRegister[]{ 0x4C, 0x8B, 0xF9 }; // mov r15,rcx
 			constexpr std::uint8_t arguments[]{ 0x48, 0x8B, 0x4F, 0x40, 0x44, 0x8B, 0x47, 0x54, 0x8B, 0x57, 0x50 };
 			constexpr std::uint8_t original[]{ 0x48, 0x8B, 0x01, 0xFF, 0x50, 0x40 }; // mov rax,[rcx]; call [rax+40h]
 			const auto text = REX::FModule::GetExecutingModule().GetSection(".text");
-			const auto begin = reinterpret_cast<std::uintptr_t>(text.GetPointer<std::byte>());
+			const auto begin = text.GetAddress();
 			if (execute < begin || text.GetSize() < 0x106 || execute - begin > text.GetSize() - 0x106 ||
 				std::memcmp(reinterpret_cast<void*>(execute), prologue, sizeof(prologue)) != 0 ||
 				std::memcmp(reinterpret_cast<void*>(execute + 0x0D), requestRegister, sizeof(requestRegister)) != 0 ||
@@ -391,11 +391,23 @@ namespace SFSEMenuFramework::PresentOverlay
 				return false;
 			}
 
-			static auto* trampoline = new REL::Trampoline("SFSE-MF frame presentation");
-			trampoline->create(64, reinterpret_cast<void*>(site));
-			auto* bridge = trampoline->allocate<FramePresentBridge>(reinterpret_cast<std::uintptr_t>(&PresentFrame));
+			static const auto pool = new SF1::Hooks::NearBranchPool;
+			if (!pool->Initialize(site, 64)) {
+				logger::critical("Could not allocate a nearby Present bridge");
+				return false;
+			}
+			auto& trampoline = pool->GetTrampoline();
+			const auto storage = trampoline.allocate(sizeof(FramePresentBridge));
+			if (!storage) {
+				return false;
+			}
+			const auto bridge = std::construct_at(static_cast<FramePresentBridge*>(storage),
+				reinterpret_cast<std::uintptr_t>(&PresentFrame));
 			const auto destination = reinterpret_cast<std::uintptr_t>(bridge);
-			const auto relay = trampoline->allocate_branch6(destination);
+			const auto relay = trampoline.allocate_branch6(destination);
+			if (!relay) {
+				return false;
+			}
 			const auto displacement = static_cast<std::int64_t>(relay) - static_cast<std::int64_t>(site + 6);
 			if (displacement < INT32_MIN || displacement > INT32_MAX) {
 				logger::critical("Game-frame Present relay is out of reach");
@@ -403,16 +415,13 @@ namespace SFSEMenuFramework::PresentOverlay
 			}
 			if (!::FlushInstructionCache(::GetCurrentProcess(), bridge, sizeof(*bridge))) { return false; }
 
-			// CommonLib emits the CALL6. Its inferred original target is unused:
-			// the replaced six bytes are a MOV plus an indirect virtual CALL.
-			static_cast<void>(trampoline->write_call<6>(site, destination));
 			const REL::ASM::CALL6 expected{ site, relay };
-			if (std::memcmp(reinterpret_cast<void*>(site), &expected, sizeof(expected)) != 0 ||
-				!::FlushInstructionCache(::GetCurrentProcess(), reinterpret_cast<void*>(site), sizeof(expected))) {
-				REL::WriteSafeData(site, original);
-				if (std::memcmp(reinterpret_cast<void*>(site), original, sizeof(original)) != 0 ||
-					!::FlushInstructionCache(::GetCurrentProcess(), reinterpret_cast<void*>(site), sizeof(original))) {
-					REX::FAIL("Could not restore the game-frame Present hook");
+			if (!SF1::Hooks::WriteCode(site, expected.bytes) ||
+				std::memcmp(reinterpret_cast<const void*>(site), expected.bytes.data(), expected.bytes.size()) != 0) {
+				if (!SF1::Hooks::WriteCode(site, original) ||
+					std::memcmp(reinterpret_cast<const void*>(site), original, sizeof(original)) != 0) {
+					logger::critical("Could not restore the game-frame Present hook");
+					std::terminate();
 				}
 				return false;
 			}

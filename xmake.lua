@@ -18,13 +18,14 @@ if is_plat("windows") then
     })
 end
 
-includes(path.join(os.projectdir(), "lib", "commonlibsf"))
+option("sf1sdk_dir")
+    set_default("../SF1SDK")
+    set_showmenu(true)
+    set_description("Directory containing the SF1SDK checkout")
+option_end()
 
--- This project performs deployment only after verification. Keep all other
--- CommonLib plugin behavior, but replace its implicit post-build install hook.
-rule("commonlib.plugin", function()
-    after_build(function() end)
-end)
+includes(get_config("sf1sdk_dir") or "../SF1SDK")
+add_requires("spdlog v1.16.0", { configs = { header_only = false, wchar = true, std_format = true } })
 
 add_requires("nlohmann_json 3.11.3")
 add_requires("freetype 2.14.1", {
@@ -42,6 +43,8 @@ local plugin_name = "SFSE Menu Framework"
 local dll_name = "SFSEMenuFramework"
 local plugin_version = "1.2.0"
 local plugin_author = "Quantumyilmaz"
+local major, minor, patch = plugin_version:match("^(%d+)%.(%d+)%.(%d+)$")
+local packed = tonumber(major) * 16777216 + tonumber(minor) * 65536 + tonumber(patch) * 16
 local build_staging_dir = path.join(project_root, "build", "staging")
 local sdk_root = path.join(project_root, "..", "SFSE-MCP")
 
@@ -104,7 +107,7 @@ target("imgui", function()
     add_includedirs("extern/imgui", { public = true })
     add_includedirs("extern/imgui_bridge", { public = true })
     add_packages("freetype", { public = true })
-    add_syslinks("d3dcompiler", { public = true })
+    add_syslinks("d3dcompiler", "dxgi", { public = true })
 end)
 
 target("verify-framework-signature", function()
@@ -123,17 +126,21 @@ target(dll_name, function()
             "-BuiltDll", target:targetfile(), "-Version", target:version()
         })
     end)
-	add_rules("commonlibsf.plugin", {
-		author = plugin_author,
-		name = plugin_name,
-		description = plugin_name,
-        options = {
-            sig_scanning = false,
-            address_library = true,
-            no_struct_use = false,
-            layout_dependent = true
-        }
-    })
+    set_kind("shared")
+    add_deps("SF1SDK")
+    add_packages("spdlog")
+    add_files("src/Version.rc")
+    add_defines(
+        "NOMINMAX",
+        'PLUGIN_NAME="' .. plugin_name .. '"',
+        'PLUGIN_DLL_NAME="' .. dll_name .. '"',
+        'PLUGIN_AUTHOR="' .. plugin_author .. '"',
+        'PLUGIN_VERSION_TEXT="' .. plugin_version .. '.0"',
+        "PLUGIN_VERSION_MAJOR=" .. major,
+        "PLUGIN_VERSION_MINOR=" .. minor,
+        "PLUGIN_VERSION_PATCH=" .. patch,
+        "PLUGIN_PACKED_VERSION=" .. packed
+    )
 
     set_version(plugin_version)
     set_license("GPL-3.0-only")
@@ -168,9 +175,6 @@ target(dll_name, function()
     add_installfiles("public/SFSE/Plugins/SFSEMenuFrameworkStrings.json", { prefixdir = "SFSE/Plugins" })
     add_installfiles("public/SFSE/Plugins/SFSEMenuFramework.ini", { prefixdir = "SFSE/Plugins" })
 
-    -- CommonLibSF derives an automatic post-build install destination from
-    -- environment variables. Override it with build-local staging so compiling
-    -- cannot touch an active game or mod-manager setup. Deployment is explicit.
     -- Packaging copies the matching PDB directly from the build output.
     on_config(function(target)
         target:set("installdir", build_staging_dir)
@@ -216,7 +220,8 @@ target("frame-routing-tests", function()
     set_kind("binary")
     set_default(false)
     set_pcxxheader("src/PCH.h")
-    add_deps("commonlibsf")
+    add_deps("SF1SDK")
+    add_packages("spdlog")
     add_files("tests/FrameRoutingTests.cpp")
     add_includedirs("src")
     add_tests("default")
@@ -235,20 +240,22 @@ target("command-list-state-tests", function()
     set_kind("binary")
     set_default(false)
     set_pcxxheader("src/PCH.h")
-    add_deps("commonlibsf")
+    add_deps("SF1SDK")
+    add_packages("spdlog")
     add_files("tests/CommandListStateTests.cpp", "tests/TargetDescriptorTests.cpp",
         "src/rendering/CommandListState.cpp", "src/rendering/GpuResourceRetirement.cpp",
         "src/rendering/VtableHooks.cpp", "src/rendering/OverlayCompositor.cpp",
         "src/rendering/D3D12Texture.cpp")
     add_includedirs("src")
-    add_syslinks("d3d12", "dxgi", "d3dcompiler")
+    add_syslinks("d3d12", "dxgi", "d3dcompiler", "user32")
     add_tests("default")
 end)
 
 target("theme-cursor-tests", function()
     set_kind("binary")
     set_pcxxheader("src/PCH.h")
-    add_deps("commonlibsf")
+    add_deps("SF1SDK")
+    add_packages("spdlog")
     set_default(false)
     add_deps("imgui")
     add_packages("nlohmann_json")
@@ -298,7 +305,8 @@ target("gamepad-input-tests", function()
     set_kind("binary")
     set_default(false)
     set_pcxxheader("src/PCH.h")
-    add_deps("commonlibsf", "imgui")
+    add_deps("SF1SDK", "imgui")
+    add_packages("spdlog")
     add_files("tests/GamepadInputTests.cpp", "src/input/GamepadNavigation.cpp")
     add_includedirs("src")
     add_tests("default")
@@ -309,7 +317,8 @@ target("font-resolution-tests", function()
     set_default(false)
     set_targetdir(path.join(project_root, "build", "font-tests"))
     set_pcxxheader("src/PCH.h")
-    add_deps("commonlibsf", "imgui")
+    add_deps("SF1SDK", "imgui")
+    add_packages("spdlog")
     add_packages("nlohmann_json")
     add_files("tests/FontResolutionTests.cpp", "src/appearance/FontManager.cpp",
         "src/appearance/fonts/*.cpp", "src/config/FrameworkSettings.cpp",

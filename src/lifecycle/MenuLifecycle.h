@@ -2,7 +2,7 @@
 
 namespace SFSE
 {
-	class TaskInterface;
+	struct TaskInterface;
 }
 
 namespace SFSEMenuFramework::MenuLifecycle

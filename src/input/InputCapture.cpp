@@ -6,8 +6,6 @@
 #include "input/InputEventManager.h"
 #include "runtime/WindowManager.h"
 
-#include <RE/B/BSInputDeviceManagerInput.h>
-
 #include <Windows.h>
 
 #include <array>
@@ -51,7 +49,7 @@ namespace SFSEMenuFramework::InputCapture
 			Failed
 		};
 
-		using InputProcessor = RE::BSInputDeviceManagerInput::PerformInputProcessing_t*;
+		using InputProcessor = RE::BSInputEventReceiver::ProcessInput;
 
 		std::atomic<HookState>      hookState{ HookState::Uninitialized };
 		std::atomic<InputProcessor> originalInputProcessor{ nullptr };
@@ -451,12 +449,8 @@ namespace SFSEMenuFramework::InputCapture
 			return expectedState == HookState::Ready;
 		}
 
-		REL::Relocation<std::uintptr_t> inputVtable{
-			RE::BSInputDeviceManagerInput::BSINPUTEVENTRECEIVER_VTABLE
-		};
-		constexpr auto slot =
-			RE::BSInputDeviceManagerInput::kPerformInputProcessingVFunc;
-		const auto slotAddress = inputVtable.address() + sizeof(std::uintptr_t) * slot;
+		const auto slotAddress = RE::BSInputEventReceiver::GetInputDeviceVTable() +
+			sizeof(std::uintptr_t) * RE::BSInputEventReceiver::kPerformInputProcessingSlot;
 		if (!IsReadablePointer(slotAddress)) {
 			logger::critical(
 				"BSInputDeviceManager input hook preflight failed: unreadable vtable slot");
@@ -474,26 +468,27 @@ namespace SFSEMenuFramework::InputCapture
 		}
 
 		const auto hookAddress =
-			REX::UNRESTRICTED_CAST<std::uintptr_t>(&ProcessInput);
+			reinterpret_cast<std::uintptr_t>(&ProcessInput);
 		originalInputProcessor.store(
-			REX::UNRESTRICTED_CAST<InputProcessor>(originalAddress),
+			reinterpret_cast<InputProcessor>(originalAddress),
 			std::memory_order_release);
 
-		const auto replacedAddress = inputVtable.write_vfunc(slot, hookAddress);
+		const auto replacedAddress = *reinterpret_cast<const std::uintptr_t*>(slotAddress);
+		const bool attempted = replacedAddress == originalAddress;
+		const bool written = attempted && REL::WriteSafeData(slotAddress, hookAddress);
 		const auto chainAddress = replacedAddress ? replacedAddress : originalAddress;
 		originalInputProcessor.store(
-			REX::UNRESTRICTED_CAST<InputProcessor>(chainAddress),
+			reinterpret_cast<InputProcessor>(chainAddress),
 			std::memory_order_release);
 
 		const auto liveAddress =
 			*reinterpret_cast<const std::uintptr_t*>(slotAddress);
-		if (replacedAddress != originalAddress || liveAddress != hookAddress) {
+		if (!written || liveAddress != hookAddress) {
 			bool rollbackAttempted{};
 			bool rollbackVerified{};
-			if (liveAddress == hookAddress) {
+			if (attempted && liveAddress == hookAddress) {
 				rollbackAttempted = true;
-				static_cast<void>(inputVtable.write_vfunc(slot, chainAddress));
-				rollbackVerified =
+				rollbackVerified = REL::WriteSafeData(slotAddress, chainAddress) &&
 					*reinterpret_cast<const std::uintptr_t*>(slotAddress) == chainAddress;
 			}
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <REL/Relocation.h>
+#include <SF1SDK/Platform.h>
 
 #include <cstddef>
 #include <cstdint>

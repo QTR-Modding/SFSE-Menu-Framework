@@ -5,7 +5,7 @@
 
 namespace RE
 {
-	class InputEvent;
+	struct InputEvent;
 }
 
 namespace SFSEMenuFramework::BindingCapture

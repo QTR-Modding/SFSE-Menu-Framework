@@ -2,8 +2,7 @@
 
 #include "config/FrameworkSettings.h"
 
-#include <RE/B/BSInputEventUser.h>
-#include <REX/W32/DINPUT.h>
+#include <dinput.h>
 
 #include <atomic>
 #include <bitset>
@@ -200,7 +199,7 @@ namespace SFSEMenuFramework::BindingCapture
 		}
 		TrackKeyboardSequence(
 			*capture, a_engineEventID, true);
-		const bool cancel = a_dik == REX::W32::DIK_ESCAPE;
+		const bool cancel = a_dik == DIK_ESCAPE;
 		if (state == State::Confirming) {
 			if (cancel && a_down) {
 				capture->PressedDevice = Device::Keyboard;

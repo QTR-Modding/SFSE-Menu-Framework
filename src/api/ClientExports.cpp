@@ -181,13 +181,12 @@ extern "C" __declspec(dllexport) float GetMenuFrameworkVersion()
 {
 	// Preserve the SKSE-MCP-compatible float export as an informational release
 	// projection. Capability checks belong to GetMenuFrameworkAPIVersion().
-	const auto version = SFSE::GetPluginVersion();
 	float minorScale = 10.0F;
-	for (auto remaining = version.minor(); remaining >= 10; remaining /= 10) {
+	for (auto remaining = PLUGIN_VERSION_MINOR; remaining >= 10; remaining /= 10) {
 		minorScale *= 10.0F;
 	}
-	return static_cast<float>(version.major()) +
-		static_cast<float>(version.minor()) / minorScale;
+	return static_cast<float>(PLUGIN_VERSION_MAJOR) +
+		static_cast<float>(PLUGIN_VERSION_MINOR) / minorScale;
 }
 
 extern "C" __declspec(dllexport) std::uint32_t GetMenuFrameworkAPIVersion()

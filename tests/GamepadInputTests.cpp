@@ -1,7 +1,6 @@
 #include "input/GamepadNavigation.h"
 #include "ui/McpWindow.h"
 
-#include <RE/B/BSInputEventUser.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 
