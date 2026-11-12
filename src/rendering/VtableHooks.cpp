@@ -53,9 +53,9 @@ namespace SFSEMenuFramework::VtableHooks
 			return false;
 		}
 		Attempted = true;
-		Previous = Vtable->write_vfunc(Index, Replacement);
-		return Previous == Expected &&
-			ReadVtableSlot(*Vtable, Index) == Replacement;
+		Previous = Expected;
+		const auto address = Vtable->address() + Index * sizeof(std::uintptr_t);
+		return REL::WriteSafeData(address, Replacement) && ReadVtableSlot(*Vtable, Index) == Replacement;
 	}
 
 	bool VtableHook::RollBack()
@@ -70,8 +70,8 @@ namespace SFSEMenuFramework::VtableHooks
 		if (current != Replacement) {
 			return false;
 		}
-		Vtable->write_vfunc(Index, Previous);
-		return ReadVtableSlot(*Vtable, Index) == Previous;
+		const auto address = Vtable->address() + Index * sizeof(std::uintptr_t);
+		return REL::WriteSafeData(address, Previous) && ReadVtableSlot(*Vtable, Index) == Previous;
 	}
 
 	bool CommitHooks(std::span<VtableHook> a_hooks)

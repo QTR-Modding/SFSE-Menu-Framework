@@ -7,7 +7,6 @@
 #include "rendering/OverlayCompositor.h"
 #include "rendering/D3D12Texture.h"
 
-#include <RE/C/CreationRenderer.h>
 
 #include <Windows.h>
 #include <d3d12.h>

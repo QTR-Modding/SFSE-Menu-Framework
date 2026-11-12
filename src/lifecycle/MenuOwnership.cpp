@@ -232,11 +232,11 @@ namespace SFSEMenuFramework::MenuOwnership
 			if (!cursor) {
 				return false;
 			}
-			if (cursor->freeCursorRefCount == (std::numeric_limits<std::uint32_t>::max)()) {
+			if (cursor->FreeCursorRefCount() == (std::numeric_limits<std::uint32_t>::max)()) {
 				return false;
 			}
 
-			++cursor->freeCursorRefCount;
+			++cursor->FreeCursorRefCount();
 			a_state.CursorOwner = cursor;
 			a_state.CursorOwned = true;
 			return true;
@@ -258,8 +258,8 @@ namespace SFSEMenuFramework::MenuOwnership
 				return false;
 			}
 
-			if (cursor->freeCursorRefCount > 0) {
-				--cursor->freeCursorRefCount;
+			if (cursor->FreeCursorRefCount() > 0) {
+				--cursor->FreeCursorRefCount();
 			}
 			a_state.CursorOwner = nullptr;
 			a_state.CursorOwned = false;
@@ -386,7 +386,7 @@ namespace SFSEMenuFramework::MenuOwnership
 			logger::info(
 				"Menu core ownership acquired (retained input layer {}, free-cursor references {})",
 				a_state.InputLayer->GetLayerID(),
-				a_state.CursorOwner->freeCursorRefCount);
+				a_state.CursorOwner->FreeCursorRefCount());
 			return true;
 		}
 

@@ -2,7 +2,7 @@
 #include "rendering/FramePresentBridge.h"
 #include "rendering/BlockingWindowVisibility.h"
 
-#include <REL/Trampoline.h>
+#include <SF1SDK/Hooks.h>
 #include <Windows.h>
 #include <cstdio>
 #include <cstdlib>
@@ -40,20 +40,23 @@ namespace
 		};
 		std::memcpy(memory, caller, sizeof(caller));
 		const auto base = reinterpret_cast<std::uintptr_t>(memory);
-		REL::Trampoline trampoline{ "Frame bridge test" };
-		trampoline.set_trampoline(memory + 64, 64);
-		const auto* bridge = trampoline.allocate<FramePresentBridge>(reinterpret_cast<std::uintptr_t>(&Capture));
+		REL::Trampoline trampoline;
+		trampoline.Initialize(memory + 64, 64);
+		const auto storage = trampoline.allocate(sizeof(FramePresentBridge));
+		Check(storage != nullptr);
+		const auto bridge = std::construct_at(static_cast<FramePresentBridge*>(storage),
+			reinterpret_cast<std::uintptr_t>(&Capture));
 		const auto target = reinterpret_cast<std::uintptr_t>(bridge);
 		const auto relay = trampoline.allocate_branch6(target);
-		const auto allocated = trampoline.allocated_size();
+		Check(relay != 0);
+		const auto allocated = 64 - trampoline.free_size();
 		Check(allocated == sizeof(FramePresentBridge) + sizeof(std::uintptr_t));
-		static_cast<void>(trampoline.write_call<6>(base + 9, target));
-		Check(trampoline.allocated_size() == allocated);
-		Check(trampoline.allocate_branch6(target) == relay);
-		Check(trampoline.allocated_size() == allocated);
 		const REL::ASM::CALL6 call{ base + 9, relay };
-		Check(std::memcmp(memory + 9, &call, sizeof(call)) == 0);
-		Check(REL::ASM::CALL6::TARGET(base + 9) == relay);
+		Check(SF1::Hooks::WriteCode(base + 9, call.bytes));
+		Check(std::memcmp(memory + 9, call.bytes.data(), call.bytes.size()) == 0);
+		std::int32_t displacement{};
+		std::memcpy(&displacement, memory + 11, sizeof(displacement));
+		Check(base + 15 + displacement == relay);
 		Check(*reinterpret_cast<const std::uintptr_t*>(relay) == target);
 		DWORD previous{};
 		Check(VirtualProtect(memory, 4096, PAGE_EXECUTE_READ, &previous) != FALSE);

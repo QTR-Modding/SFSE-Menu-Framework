@@ -5,7 +5,7 @@
 #include "input/InputCapture.h"
 #include "runtime/WindowManager.h"
 
-#include <REX/W32/DINPUT.h>
+#include <dinput.h>
 
 #include <Windows.h>
 
@@ -147,7 +147,7 @@ namespace SFSEMenuFramework::Win32Platform
 					if (a_makeCode != 0x45 || a_virtualKey != VK_PAUSE) {
 						return std::nullopt;
 					}
-					a_dik = REX::W32::DIK_PAUSE;
+					a_dik = DIK_PAUSE;
 				} else {
 					a_dik = a_makeCode & 0x7FU;
 					if ((a_flags & RI_KEY_E0) != 0) {
@@ -192,9 +192,9 @@ namespace SFSEMenuFramework::Win32Platform
 
 			std::uint32_t dik{};
 			if (a_wParam == VK_PAUSE) {
-				dik = REX::W32::DIK_PAUSE;
+				dik = DIK_PAUSE;
 			} else if (a_wParam == VK_SNAPSHOT) {
-				dik = REX::W32::DIK_SYSRQ;
+				dik = DIK_SYSRQ;
 			}
 			return DecodeKeyboard(
 				makeCode, flags, static_cast<USHORT>(a_wParam), dik);
@@ -362,7 +362,7 @@ namespace SFSEMenuFramework::Win32Platform
 				return ApplyMainWindowKeyboardEdge(
 					false, dik, a_transition.EngineEventID);
 			};
-			if (dik == REX::W32::DIK_ESCAPE && mainWindowOpen) {
+			if (dik == DIK_ESCAPE && mainWindowOpen) {
 				return closeMainWindow();
 			}
 
@@ -375,9 +375,9 @@ namespace SFSEMenuFramework::Win32Platform
 				return false;
 			}
 
-			if (dik == REX::W32::DIK_F4 &&
-				(state.Down[REX::W32::DIK_LMENU] ||
-				 state.Down[REX::W32::DIK_RMENU])) {
+			if (dik == DIK_F4 &&
+				(state.Down[DIK_LMENU] ||
+				 state.Down[DIK_RMENU])) {
 				return false;
 			}
 

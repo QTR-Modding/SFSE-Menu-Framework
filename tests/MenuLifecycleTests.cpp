@@ -28,9 +28,8 @@ namespace RE
 
 namespace SFSE
 {
-    class TaskInterface
+    struct TaskInterface
     {
-    public:
         void AddPermanentTask(void (*a_task)()) const;
     };
 }

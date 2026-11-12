@@ -1,7 +1,6 @@
 #pragma once
 
-#include <RE/C/CreationRenderer.h>
-#include <REL/ASM.h>
+#include <SF1SDK/Renderer.h>
 
 namespace SFSEMenuFramework
 {
